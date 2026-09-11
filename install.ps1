@@ -3,9 +3,9 @@
     Installs TerminalV - a Windows terminal with vertical tabs.
 
 .DESCRIPTION
-    Downloads TerminalV-win-x64.zip from the GitHub release, verifies the SHA-256
-    published in the release notes, extracts it and adds the install directory
-    to the user PATH.
+    Downloads TerminalV-win-x64.zip from GitHub Releases (the public download
+    URLs, not the REST API), verifies the SHA-256 asset, extracts it and adds
+    the install directory to the user PATH.
 
     This file is intentionally ASCII-only: Windows PowerShell 5.1 reads a BOM-less
     script as ANSI, while `irm | iex` chokes on a leading BOM. ASCII keeps both
@@ -32,6 +32,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $Repository = 'XYphrodite/TerminalV'
 $AssetName = 'TerminalV-win-x64.zip'
+$UserAgent = @{ 'User-Agent' = 'terminalv-installer' }
 
 $previousProgress = $ProgressPreference
 $ProgressPreference = 'SilentlyContinue'
@@ -47,36 +48,56 @@ function Write-Step {
     Write-Host "==> $Message" -ForegroundColor Cyan
 }
 
+function Get-ReleaseTag {
+    param([string] $Requested)
+
+    if ($Requested -ne 'latest') {
+        if ($Requested -notmatch '^v') { return "v$Requested" }
+        return $Requested
+    }
+
+    $latestUrl = "https://github.com/$Repository/releases/latest"
+    try {
+        $null = Invoke-WebRequest -Uri $latestUrl -MaximumRedirection 0 -UseBasicParsing -Headers $UserAgent
+    } catch {
+        $response = $_.Exception.Response
+        if ($response -and $response.Headers['Location']) {
+            $location = [string]$response.Headers['Location']
+            if ($location -match '/releases/tag/(v?[A-Za-z0-9._-]+)') {
+                $tag = $Matches[1]
+                if ($tag -notmatch '^v') { $tag = "v$tag" }
+                return $tag
+            }
+        }
+    }
+
+    return 'latest'
+}
+
 try {
-    if ($Version -eq 'latest') {
-        $releaseUrl = "https://api.github.com/repos/$Repository/releases/latest"
+    $tag = Get-ReleaseTag -Requested $Version
+    if ($tag -eq 'latest') {
+        $zipUrl = "https://github.com/$Repository/releases/latest/download/$AssetName"
+        $shaUrl = "https://github.com/$Repository/releases/latest/download/$AssetName.sha256"
     } else {
-        $tag = $Version
-        if ($tag -notmatch '^v') { $tag = "v$tag" }
-        $releaseUrl = "https://api.github.com/repos/$Repository/releases/tags/$tag"
+        $zipUrl = "https://github.com/$Repository/releases/download/$tag/$AssetName"
+        $shaUrl = "https://github.com/$Repository/releases/download/$tag/$AssetName.sha256"
     }
 
-    Write-Step "looking up release: $Version"
-    $headers = @{ 'User-Agent' = 'terminalv-installer'; 'Accept' = 'application/vnd.github+json' }
-    $release = Invoke-RestMethod -Uri $releaseUrl -Headers $headers
-
-    $asset = $release.assets | Where-Object { $_.name -eq $AssetName } | Select-Object -First 1
-    if (-not $asset) {
-        throw "release $($release.tag_name) has no asset named $AssetName"
-    }
-
-    $sizeMb = [math]::Round($asset.size / 1MB, 1)
-    Write-Step "downloading $AssetName $($release.tag_name) ($sizeMb MB)"
-
+    Write-Step "downloading $AssetName $tag"
     $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("terminalv-" + [Guid]::NewGuid().ToString('N').Substring(0, 8))
     New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
     $tempZip = Join-Path $tempRoot $AssetName
-    Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $tempZip -Headers @{ 'User-Agent' = 'terminalv-installer' }
+    Invoke-WebRequest -Uri $zipUrl -OutFile $tempZip -UseBasicParsing -Headers $UserAgent
 
     $expected = $null
-    $hashPattern = 'SHA-256[\s\S]{0,80}?([0-9a-fA-F]{64})'
-    if ($release.body -match $hashPattern) {
-        $expected = $Matches[1].ToLowerInvariant()
+    try {
+        $shaBody = (Invoke-WebRequest -Uri $shaUrl -UseBasicParsing -Headers $UserAgent).Content
+        if ($shaBody -match '([0-9a-fA-F]{64})') {
+            $expected = $Matches[1].ToLowerInvariant()
+        }
+    } catch {
+        Write-Warning "checksum asset missing: $($_.Exception.Message)"
     }
 
     if ($expected) {
@@ -87,7 +108,7 @@ try {
         }
         Write-Step 'SHA-256 verified'
     } else {
-        Write-Warning 'release notes carry no SHA-256, skipping checksum verification'
+        Write-Warning 'release has no SHA-256 asset, skipping checksum verification'
     }
 
     $running = Get-Process -Name 'TerminalV' -ErrorAction SilentlyContinue
@@ -147,7 +168,7 @@ try {
     }
 
     Write-Host ''
-    Write-Host "TerminalV $($release.tag_name) installed: $exe" -ForegroundColor Green
+    Write-Host "TerminalV $tag installed: $exe" -ForegroundColor Green
     Write-Host ''
     Write-Host 'Launch:' -ForegroundColor White
     Write-Host '  TerminalV' -ForegroundColor Cyan

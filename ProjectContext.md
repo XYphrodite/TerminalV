@@ -117,7 +117,7 @@ P/Invoke к `kernel32` для ConPTY написан вручную, отдель
 **Purpose**: проверка и установка релизов, как `agent-sync update`
 
 - Репозиторий зашит: `XYphrodite/TerminalV`. Другой origin задать нельзя.
-- `GitHubReleaseSource` читает latest (или тег), качает `TerminalV-win-x64.zip` и `.sha256`.
+- `GitHubReleaseSource` и `install.ps1` качают файлы с `github.com/releases/.../download`, без REST API (лимит 60 запросов/час его не касается).
 - `SelfUpdateService` сверяет SHA-256 zip, распаковывает, гоняет `TerminalV.exe --help` до замены и после, переименовывает текущий exe в `.old-*`.
 - `wwwroot` подменяется при следующем старте (`PendingUpdateApplier`), когда WebView2 уже не держит файлы.
 - Фоновая проверка после `init`; кнопка в сайдбаре ставит обновление и перезапускает процесс.
@@ -233,7 +233,7 @@ dotnet run --project src/TerminalV
 ## Document Information
 
 **Last Updated**: 2026-09-11  
-**Version**: 0.2.0  
+**Version**: 0.2.1  
 **Status**: Active  
 **Repository**: `https://github.com/XYphrodite/TerminalV`  
 **Workspace**: `C:\Repos\TerminalV`
