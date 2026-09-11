@@ -28,6 +28,8 @@ irm https://raw.githubusercontent.com/XYphrodite/TerminalV/main/install.ps1 | ie
 TerminalV
 ```
 
+Установленная копия сама проверяет GitHub Releases при старте. Если есть более новая версия, слева появляется кнопка **Обновить**. Клик по номеру версии внизу сайдбара запускает проверку вручную. Скачанный zip сверяется с SHA-256 из релиза, новый `TerminalV.exe` проверяется через `--help` до замены и после; при сбое остаётся прежняя сборка. Сборка 0.1.0 обновление ещё не умеет — её один раз ставят заново через `irm`.
+
 Из исходников после `dotnet build`: `src\TerminalV\bin\Debug\net10.0-windows\TerminalV.exe`.
 
 ## Документация
@@ -58,13 +60,14 @@ dotnet run --project src/TerminalV
 .\src\TerminalV\bin\Debug\net10.0-windows\TerminalV.exe --smoke
 ```
 
-## Что умеет v0.1.0
+## Что умеет v0.2.0
 
 - Вертикальный список вкладок слева
 - PowerShell 7 (`pwsh`), иначе Windows PowerShell
 - Несколько независимых сессий
 - Переименование вкладки (двойной клик)
 - Копирование и вставка, в том числе правой кнопкой
+- Самообновление из GitHub Releases (проверка при старте)
 
 ## Лицензия
 
