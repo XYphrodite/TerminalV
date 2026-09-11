@@ -105,7 +105,11 @@ internal sealed class GitHubReleaseSource : IReleaseSource, IDisposable
         return address;
     }
 
-    public async Task DownloadAsync(Uri address, string destinationPath, CancellationToken cancellationToken)
+    public async Task DownloadAsync(
+        Uri address,
+        string destinationPath,
+        CancellationToken cancellationToken,
+        Action<long, long?>? progress = null)
     {
         ArgumentNullException.ThrowIfNull(address);
         ArgumentException.ThrowIfNullOrWhiteSpace(destinationPath);
@@ -118,9 +122,25 @@ internal sealed class GitHubReleaseSource : IReleaseSource, IDisposable
             throw Refused("The release asset could not be downloaded", response);
         }
 
+        var total = response.Content.Headers.ContentLength;
         await using var source = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
         await using var destination = new FileStream(destinationPath, FileMode.CreateNew, FileAccess.Write, FileShare.None);
-        await source.CopyToAsync(destination, cancellationToken).ConfigureAwait(false);
+        var buffer = new byte[81920];
+        long received = 0;
+        while (true)
+        {
+            var read = await source.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
+            if (read <= 0)
+            {
+                break;
+            }
+
+            await destination.WriteAsync(buffer.AsMemory(0, read), cancellationToken).ConfigureAwait(false);
+            received += read;
+            progress?.Invoke(received, total);
+        }
+
+        progress?.Invoke(received, total ?? received);
     }
 
     public async Task<string> ReadTextAsync(Uri address, CancellationToken cancellationToken)

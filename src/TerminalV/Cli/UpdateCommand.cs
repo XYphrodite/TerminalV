@@ -58,7 +58,30 @@ internal static class UpdateCommand
             }
 
             CliConsole.WriteLine($"TerminalV {AppVersion.Informational}. Checking GitHub Releases...");
-            var applied = service.ApplyAsync(CancellationToken.None).GetAwaiter().GetResult();
+            var lastPaint = Stopwatch.StartNew();
+            var started = Stopwatch.StartNew();
+            var painted = false;
+            var applied = service.ApplyAsync(CancellationToken.None, (received, total) =>
+            {
+                if (lastPaint.ElapsedMilliseconds < 150 && total is long size && received < size)
+                {
+                    return;
+                }
+
+                lastPaint.Restart();
+                painted = true;
+                var percent = total is > 0 ? Math.Min(100, (int)(100.0 * received / total.Value)) : 0;
+                var filled = percent / 5;
+                var bar = new string('#', filled) + new string('-', 20 - filled);
+                var receivedMb = received / (1024.0 * 1024.0);
+                var totalMb = (total ?? received) / (1024.0 * 1024.0);
+                var speed = started.Elapsed.TotalSeconds > 0 ? receivedMb / started.Elapsed.TotalSeconds : 0;
+                Console.Write($"\r==> [{bar}] {percent,3}%  {receivedMb:0.0}/{totalMb:0.0} MB  {speed:0.0} MB/s   ");
+            }).GetAwaiter().GetResult();
+            if (painted)
+            {
+                Console.WriteLine();
+            }
             if (applied.Status == SelfUpdateStatus.AlreadyCurrent)
             {
                 CliConsole.WriteLine($"TerminalV {applied.Installed} is up to date.");

@@ -59,7 +59,9 @@ internal sealed class SelfUpdateService
         return new SelfUpdateReport(SelfUpdateStatus.UpdateAvailable, _installedVersion, release.Version, release.Tag);
     }
 
-    public async Task<SelfUpdateReport> ApplyAsync(CancellationToken cancellationToken)
+    public async Task<SelfUpdateReport> ApplyAsync(
+        CancellationToken cancellationToken,
+        Action<long, long?>? progress = null)
     {
         var release = await _source.ResolveAsync(null, cancellationToken).ConfigureAwait(false);
         if (release.Version <= _installedVersion)
@@ -67,11 +69,14 @@ internal sealed class SelfUpdateService
             return new SelfUpdateReport(SelfUpdateStatus.AlreadyCurrent, _installedVersion, release.Version, release.Tag);
         }
 
-        await InstallAsync(release, cancellationToken).ConfigureAwait(false);
+        await InstallAsync(release, cancellationToken, progress).ConfigureAwait(false);
         return new SelfUpdateReport(SelfUpdateStatus.Updated, _installedVersion, release.Version, release.Tag);
     }
 
-    private async Task InstallAsync(ReleaseDescriptor release, CancellationToken cancellationToken)
+    private async Task InstallAsync(
+        ReleaseDescriptor release,
+        CancellationToken cancellationToken,
+        Action<long, long?>? progress)
     {
         var installDirectory = Path.GetDirectoryName(_executablePath)
             ?? throw new InvalidOperationException("The install directory could not be determined.");
@@ -82,7 +87,7 @@ internal sealed class SelfUpdateService
         try
         {
             var zipPath = Path.Combine(staging, GitHubReleaseSource.PackageAsset);
-            await _source.DownloadAsync(release.PackageUrl, zipPath, cancellationToken).ConfigureAwait(false);
+            await _source.DownloadAsync(release.PackageUrl, zipPath, cancellationToken, progress).ConfigureAwait(false);
             var checksum = await _source.ReadTextAsync(release.ChecksumUrl, cancellationToken).ConfigureAwait(false);
             await VerifyZipAsync(zipPath, ReleaseChecksum.Parse(checksum), cancellationToken).ConfigureAwait(false);
 
