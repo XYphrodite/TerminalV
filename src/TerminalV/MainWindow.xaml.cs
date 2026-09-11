@@ -12,9 +12,11 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        WindowFrame.Hook(this);
         WebView.DefaultBackgroundColor = System.Drawing.Color.FromArgb(255, 11, 13, 16);
         Loaded += OnLoaded;
         Closed += (_, _) => _bridge?.Dispose();
+        UpdateMaximizeGlyph();
     }
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
@@ -73,5 +75,23 @@ public partial class MainWindow : Window
         };
 
         core.Navigate("https://terminalv.local/index.html");
+    }
+
+    private void Minimize_Click(object sender, RoutedEventArgs e) =>
+        WindowState = WindowState.Minimized;
+
+    private void Maximize_Click(object sender, RoutedEventArgs e) =>
+        WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
+
+    private void Close_Click(object sender, RoutedEventArgs e) => Close();
+
+    private void OnWindowStateChanged(object? sender, EventArgs e) => UpdateMaximizeGlyph();
+
+    private void UpdateMaximizeGlyph()
+    {
+        var maximized = WindowState == WindowState.Maximized;
+        MaximizeGlyph.Visibility = maximized ? Visibility.Collapsed : Visibility.Visible;
+        RestoreGlyph.Visibility = maximized ? Visibility.Visible : Visibility.Collapsed;
+        MaximizeButton.ToolTip = maximized ? "Свернуть в окно" : "Развернуть";
     }
 }
