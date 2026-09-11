@@ -64,17 +64,17 @@ internal static class UpdateCommand
                 return 0;
             }
 
+            var exe = Environment.ProcessPath!;
             var guiOpen = OtherTerminalVRunning();
             if (!guiOpen)
             {
-                PendingUpdateApplier.Apply(Environment.ProcessPath);
+                PendingUpdateApplier.Apply(exe);
             }
 
             CliConsole.WriteLine($"Installed {applied.Tag}.");
             if (guiOpen)
             {
-                CliConsole.WriteLine(
-                    "A TerminalV window is still open. Close it and start TerminalV again to use the new version.");
+                RestartOpenWindows(exe);
             }
 
             return 0;
@@ -84,6 +84,34 @@ internal static class UpdateCommand
             CliConsole.WriteError(ex.Message);
             return 1;
         }
+    }
+
+    private static void RestartOpenWindows(string exePath)
+    {
+        var current = Environment.ProcessId;
+        foreach (var process in Process.GetProcessesByName("TerminalV"))
+        {
+            try
+            {
+                if (process.Id != current)
+                {
+                    process.CloseMainWindow();
+                }
+            }
+            finally
+            {
+                process.Dispose();
+            }
+        }
+
+        var quoted = "\"" + exePath.Replace("\"", "\\\"") + "\"";
+        Process.Start(new ProcessStartInfo
+        {
+            FileName = "cmd.exe",
+            Arguments = "/c ping 127.0.0.1 -n 3 >nul & start \"\" " + quoted,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        });
     }
 
     private static bool OtherTerminalVRunning()
