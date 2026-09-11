@@ -1,0 +1,13 @@
+bin/
+obj/
+.vs/
+*.user
+*.suo
+node_modules/
+wwwroot/
+dist/
+artifacts/
+*.log
+*.WebView2/
+smoke-result.txt
+startup-args.txt
