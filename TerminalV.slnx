@@ -1,5 +1,6 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/TerminalV/TerminalV.csproj" />
+    <Project Path="src/TerminalV.Com/TerminalV.Com.csproj" />
   </Folder>
 </Solution>

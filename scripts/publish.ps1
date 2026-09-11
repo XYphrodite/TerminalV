@@ -17,6 +17,8 @@ $outDir = Join-Path $root "artifacts\publish\$Runtime"
 $zipPath = Join-Path $root "artifacts\TerminalV-$Runtime.zip"
 $shaPath = Join-Path $root "artifacts\TerminalV-$Runtime.zip.sha256"
 $project = Join-Path $root 'src\TerminalV\TerminalV.csproj'
+$comProject = Join-Path $root 'src\TerminalV.Com\TerminalV.Com.csproj'
+$comDir = Join-Path $root "artifacts\com\$Runtime"
 
 if (Test-Path -LiteralPath (Join-Path $root 'artifacts')) {
     Remove-Item -LiteralPath (Join-Path $root 'artifacts') -Recurse -Force
@@ -48,6 +50,33 @@ if (-not (Test-Path -LiteralPath (Join-Path $outDir 'TerminalV.exe'))) {
 }
 if (-not (Test-Path -LiteralPath (Join-Path $outDir 'wwwroot\index.html'))) {
     throw 'wwwroot/index.html is missing from the publish output'
+}
+
+Write-Host "==> publishing console shim $comProject" -ForegroundColor Cyan
+New-Item -ItemType Directory -Path $comDir -Force | Out-Null
+dotnet publish $comProject `
+    -c $Configuration `
+    -r $Runtime `
+    --self-contained true `
+    -p:PublishSingleFile=true `
+    -p:PublishTrimmed=true `
+    -p:DebugType=none `
+    -p:DebugSymbols=false `
+    -o $comDir
+
+if ($LASTEXITCODE -ne 0) {
+    throw "dotnet publish TerminalV.Com failed with exit code $LASTEXITCODE"
+}
+
+$comBuilt = Get-ChildItem -LiteralPath $comDir -Filter 'TerminalV.Com.exe' | Select-Object -First 1
+if (-not $comBuilt) {
+    throw 'TerminalV.Com.exe is missing from the shim publish output'
+}
+
+Copy-Item -LiteralPath $comBuilt.FullName -Destination (Join-Path $outDir 'TerminalV.com') -Force
+
+if (-not (Test-Path -LiteralPath (Join-Path $outDir 'TerminalV.com'))) {
+    throw 'TerminalV.com is missing from the publish output'
 }
 
 if (Test-Path -LiteralPath $zipPath) {
