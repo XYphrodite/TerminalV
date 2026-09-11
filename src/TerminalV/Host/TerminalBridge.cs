@@ -294,10 +294,13 @@ internal sealed class TerminalBridge : IDisposable
 
         try
         {
+            var cwd = !string.IsNullOrWhiteSpace(message.Cwd) && Directory.Exists(message.Cwd)
+                ? message.Cwd
+                : _cwd;
             var session = ConPtySession.Start(
                 message.Id,
                 _shell.CommandLine,
-                _cwd,
+                cwd,
                 Math.Max(message.Cols, 1),
                 Math.Max(message.Rows, 1));
 
