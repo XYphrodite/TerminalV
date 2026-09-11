@@ -19,7 +19,9 @@ public partial class App : Application
             // After `update` replaces that file, returning into WPF (Shutdown /
             // DoStartup) loads types such as System.ComponentModel from the new
             // bundle and crashes. Leave the process here.
-            Environment.Exit(RunCli(argv));
+            var code = RunCli(argv);
+            CliConsole.Detach();
+            Environment.Exit(code);
         }
 
         PendingUpdateApplier.Apply(Environment.ProcessPath);

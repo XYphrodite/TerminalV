@@ -15,6 +15,9 @@ internal static class CliConsole
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool AttachConsole(uint dwProcessId);
 
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool FreeConsole();
+
     public static void Attach()
     {
         if (_attached)
@@ -41,6 +44,24 @@ internal static class CliConsole
     {
         Attach();
         _err!.WriteLine(text);
+    }
+
+    public static void Flush()
+    {
+        _out?.Flush();
+        _err?.Flush();
+        Console.Out.Flush();
+        Console.Error.Flush();
+    }
+
+    public static void Detach()
+    {
+        Flush();
+        if (_attached)
+        {
+            FreeConsole();
+            _attached = false;
+        }
     }
 
     public static string HelpText(string version) =>
