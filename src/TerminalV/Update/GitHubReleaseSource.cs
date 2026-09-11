@@ -2,7 +2,6 @@ using System.IO;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
-using System.Text.Json;
 
 namespace TerminalV.Update;
 
@@ -23,40 +22,7 @@ internal sealed class GitHubReleaseSource : IReleaseSource, IDisposable
 
     public async Task<ReleaseDescriptor> ResolveAsync(string? tag, CancellationToken cancellationToken)
     {
-        string address;
-        if (tag is null)
-        {
-            address = $"https://api.github.com/repos/{Repository}/releases/latest";
-        }
-        else
-        {
-            if (!ReleaseVersion.TryParse(tag, out var requested))
-            {
-                throw new InvalidDataException("The requested version is not a supported release tag.");
-            }
-
-            address = $"https://api.github.com/repos/{Repository}/releases/tags/v{requested}";
-        }
-
-        using var request = new HttpRequestMessage(HttpMethod.Get, address);
-        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
-        request.Headers.Add("X-GitHub-Api-Version", "2022-11-28");
-
-        using var response = await _client.SendAsync(request, cancellationToken).ConfigureAwait(false);
-        if (!response.IsSuccessStatusCode)
-        {
-            throw Refused("The release could not be read from GitHub", response);
-        }
-
-        await using var body = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
-        using var document = await JsonDocument.ParseAsync(body, cancellationToken: cancellationToken).ConfigureAwait(false);
-        var root = document.RootElement;
-
-        if (!root.TryGetProperty("tag_name", out var tagName) || tagName.GetString() is not { } resolvedTag)
-        {
-            throw new InvalidDataException("The release carries no tag.");
-        }
-
+        var resolvedTag = await ResolveTagAsync(tag, cancellationToken).ConfigureAwait(false);
         if (!ReleaseVersion.TryParse(resolvedTag, out var version))
         {
             throw new InvalidDataException("The published release tag is not a supported version.");
@@ -65,8 +31,78 @@ internal sealed class GitHubReleaseSource : IReleaseSource, IDisposable
         return new ReleaseDescriptor(
             resolvedTag,
             version,
-            AssetUrl(root, PackageAsset),
-            AssetUrl(root, ChecksumAsset));
+            ReleaseAssetUrl(resolvedTag, PackageAsset),
+            ReleaseAssetUrl(resolvedTag, ChecksumAsset));
+    }
+
+    private async Task<string> ResolveTagAsync(string? tag, CancellationToken cancellationToken)
+    {
+        if (tag is not null)
+        {
+            if (!ReleaseVersion.TryParse(tag, out var requested))
+            {
+                throw new InvalidDataException("The requested version is not a supported release tag.");
+            }
+
+            return $"v{requested}";
+        }
+
+        var latest = new Uri($"https://github.com/{Repository}/releases/latest");
+        using var handler = new HttpClientHandler { AllowAutoRedirect = false };
+        using var probe = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(30) };
+        probe.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("TerminalV-update", "1.0"));
+
+        using var response = await probe
+            .GetAsync(latest, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
+            .ConfigureAwait(false);
+
+        var location = response.Headers.Location;
+        if (location is not null && !location.IsAbsoluteUri)
+        {
+            location = new Uri(latest, location);
+        }
+
+        var path = location?.AbsolutePath ?? response.RequestMessage?.RequestUri?.AbsolutePath ?? "";
+        const string marker = "/releases/tag/";
+        var index = path.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+        if (index < 0)
+        {
+            using var followed = await _client
+                .GetAsync(latest, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
+                .ConfigureAwait(false);
+            path = followed.RequestMessage?.RequestUri?.AbsolutePath ?? "";
+            index = path.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+        }
+
+        if (index < 0)
+        {
+            throw new InvalidDataException("The latest release tag could not be resolved from GitHub.");
+        }
+
+        var resolved = path[(index + marker.Length)..].Trim('/');
+        var slash = resolved.IndexOf('/');
+        if (slash >= 0)
+        {
+            resolved = resolved[..slash];
+        }
+
+        if (!ReleaseVersion.TryParse(resolved, out var parsed))
+        {
+            throw new InvalidDataException("The latest release tag is not a supported version.");
+        }
+
+        return $"v{parsed}";
+    }
+
+    private static Uri ReleaseAssetUrl(string tag, string asset)
+    {
+        var address = new Uri($"https://github.com/{Repository}/releases/download/{tag}/{asset}");
+        if (address.Scheme != Uri.UriSchemeHttps)
+        {
+            throw new InvalidDataException("The release asset address is not HTTPS.");
+        }
+
+        return address;
     }
 
     public async Task DownloadAsync(Uri address, string destinationPath, CancellationToken cancellationToken)
@@ -170,39 +206,5 @@ internal sealed class GitHubReleaseSource : IReleaseSource, IDisposable
             { Date: { } date } => date,
             _ => null
         };
-    }
-
-    private static Uri AssetUrl(JsonElement release, string name)
-    {
-        if (!release.TryGetProperty("assets", out var assets) || assets.ValueKind != JsonValueKind.Array)
-        {
-            throw new InvalidDataException("The release carries no assets.");
-        }
-
-        foreach (var asset in assets.EnumerateArray())
-        {
-            if (!asset.TryGetProperty("name", out var assetName) ||
-                !string.Equals(assetName.GetString(), name, StringComparison.Ordinal))
-            {
-                continue;
-            }
-
-            if (!asset.TryGetProperty("browser_download_url", out var url) || url.GetString() is not { } value)
-            {
-                break;
-            }
-
-            if (!Uri.TryCreate(value, UriKind.Absolute, out var address) ||
-                address.Scheme != Uri.UriSchemeHttps ||
-                !(address.Host is "github.com" ||
-                  address.Host.EndsWith(".githubusercontent.com", StringComparison.Ordinal)))
-            {
-                throw new InvalidDataException("The release asset address is not a GitHub download URL.");
-            }
-
-            return address;
-        }
-
-        throw new InvalidDataException("The release does not carry the expected assets.");
     }
 }
