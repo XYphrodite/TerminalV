@@ -4,6 +4,7 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
 import "./styles.css";
+import { THEMES, getTheme } from "./themes.js";
 
 const tabsEl = document.getElementById("tabs");
 const panesEl = document.getElementById("panes");
@@ -14,38 +15,40 @@ const updateBar = document.getElementById("update-bar");
 const updateText = document.getElementById("update-text");
 const updateApply = document.getElementById("update-apply");
 const versionBtn = document.getElementById("app-version");
+const appEl = document.getElementById("app");
+const settingsEl = document.getElementById("settings");
+const settingsBtn = document.getElementById("settings-btn");
+const settingsClose = document.getElementById("settings-close");
+const collapseBtn = document.getElementById("collapse-btn");
+const expandBtn = document.getElementById("expand-btn");
+const themeGrid = document.getElementById("theme-grid");
+const fontFamilyEl = document.getElementById("font-family");
+const fontSizeEl = document.getElementById("font-size");
+const fontSizeValue = document.getElementById("font-size-value");
+const zoomValue = document.getElementById("zoom-value");
+const bgPick = document.getElementById("bg-pick");
+const bgClear = document.getElementById("bg-clear");
+const bgOpacityEl = document.getElementById("bg-opacity");
+const bgOpacityValue = document.getElementById("bg-opacity-value");
 
 const tabs = [];
 let activeId = null;
 let shellName = "PowerShell";
 let buildNumber = 22621;
 let nextIndex = 1;
-let appVersion = "0.2.0";
+let appVersion = "0.3.0";
 let updateSupported = false;
+let persistTimer = 0;
 const clipboardWaiters = new Map();
 
-const theme = {
-  background: "#0b0d10",
-  foreground: "#d6deeb",
-  cursor: "#3d9eff",
-  cursorAccent: "#0b0d10",
-  selectionBackground: "#264f78",
-  black: "#1e1e1e",
-  red: "#f44747",
-  green: "#6a9955",
-  yellow: "#dcdcaa",
-  blue: "#569cd6",
-  magenta: "#c586c0",
-  cyan: "#4ec9b0",
-  white: "#d4d4d4",
-  brightBlack: "#808080",
-  brightRed: "#f14c4c",
-  brightGreen: "#b5cea8",
-  brightYellow: "#dcdcaa",
-  brightBlue: "#9cdcfe",
-  brightMagenta: "#c586c0",
-  brightCyan: "#4ec9b0",
-  brightWhite: "#ffffff"
+const settings = {
+  themeId: "midnight",
+  fontFamily: "Cascadia Code, Cascadia Mono, Consolas, Courier New, monospace",
+  fontSize: 14,
+  zoom: 0,
+  sidebarCollapsed: false,
+  backgroundPath: null,
+  backgroundOpacity: 0.25
 };
 
 function host() {
@@ -64,6 +67,95 @@ function currentTab() {
   return tabs.find((tab) => tab.id === activeId) ?? null;
 }
 
+function effectiveFontSize() {
+  return Math.min(36, Math.max(8, settings.fontSize + settings.zoom));
+}
+
+function applyChrome() {
+  const theme = getTheme(settings.themeId);
+  const root = document.documentElement;
+  const chrome = theme.chrome;
+  root.style.setProperty("--bg", chrome.bg);
+  root.style.setProperty("--sidebar", chrome.sidebar);
+  root.style.setProperty("--sidebar-edge", chrome.sidebarEdge);
+  root.style.setProperty("--tab-hover", chrome.tabHover);
+  root.style.setProperty("--tab-active", chrome.tabActive);
+  root.style.setProperty("--accent", chrome.accent);
+  root.style.setProperty("--accent-dim", chrome.accentDim);
+  root.style.setProperty("--text", chrome.text);
+  root.style.setProperty("--muted", chrome.muted);
+  root.style.setProperty("--danger", chrome.danger);
+  root.style.setProperty("--ink", chrome.ink);
+  root.style.setProperty("--scrollbar", chrome.scrollbar);
+  root.style.setProperty("--scrollbar-hover", chrome.scrollbarHover);
+  root.style.setProperty("--overlay", chrome.overlay);
+  root.style.setProperty("--font-mono", settings.fontFamily);
+  appEl.classList.toggle("collapsed", settings.sidebarCollapsed);
+  document.body.style.background = chrome.bg;
+}
+
+function termTheme() {
+  const theme = { ...getTheme(settings.themeId).term };
+  if (settings.backgroundPath) {
+    theme.background = "#00000000";
+  }
+  return theme;
+}
+
+function applyBackground(pane) {
+  let bg = pane.querySelector(".pane-bg");
+  if (!bg) {
+    bg = document.createElement("div");
+    bg.className = "pane-bg";
+    pane.prepend(bg);
+  }
+  if (settings.backgroundPath) {
+    bg.style.backgroundImage = `url("${settings.backgroundPath}")`;
+    bg.style.opacity = String(settings.backgroundOpacity);
+    bg.style.display = "block";
+  } else {
+    bg.style.backgroundImage = "none";
+    bg.style.display = "none";
+  }
+}
+
+function applyToTerminals() {
+  const theme = termTheme();
+  const size = effectiveFontSize();
+  for (const tab of tabs) {
+    tab.term.options.theme = theme;
+    tab.term.options.fontFamily = settings.fontFamily;
+    tab.term.options.fontSize = size;
+    tab.term.options.allowTransparency = Boolean(settings.backgroundPath);
+    applyBackground(tab.pane);
+    if (tab.id === activeId) {
+      tab.fit.fit();
+      post({ type: "resize", id: tab.id, cols: tab.term.cols, rows: tab.term.rows });
+    }
+  }
+  zoomValue.textContent = `${Math.round((size / settings.fontSize) * 100)}%`;
+}
+
+function persistSettings() {
+  post({ type: "persist-settings", data: JSON.stringify(settings) });
+}
+
+function persistSessions() {
+  const payload = tabs.map((tab, index) => ({
+    id: tab.id,
+    title: tab.title,
+    customTitle: tab.customTitle ?? null,
+    sortOrder: index,
+    active: tab.id === activeId
+  }));
+  post({ type: "persist-sessions", data: JSON.stringify(payload) });
+}
+
+function schedulePersist() {
+  window.clearTimeout(persistTimer);
+  persistTimer = window.setTimeout(persistSessions, 200);
+}
+
 function renderTabs() {
   tabsEl.replaceChildren();
   for (const tab of tabs) {
@@ -72,6 +164,7 @@ function renderTabs() {
     row.dataset.id = tab.id;
     row.setAttribute("role", "tab");
     row.setAttribute("aria-selected", String(tab.id === activeId));
+    row.title = tab.customTitle || tab.title;
 
     const accent = document.createElement("span");
     accent.className = "tab-accent";
@@ -144,6 +237,7 @@ function finishRename(tab, value) {
   tab.customTitle = next || undefined;
   tab.renaming = false;
   renderTabs();
+  schedulePersist();
 }
 
 function activate(id) {
@@ -163,6 +257,7 @@ function activate(id) {
     tab.fit.fit();
     post({ type: "resize", id: tab.id, cols: tab.term.cols, rows: tab.term.rows });
   });
+  schedulePersist();
 }
 
 function closeTab(id) {
@@ -186,6 +281,7 @@ function closeTab(id) {
   }
 
   renderTabs();
+  schedulePersist();
 }
 
 async function copyText(text) {
@@ -213,10 +309,40 @@ function readClipboard() {
   );
 }
 
+function isZoomEvent(event) {
+  if (!(event.ctrlKey || event.metaKey) || event.altKey) {
+    return false;
+  }
+  return (
+    event.key === "+" ||
+    event.key === "=" ||
+    event.key === "-" ||
+    event.key === "_" ||
+    event.key === "0" ||
+    event.code === "NumpadAdd" ||
+    event.code === "NumpadSubtract" ||
+    event.code === "Numpad0"
+  );
+}
+
+function applyZoomDelta(delta) {
+  if (delta === 0) {
+    settings.zoom = 0;
+  } else {
+    settings.zoom = Math.min(16, Math.max(-8, settings.zoom + delta));
+  }
+  applyToTerminals();
+  persistSettings();
+}
+
 function attachCopyPaste(tab) {
   tab.term.attachCustomKeyEventHandler((event) => {
     if (event.type !== "keydown") {
       return true;
+    }
+
+    if (isZoomEvent(event)) {
+      return false;
     }
 
     const key = event.key.toLowerCase();
@@ -264,9 +390,9 @@ function attachCopyPaste(tab) {
   });
 }
 
-function newTab() {
-  const id = uuid();
-  const index = nextIndex++;
+function newTab(options = {}) {
+  const id = options.id || uuid();
+  const index = options.title ? nextIndex : nextIndex++;
   const pane = document.createElement("div");
   pane.className = "pane";
   pane.dataset.id = id;
@@ -283,17 +409,19 @@ function newTab() {
   overlay.append(overlayText, overlayBtn);
   pane.append(hostEl, overlay);
   panesEl.append(pane);
+  applyBackground(pane);
 
   const term = new Terminal({
-    fontFamily: '"Cascadia Code", "Cascadia Mono", Consolas, "Courier New", monospace',
-    fontSize: 14,
+    fontFamily: settings.fontFamily,
+    fontSize: effectiveFontSize(),
     lineHeight: 1.2,
     cursorBlink: true,
     cursorStyle: "bar",
     cursorWidth: 2,
     scrollback: 8000,
     allowProposedApi: true,
-    theme,
+    allowTransparency: Boolean(settings.backgroundPath),
+    theme: termTheme(),
     windowsPty: { backend: "conpty", buildNumber }
   });
   const fit = new FitAddon();
@@ -308,8 +436,8 @@ function newTab() {
 
   const tab = {
     id,
-    title: `Сессия ${index}`,
-    customTitle: undefined,
+    title: options.title || `Сессия ${index}`,
+    customTitle: options.customTitle || undefined,
     renaming: false,
     unread: false,
     exited: false,
@@ -331,6 +459,7 @@ function newTab() {
     }
     tab.title = cleaned;
     renderTabs();
+    schedulePersist();
   });
   attachCopyPaste(tab);
 
@@ -344,9 +473,13 @@ function newTab() {
   observer.observe(hostEl);
 
   tabs.push(tab);
-  fit.fit();
-  post({ type: "create", id, cols: term.cols, rows: term.rows });
-  activate(id);
+  if (!options.skipActivate) {
+    fit.fit();
+    post({ type: "create", id, cols: term.cols, rows: term.rows });
+    activate(id);
+  } else {
+    post({ type: "create", id, cols: 80, rows: 24 });
+  }
 }
 
 function restart(tab) {
@@ -398,6 +531,109 @@ function handleUpdate(message) {
   }
 }
 
+function fillFonts(list) {
+  const preferred = [
+    "Cascadia Code",
+    "Cascadia Mono",
+    "Consolas",
+    "Courier New",
+    "JetBrains Mono",
+    "Fira Code",
+    "Source Code Pro",
+    "Segoe UI"
+  ];
+  const names = [...new Set([...preferred, ...(list || [])])];
+  fontFamilyEl.replaceChildren();
+  for (const name of names) {
+    const option = document.createElement("option");
+    option.value = name;
+    option.textContent = name;
+    fontFamilyEl.append(option);
+  }
+  const current = settings.fontFamily.split(",")[0].trim().replaceAll('"', "");
+  fontFamilyEl.value = names.includes(current) ? current : names[0];
+}
+
+function renderThemeGrid() {
+  themeGrid.replaceChildren();
+  for (const theme of THEMES) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `theme-card${theme.id === settings.themeId ? " active" : ""}`;
+    const swatch = document.createElement("span");
+    swatch.className = "theme-swatch";
+    swatch.style.background = theme.swatch;
+    const label = document.createElement("span");
+    label.textContent = theme.name;
+    button.append(swatch, label);
+    button.addEventListener("click", () => {
+      settings.themeId = theme.id;
+      applyChrome();
+      applyToTerminals();
+      persistSettings();
+      renderThemeGrid();
+    });
+    themeGrid.append(button);
+  }
+}
+
+function syncSettingsForm() {
+  fontSizeEl.value = String(settings.fontSize);
+  fontSizeValue.textContent = String(settings.fontSize);
+  bgOpacityEl.value = String(Math.round(settings.backgroundOpacity * 100));
+  bgOpacityValue.textContent = `${bgOpacityEl.value}%`;
+  const current = settings.fontFamily.split(",")[0].trim().replaceAll('"', "");
+  if ([...fontFamilyEl.options].some((option) => option.value === current)) {
+    fontFamilyEl.value = current;
+  }
+  renderThemeGrid();
+  applyChrome();
+  applyToTerminals();
+}
+
+function openSettings() {
+  settingsEl.classList.remove("hidden");
+}
+
+function closeSettings() {
+  settingsEl.classList.add("hidden");
+}
+
+function toggleSidebar() {
+  settings.sidebarCollapsed = !settings.sidebarCollapsed;
+  applyChrome();
+  persistSettings();
+  const tab = currentTab();
+  if (tab) {
+    requestAnimationFrame(() => {
+      tab.fit.fit();
+      post({ type: "resize", id: tab.id, cols: tab.term.cols, rows: tab.term.rows });
+    });
+  }
+}
+
+function restoreSessions(records) {
+  if (!records?.length) {
+    newTab();
+    return;
+  }
+
+  let active = null;
+  for (const record of records) {
+    newTab({
+      id: record.id,
+      title: record.title,
+      customTitle: record.customTitle,
+      skipActivate: true
+    });
+    if (record.active) {
+      active = record.id;
+    }
+  }
+  nextIndex = tabs.length + 1;
+  activate(active || tabs[0].id);
+}
+
 function handleHost(message) {
   if (!message || typeof message !== "object") {
     return;
@@ -418,8 +654,13 @@ function handleHost(message) {
     versionBtn.title = updateSupported
       ? "Проверить обновления"
       : "Самообновление работает в установленной копии";
+    if (message.settings) {
+      Object.assign(settings, message.settings);
+    }
+    fillFonts(message.fonts);
+    syncSettingsForm();
     if (tabs.length === 0) {
-      newTab();
+      restoreSessions(message.sessions);
     } else {
       renderTabs();
     }
@@ -428,6 +669,13 @@ function handleHost(message) {
 
   if (message.type === "update") {
     handleUpdate(message);
+    return;
+  }
+
+  if (message.type === "background-picked") {
+    settings.backgroundPath = message.path;
+    applyToTerminals();
+    persistSettings();
     return;
   }
 
@@ -470,14 +718,76 @@ function handleHost(message) {
   }
 }
 
-newTabBtn.addEventListener("click", newTab);
-emptyNewBtn.addEventListener("click", newTab);
+newTabBtn.addEventListener("click", () => newTab());
+emptyNewBtn.addEventListener("click", () => newTab());
 updateApply.addEventListener("click", () => post({ type: "update-apply" }));
 versionBtn.addEventListener("click", () => post({ type: "update-check" }));
+settingsBtn.addEventListener("click", openSettings);
+settingsClose.addEventListener("click", closeSettings);
+settingsEl.addEventListener("click", (event) => {
+  if (event.target === settingsEl) {
+    closeSettings();
+  }
+});
+collapseBtn.addEventListener("click", toggleSidebar);
+expandBtn.addEventListener("click", toggleSidebar);
+bgPick.addEventListener("click", () => post({ type: "pick-background" }));
+bgClear.addEventListener("click", () => {
+  settings.backgroundPath = null;
+  applyToTerminals();
+  persistSettings();
+});
+fontFamilyEl.addEventListener("change", () => {
+  settings.fontFamily = `${fontFamilyEl.value}, Consolas, monospace`;
+  applyToTerminals();
+  persistSettings();
+});
+fontSizeEl.addEventListener("input", () => {
+  settings.fontSize = Number(fontSizeEl.value);
+  fontSizeValue.textContent = String(settings.fontSize);
+  applyToTerminals();
+});
+fontSizeEl.addEventListener("change", persistSettings);
+bgOpacityEl.addEventListener("input", () => {
+  settings.backgroundOpacity = Number(bgOpacityEl.value) / 100;
+  bgOpacityValue.textContent = `${bgOpacityEl.value}%`;
+  applyToTerminals();
+});
+bgOpacityEl.addEventListener("change", persistSettings);
 
 window.addEventListener(
   "keydown",
   (event) => {
+    if (event.key === "Escape" && !settingsEl.classList.contains("hidden")) {
+      event.preventDefault();
+      closeSettings();
+      return;
+    }
+    if ((event.ctrlKey || event.metaKey) && event.key === ",") {
+      event.preventDefault();
+      if (settingsEl.classList.contains("hidden")) {
+        openSettings();
+      } else {
+        closeSettings();
+      }
+      return;
+    }
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "b" && !event.shiftKey) {
+      event.preventDefault();
+      toggleSidebar();
+      return;
+    }
+    if (isZoomEvent(event)) {
+      event.preventDefault();
+      if (event.key === "0" || event.code === "Numpad0") {
+        applyZoomDelta(0);
+      } else if (event.key === "-" || event.key === "_" || event.code === "NumpadSubtract") {
+        applyZoomDelta(-1);
+      } else {
+        applyZoomDelta(1);
+      }
+      return;
+    }
     if (event.ctrlKey && event.shiftKey && event.code === "KeyT") {
       event.preventDefault();
       newTab();
@@ -511,6 +821,18 @@ window.addEventListener(
     }
   },
   true
+);
+
+window.addEventListener(
+  "wheel",
+  (event) => {
+    if (!(event.ctrlKey || event.metaKey)) {
+      return;
+    }
+    event.preventDefault();
+    applyZoomDelta(event.deltaY < 0 ? 1 : -1);
+  },
+  { passive: false }
 );
 
 const webview = host();

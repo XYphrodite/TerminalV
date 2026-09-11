@@ -10,21 +10,26 @@
       <aside id="sidebar">
         <div class="sidebar-head">
           <span class="sessions-label">Сессии</span>
+          <div class="sidebar-head-actions">
+            <button id="settings-btn" type="button" class="icon-btn" title="Оформление (Ctrl+,)">⚙</button>
+            <button id="collapse-btn" type="button" class="icon-btn" title="Свернуть список (Ctrl+B)">‹</button>
+          </div>
         </div>
         <div id="tabs" class="tabs" role="tablist"></div>
         <div class="sidebar-foot">
           <button id="new-tab" type="button">
             <span class="plus">+</span>
-            Новая вкладка
+            <span class="new-tab-label">Новая вкладка</span>
           </button>
           <div class="hint">Ctrl+Shift+T</div>
           <div id="update-bar" class="update-bar hidden">
             <div id="update-text" class="update-text"></div>
             <button id="update-apply" type="button">Обновить</button>
           </div>
-          <button id="app-version" type="button" class="version" title="Проверить обновления">v0.2.0</button>
+          <button id="app-version" type="button" class="version" title="Проверить обновления">v0.3.0</button>
         </div>
       </aside>
+      <button id="expand-btn" type="button" class="expand-btn" title="Показать сессии (Ctrl+B)">›</button>
       <main id="main">
         <div id="panes"></div>
         <div id="empty" class="empty hidden">
@@ -34,6 +39,37 @@
           <button type="button" id="empty-new">Запустить оболочку</button>
         </div>
       </main>
+    </div>
+
+    <div id="settings" class="settings hidden" role="dialog" aria-label="Оформление">
+      <div class="settings-panel">
+        <div class="settings-head">
+          <span>Оформление</span>
+          <button id="settings-close" type="button" class="icon-btn" title="Закрыть">×</button>
+        </div>
+
+        <label class="field-label">Тема</label>
+        <div id="theme-grid" class="theme-grid"></div>
+
+        <label class="field-label" for="font-family">Шрифт терминала</label>
+        <select id="font-family"></select>
+
+        <label class="field-label" for="font-size">Размер шрифта <span id="font-size-value">14</span></label>
+        <input id="font-size" type="range" min="10" max="22" step="1" value="14" />
+
+        <div class="zoom-row">
+          Масштаб как в VS Code: Ctrl + / − / 0
+          <span id="zoom-value">100%</span>
+        </div>
+
+        <label class="field-label">Фон сессий</label>
+        <div class="bg-row">
+          <button id="bg-pick" type="button">Выбрать фото</button>
+          <button id="bg-clear" type="button" class="ghost">Убрать</button>
+        </div>
+        <label class="field-label" for="bg-opacity">Прозрачность фото <span id="bg-opacity-value">25%</span></label>
+        <input id="bg-opacity" type="range" min="0" max="80" step="1" value="25" />
+      </div>
     </div>
     <script type="module" src="/src/main.js"></script>
   </body>

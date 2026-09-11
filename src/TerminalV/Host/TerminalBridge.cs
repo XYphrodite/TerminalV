@@ -1,9 +1,14 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.IO;
+using System.Linq;
 using System.Text.Json;
 using System.Windows;
+using System.Windows.Media;
 using System.Windows.Threading;
 using Microsoft.Web.WebView2.Core;
+using Microsoft.Win32;
+using TerminalV.Data;
 using TerminalV.Pty;
 using TerminalV.Update;
 
@@ -25,6 +30,7 @@ internal sealed class TerminalBridge : IDisposable
     private readonly int _buildNumber;
     private readonly bool _canUpdate;
     private readonly CancellationTokenSource _updateCts = new();
+    private readonly AppDatabase _db = new();
     private int _updateBusy;
     private bool _disposed;
 
@@ -46,7 +52,10 @@ internal sealed class TerminalBridge : IDisposable
             shellName = _shell.DisplayName,
             buildNumber = _buildNumber,
             version = AppVersion.Informational,
-            updateSupported = _canUpdate
+            updateSupported = _canUpdate,
+            settings = _db.LoadSettings(),
+            sessions = _db.LoadSessions(),
+            fonts = SystemFonts()
         });
 
         if (_canUpdate)
@@ -119,6 +128,15 @@ internal sealed class TerminalBridge : IDisposable
             case "update-apply":
                 _ = ApplyUpdateAsync();
                 break;
+            case "persist-settings":
+                PersistSettings(message.Data);
+                break;
+            case "persist-sessions":
+                PersistSessions(message.Data);
+                break;
+            case "pick-background":
+                PickBackground();
+                break;
         }
     }
 
@@ -132,6 +150,7 @@ internal sealed class TerminalBridge : IDisposable
         _disposed = true;
         _updateCts.Cancel();
         _updateCts.Dispose();
+        _db.Dispose();
         foreach (var id in _sessions.Keys)
         {
             Kill(id);
@@ -298,6 +317,92 @@ internal sealed class TerminalBridge : IDisposable
         if (_sessions.TryRemove(id, out var session))
         {
             session.Dispose();
+        }
+    }
+
+    private void PersistSettings(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return;
+        }
+
+        try
+        {
+            var settings = JsonSerializer.Deserialize<AppSettings>(json, JsonOptions);
+            if (settings is not null)
+            {
+                _db.SaveSettings(settings);
+            }
+        }
+        catch (JsonException)
+        {
+        }
+    }
+
+    private void PersistSessions(string? json)
+    {
+        if (json is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var sessions = JsonSerializer.Deserialize<List<SessionRecord>>(json, JsonOptions);
+            _db.SaveSessions(sessions ?? []);
+        }
+        catch (JsonException)
+        {
+        }
+    }
+
+    private void PickBackground()
+    {
+        _dispatcher.BeginInvoke(() =>
+        {
+            var dialog = new OpenFileDialog
+            {
+                Title = "Фон сессии",
+                Filter = "Изображения|*.png;*.jpg;*.jpeg;*.webp;*.bmp;*.gif|Все файлы|*.*"
+            };
+            if (dialog.ShowDialog() != true)
+            {
+                return;
+            }
+
+            try
+            {
+                var url = _db.ImportBackground(dialog.FileName);
+                Post(new { type = "background-picked", path = url });
+            }
+            catch (Exception ex)
+            {
+                Post(new { type = "update", status = "error", message = ex.Message });
+            }
+        });
+    }
+
+    private static List<string> SystemFonts()
+    {
+        try
+        {
+            return Fonts.SystemFontFamilies
+                .Select(font => font.Source)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+        catch
+        {
+            return
+            [
+                "Cascadia Code",
+                "Cascadia Mono",
+                "Consolas",
+                "Courier New",
+                "Segoe UI"
+            ];
         }
     }
 

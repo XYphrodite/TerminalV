@@ -1,6 +1,7 @@
 using System.IO;
 using System.Windows;
 using Microsoft.Web.WebView2.Core;
+using TerminalV.Data;
 using TerminalV.Host;
 
 namespace TerminalV;
@@ -62,6 +63,10 @@ public partial class MainWindow : Window
         core.SetVirtualHostNameToFolderMapping(
             "terminalv.local",
             uiPath,
+            CoreWebView2HostResourceAccessKind.Allow);
+        core.SetVirtualHostNameToFolderMapping(
+            "tvdata.local",
+            AppPaths.Root,
             CoreWebView2HostResourceAccessKind.Allow);
 
         _bridge = new TerminalBridge(Dispatcher, core);
