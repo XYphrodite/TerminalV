@@ -180,6 +180,7 @@ try {
         $lnk = $wshell.CreateShortcut($lnkPath)
         $lnk.TargetPath = $exe
         $lnk.WorkingDirectory = [IO.Path]::GetDirectoryName($exe)
+        $lnk.IconLocation = "$exe,0"
         $lnk.Description = 'Terminal with vertical tabs'
         $lnk.Save()
         Write-Step "Start Menu shortcut: $lnkPath"

@@ -4,6 +4,7 @@
         xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
         xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
         Title="TerminalV"
+        Icon="pack://application:,,,/Assets/TerminalV.ico"
         Width="1220"
         Height="780"
         MinWidth="800"
@@ -89,17 +90,10 @@
                             VerticalAlignment="Center"
                             Margin="12,0,0,0"
                             IsHitTestVisible="False">
-                    <Border Width="16"
-                            Height="16"
-                            CornerRadius="4"
-                            Background="#3D9EFF">
-                        <TextBlock Text="V"
-                                   Foreground="#071018"
-                                   FontWeight="Bold"
-                                   FontSize="10"
-                                   HorizontalAlignment="Center"
-                                   VerticalAlignment="Center" />
-                    </Border>
+                    <Image Width="16"
+                           Height="16"
+                           Source="pack://application:,,,/Assets/TerminalV.ico"
+                           RenderOptions.BitmapScalingMode="HighQuality" />
                     <TextBlock Text="TerminalV"
                                Margin="8,0,0,0"
                                FontSize="12"
