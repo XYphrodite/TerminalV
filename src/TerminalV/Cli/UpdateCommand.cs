@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.IO;
 using System.Runtime.InteropServices;
 using TerminalV.Update;
 
@@ -112,32 +113,31 @@ internal static class UpdateCommand
 
     private static void RestartOpenWindows(string exePath)
     {
-        var quoted = exePath.Replace("\"", "\"\"");
-        // `start` detaches from this process tree so the relaunch survives if
-        // this updater is a child of the GUI we are about to close.
-        Process.Start(new ProcessStartInfo
+        Process.Start(new ProcessStartInfo(exePath)
         {
-            FileName = "cmd.exe",
-            Arguments = "/c start \"\" cmd /c \"ping 127.0.0.1 -n 3 >nul & start \"\" \"" + quoted + "\"\"",
-            UseShellExecute = false,
-            CreateNoWindow = true
+            UseShellExecute = true,
+            WorkingDirectory = Path.GetDirectoryName(exePath) ?? ""
         });
 
         var current = Environment.ProcessId;
-        foreach (var process in Process.GetProcessesByName("TerminalV"))
+        foreach (var pid in VisibleTerminalVPids())
         {
+            if (pid == current)
+            {
+                continue;
+            }
+
             try
             {
-                if (process.Id == current)
-                {
-                    continue;
-                }
-
-                CloseWindows(process.Id);
+                using var process = Process.GetProcessById(pid);
+                CloseWindows(pid);
                 if (!process.WaitForExit(1500))
                 {
                     process.Kill(entireProcessTree: true);
                 }
+            }
+            catch (ArgumentException)
+            {
             }
             catch (InvalidOperationException)
             {
@@ -145,11 +145,35 @@ internal static class UpdateCommand
             catch (System.ComponentModel.Win32Exception)
             {
             }
-            finally
-            {
-                process.Dispose();
-            }
         }
+    }
+
+    private static List<int> VisibleTerminalVPids()
+    {
+        var pids = new HashSet<int>();
+        EnumWindows((hwnd, _) =>
+        {
+            if (!IsWindowVisible(hwnd))
+            {
+                return true;
+            }
+
+            GetWindowThreadProcessId(hwnd, out var pid);
+            try
+            {
+                using var process = Process.GetProcessById((int)pid);
+                if (process.ProcessName.Equals("TerminalV", StringComparison.OrdinalIgnoreCase))
+                {
+                    pids.Add((int)pid);
+                }
+            }
+            catch (ArgumentException)
+            {
+            }
+
+            return true;
+        }, IntPtr.Zero);
+        return pids.ToList();
     }
 
     private static void CloseWindows(int processId)
@@ -178,6 +202,9 @@ internal static class UpdateCommand
 
     [DllImport("user32.dll")]
     private static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    private static extern bool IsWindowVisible(IntPtr hWnd);
 
     private static bool OtherTerminalVRunning()
     {
