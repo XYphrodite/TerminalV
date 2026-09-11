@@ -10,16 +10,20 @@ namespace TerminalV;
 
 public partial class App : Application
 {
-    private void OnStartup(object sender, StartupEventArgs e)
+    protected override void OnStartup(StartupEventArgs e)
     {
         var argv = Environment.GetCommandLineArgs().Skip(1).ToArray();
         if (argv.Length > 0)
         {
-            Shutdown(RunCli(argv));
-            return;
+            // Single-file host reads bundled assemblies from its own image.
+            // After `update` replaces that file, returning into WPF (Shutdown /
+            // DoStartup) loads types such as System.ComponentModel from the new
+            // bundle and crashes. Leave the process here.
+            Environment.Exit(RunCli(argv));
         }
 
         PendingUpdateApplier.Apply(Environment.ProcessPath);
+        base.OnStartup(e);
         new MainWindow().Show();
     }
 
