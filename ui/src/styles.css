@@ -389,7 +389,7 @@ body,
 .pane {
   position: absolute;
   inset: 0;
-  visibility: hidden;
+  display: none;
   pointer-events: none;
 }
 
@@ -403,8 +403,9 @@ body,
 }
 
 .pane.active {
-  visibility: visible;
+  display: block;
   pointer-events: auto;
+  z-index: 2;
 }
 
 .terminal-host {
