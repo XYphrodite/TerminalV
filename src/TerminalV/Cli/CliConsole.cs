@@ -1,71 +1,25 @@
-using System.IO;
-using System.Runtime.InteropServices;
 using System.Text;
 
 namespace TerminalV.Cli;
 
 internal static class CliConsole
 {
-    private const uint AttachParentProcess = 0xFFFFFFFF;
-
-    private static TextWriter? _out;
-    private static TextWriter? _err;
-    private static bool _attached;
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern bool AttachConsole(uint dwProcessId);
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern bool FreeConsole();
-
     public static void Attach()
     {
-        if (_attached)
-        {
-            return;
-        }
-
-        AttachConsole(AttachParentProcess);
-        var encoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
-        _out = new StreamWriter(Console.OpenStandardOutput(), encoding) { AutoFlush = true };
-        _err = new StreamWriter(Console.OpenStandardError(), encoding) { AutoFlush = true };
-        Console.SetOut(_out);
-        Console.SetError(_err);
-        _attached = true;
-        // Parent PowerShell still has the caret on the command line; start on a new row.
-        _out.WriteLine();
-        _out.Flush();
+        Console.OutputEncoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
     }
 
-    public static void WriteLine(string text)
-    {
-        Attach();
-        _out!.WriteLine(text);
-    }
+    public static void WriteLine(string text) => Console.WriteLine(text);
 
-    public static void WriteError(string text)
-    {
-        Attach();
-        _err!.WriteLine(text);
-    }
+    public static void WriteError(string text) => Console.Error.WriteLine(text);
 
     public static void Flush()
     {
-        _out?.Flush();
-        _err?.Flush();
         Console.Out.Flush();
         Console.Error.Flush();
     }
 
-    public static void Detach()
-    {
-        Flush();
-        if (_attached)
-        {
-            FreeConsole();
-            _attached = false;
-        }
-    }
+    public static void Detach() => Flush();
 
     public static string HelpText(string version) =>
         $"""
