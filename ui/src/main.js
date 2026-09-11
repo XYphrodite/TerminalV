@@ -294,9 +294,10 @@ function activate(id) {
     item.pane.classList.toggle("active", item.id === id);
   }
   renderTabs();
-  tab.term.focus();
   requestAnimationFrame(() => {
+    tab.term.refresh(0, Math.max(0, tab.term.rows - 1));
     tab.fit.fit();
+    tab.term.focus();
     post({ type: "resize", id: tab.id, cols: tab.term.cols, rows: tab.term.rows });
   });
   schedulePersist();
