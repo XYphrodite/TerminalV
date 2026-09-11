@@ -90,6 +90,55 @@ function Get-ReleaseTag {
     return 'latest'
 }
 
+function Save-ReleaseAsset {
+    param(
+        [Parameter(Mandatory = $true)][string] $Url,
+        [Parameter(Mandatory = $true)][string] $Destination,
+        [Parameter(Mandatory = $true)][string] $Name
+    )
+
+    # HttpWebRequest rather than Invoke-WebRequest: in Windows PowerShell 5.1
+    # IWR buffers the body and its built-in bar makes a ~60 MB download crawl.
+    # Streaming plus a throttled Write-Progress bar stays honest and fast.
+    $request = [Net.HttpWebRequest]::Create($Url)
+    $request.UserAgent = 'terminalv-installer'
+    $request.Timeout = 60000
+    $request.ReadWriteTimeout = 300000
+    $request.AllowAutoRedirect = $true
+
+    $response = $request.GetResponse()
+    try {
+        $total = $response.ContentLength
+        $source = $response.GetResponseStream()
+        $file = [IO.File]::Create($Destination)
+        try {
+            $buffer = New-Object byte[] 81920
+            $received = 0L
+            $started = [Diagnostics.Stopwatch]::StartNew()
+            $lastReport = [Diagnostics.Stopwatch]::StartNew()
+            while (($read = $source.Read($buffer, 0, $buffer.Length)) -gt 0) {
+                $file.Write($buffer, 0, $read)
+                $received += $read
+                if ($lastReport.ElapsedMilliseconds -ge 150 -or ($total -gt 0 -and $received -ge $total)) {
+                    $lastReport.Restart()
+                    $percent = if ($total -gt 0) { [math]::Min(100, [int](100.0 * $received / $total)) } else { 0 }
+                    $speed = if ($started.Elapsed.TotalSeconds -gt 0) { $received / 1MB / $started.Elapsed.TotalSeconds } else { 0 }
+                    $totalMb = if ($total -gt 0) { $total / 1MB } else { $received / 1MB }
+                    Write-Progress -Activity "Downloading $Name" `
+                        -Status ("{0:N1} / {1:N1} MB   {2:N1} MB/s" -f ($received / 1MB), $totalMb, $speed) `
+                        -PercentComplete $percent
+                }
+            }
+        } finally {
+            $file.Dispose()
+            $source.Dispose()
+            Write-Progress -Activity "Downloading $Name" -Completed
+        }
+    } finally {
+        $response.Close()
+    }
+}
+
 try {
     $tag = Get-ReleaseTag -Requested $Version
     if ($tag -eq 'latest') {
@@ -104,7 +153,7 @@ try {
     $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("terminalv-" + [Guid]::NewGuid().ToString('N').Substring(0, 8))
     New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
     $tempZip = Join-Path $tempRoot $AssetName
-    Invoke-WebRequest -Uri $zipUrl -OutFile $tempZip -UseBasicParsing -Headers $UserAgent
+    Save-ReleaseAsset -Url $zipUrl -Destination $tempZip -Name $AssetName
 
     $expected = $null
     $tempSha = Join-Path $tempRoot "$AssetName.sha256"
