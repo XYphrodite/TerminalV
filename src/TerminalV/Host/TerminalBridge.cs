@@ -132,7 +132,10 @@ internal sealed class TerminalBridge : IDisposable
                 PersistSettings(message.Data);
                 break;
             case "persist-sessions":
-                PersistSessions(message.Data);
+                PersistSessions(message);
+                break;
+            case "ready":
+                SendInit();
                 break;
             case "pick-background":
                 PickBackground();
@@ -340,19 +343,27 @@ internal sealed class TerminalBridge : IDisposable
         }
     }
 
-    private void PersistSessions(string? json)
+    private void PersistSessions(IncomingMessage message)
     {
-        if (json is null)
-        {
-            return;
-        }
-
         try
         {
-            var sessions = JsonSerializer.Deserialize<List<SessionRecord>>(json, JsonOptions);
-            _db.SaveSessions(sessions ?? []);
+            List<SessionRecord>? sessions = message.Sessions;
+            if (sessions is null && !string.IsNullOrWhiteSpace(message.Data))
+            {
+                sessions = JsonSerializer.Deserialize<List<SessionRecord>>(message.Data, JsonOptions);
+            }
+
+            if (sessions is null)
+            {
+                return;
+            }
+
+            _db.SaveSessions(sessions);
         }
         catch (JsonException)
+        {
+        }
+        catch (Microsoft.Data.Sqlite.SqliteException)
         {
         }
     }

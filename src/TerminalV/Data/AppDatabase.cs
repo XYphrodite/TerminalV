@@ -103,12 +103,12 @@ internal sealed class AppDatabase : IDisposable
             insert.Transaction = tx;
             insert.CommandText = """
                 INSERT INTO sessions(id, title, custom_title, sort_order, is_active, created_at, updated_at)
-                VALUES ($id, $title, $custom, $order, $active, $now, $now)
+                VALUES ($id, $title, $custom, $sort, $active, $now, $now)
                 """;
             insert.Parameters.AddWithValue("$id", session.Id);
             insert.Parameters.AddWithValue("$title", session.Title);
             insert.Parameters.AddWithValue("$custom", (object?)session.CustomTitle ?? DBNull.Value);
-            insert.Parameters.AddWithValue("$order", session.SortOrder);
+            insert.Parameters.AddWithValue("$sort", session.SortOrder);
             insert.Parameters.AddWithValue("$active", session.Active ? 1 : 0);
             insert.Parameters.AddWithValue("$now", now);
             insert.ExecuteNonQuery();
@@ -135,12 +135,19 @@ internal sealed class AppDatabase : IDisposable
 
     private void EnsureSchema()
     {
-        using var cmd = _connection.CreateCommand();
-        cmd.CommandText = """
-            CREATE TABLE IF NOT EXISTS settings (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL
-            );
+        using (var settings = _connection.CreateCommand())
+        {
+            settings.CommandText = """
+                CREATE TABLE IF NOT EXISTS settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                );
+                """;
+            settings.ExecuteNonQuery();
+        }
+
+        using var sessions = _connection.CreateCommand();
+        sessions.CommandText = """
             CREATE TABLE IF NOT EXISTS sessions (
                 id TEXT PRIMARY KEY,
                 title TEXT NOT NULL,
@@ -151,6 +158,6 @@ internal sealed class AppDatabase : IDisposable
                 updated_at TEXT NOT NULL
             );
             """;
-        cmd.ExecuteNonQuery();
+        sessions.ExecuteNonQuery();
     }
 }

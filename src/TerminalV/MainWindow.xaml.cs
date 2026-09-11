@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.IO;
 using System.Windows;
 using Microsoft.Web.WebView2.Core;
@@ -9,6 +10,7 @@ namespace TerminalV;
 public partial class MainWindow : Window
 {
     private TerminalBridge? _bridge;
+    private bool _allowClose;
 
     public MainWindow()
     {
@@ -16,6 +18,7 @@ public partial class MainWindow : Window
         WindowFrame.Hook(this);
         WebView.DefaultBackgroundColor = System.Drawing.Color.FromArgb(255, 11, 13, 16);
         Loaded += OnLoaded;
+        Closing += OnClosing;
         Closed += (_, _) => _bridge?.Dispose();
         UpdateMaximizeGlyph();
     }
@@ -80,6 +83,30 @@ public partial class MainWindow : Window
         };
 
         core.Navigate("https://terminalv.local/index.html");
+    }
+
+    private async void OnClosing(object? sender, CancelEventArgs e)
+    {
+        if (_allowClose)
+        {
+            return;
+        }
+
+        e.Cancel = true;
+        try
+        {
+            if (WebView.CoreWebView2 is not null)
+            {
+                await WebView.ExecuteScriptAsync("window.terminalvFlush && window.terminalvFlush()");
+                await Task.Delay(80);
+            }
+        }
+        catch
+        {
+        }
+
+        _allowClose = true;
+        Close();
     }
 
     private void Minimize_Click(object sender, RoutedEventArgs e) =>
