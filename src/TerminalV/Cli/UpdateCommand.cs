@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using TerminalV.Update;
 
 namespace TerminalV.Cli;
@@ -88,31 +89,72 @@ internal static class UpdateCommand
 
     private static void RestartOpenWindows(string exePath)
     {
+        var quoted = exePath.Replace("\"", "\"\"");
+        // `start` detaches from this process tree so the relaunch survives if
+        // this updater is a child of the GUI we are about to close.
+        Process.Start(new ProcessStartInfo
+        {
+            FileName = "cmd.exe",
+            Arguments = "/c start \"\" cmd /c \"ping 127.0.0.1 -n 3 >nul & start \"\" \"" + quoted + "\"\"",
+            UseShellExecute = false,
+            CreateNoWindow = true
+        });
+
         var current = Environment.ProcessId;
         foreach (var process in Process.GetProcessesByName("TerminalV"))
         {
             try
             {
-                if (process.Id != current)
+                if (process.Id == current)
                 {
-                    process.CloseMainWindow();
+                    continue;
                 }
+
+                CloseWindows(process.Id);
+                if (!process.WaitForExit(1500))
+                {
+                    process.Kill(entireProcessTree: true);
+                }
+            }
+            catch (InvalidOperationException)
+            {
+            }
+            catch (System.ComponentModel.Win32Exception)
+            {
             }
             finally
             {
                 process.Dispose();
             }
         }
-
-        var quoted = "\"" + exePath.Replace("\"", "\\\"") + "\"";
-        Process.Start(new ProcessStartInfo
-        {
-            FileName = "cmd.exe",
-            Arguments = "/c ping 127.0.0.1 -n 3 >nul & start \"\" " + quoted,
-            UseShellExecute = false,
-            CreateNoWindow = true
-        });
     }
+
+    private static void CloseWindows(int processId)
+    {
+        EnumWindows((hwnd, _) =>
+        {
+            GetWindowThreadProcessId(hwnd, out var pid);
+            if (pid == (uint)processId)
+            {
+                PostMessage(hwnd, WmClose, IntPtr.Zero, IntPtr.Zero);
+            }
+
+            return true;
+        }, IntPtr.Zero);
+    }
+
+    private const uint WmClose = 0x0010;
+
+    private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    private static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+
+    [DllImport("user32.dll")]
+    private static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
 
     private static bool OtherTerminalVRunning()
     {
