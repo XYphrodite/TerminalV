@@ -282,6 +282,52 @@ function finishRename(tab, value) {
   schedulePersist();
 }
 
+function dropWebgl(tab) {
+  if (!tab.webgl) {
+    return;
+  }
+
+  try {
+    tab.webgl.dispose();
+  } catch {
+    // already gone
+  }
+  tab.webgl = null;
+}
+
+function ensureWebgl(tab) {
+  if (tab.webgl) {
+    return;
+  }
+
+  try {
+    tab.webgl = new WebglAddon();
+    tab.webgl.onContextLoss?.(() => dropWebgl(tab));
+    tab.term.loadAddon(tab.webgl);
+  } catch {
+    tab.webgl = null;
+  }
+}
+
+function patchTabRow(tab) {
+  const row = tabsEl.querySelector(`[data-id="${CSS.escape(tab.id)}"]`);
+  if (!row) {
+    renderTabs();
+    return;
+  }
+
+  row.classList.toggle("active", tab.id === activeId);
+  row.classList.toggle("unread", Boolean(tab.unread));
+  const title = row.querySelector(".tab-title");
+  if (title && !tab.renaming) {
+    title.textContent = tab.customTitle || tab.title;
+  }
+  const meta = row.querySelector(".tab-meta");
+  if (meta) {
+    meta.textContent = tab.exited ? "завершена" : shellName;
+  }
+}
+
 function activate(id) {
   const tab = tabs.find((item) => item.id === id);
   if (!tab) {
@@ -291,14 +337,24 @@ function activate(id) {
   activeId = id;
   tab.unread = false;
   for (const item of tabs) {
-    item.pane.classList.toggle("active", item.id === id);
+    const on = item.id === id;
+    item.pane.classList.toggle("active", on);
+    if (on) {
+      ensureWebgl(item);
+    } else {
+      dropWebgl(item);
+    }
+    patchTabRow(item);
   }
-  renderTabs();
   requestAnimationFrame(() => {
+    const beforeCols = tab.term.cols;
+    const beforeRows = tab.term.rows;
     tab.term.refresh(0, Math.max(0, tab.term.rows - 1));
     tab.fit.fit();
     tab.term.focus();
-    post({ type: "resize", id: tab.id, cols: tab.term.cols, rows: tab.term.rows });
+    if (tab.term.cols !== beforeCols || tab.term.rows !== beforeRows) {
+      post({ type: "resize", id: tab.id, cols: tab.term.cols, rows: tab.term.rows });
+    }
   });
   schedulePersist();
 }
@@ -473,11 +529,6 @@ function newTab(options = {}) {
   const serialize = new SerializeAddon();
   term.loadAddon(serialize);
   term.open(hostEl);
-  try {
-    term.loadAddon(new WebglAddon());
-  } catch {
-    // canvas renderer is fine
-  }
 
   if (options.buffer) {
     term.write(options.buffer);
@@ -499,7 +550,8 @@ function newTab(options = {}) {
     overlayBtn,
     term,
     fit,
-    serialize
+    serialize,
+    webgl: null
   };
 
   overlayBtn.addEventListener("click", () => restart(tab));
@@ -511,7 +563,7 @@ function newTab(options = {}) {
     }
     tab.title = cleaned;
     guessCwd(tab);
-    renderTabs();
+    patchTabRow(tab);
     schedulePersist();
   });
   attachCopyPaste(tab);
@@ -526,6 +578,9 @@ function newTab(options = {}) {
   observer.observe(hostEl);
 
   tabs.push(tab);
+  if (!options.skipActivate) {
+    ensureWebgl(tab);
+  }
   const cols = term.cols || 80;
   const rows = term.rows || 24;
   if (options.live) {
@@ -768,9 +823,9 @@ function handleHost(message) {
   if (message.type === "data") {
     tab.term.write(message.data ?? "");
     schedulePersist();
-    if (tab.id !== activeId) {
+    if (tab.id !== activeId && !tab.unread) {
       tab.unread = true;
-      renderTabs();
+      patchTabRow(tab);
     }
     return;
   }
