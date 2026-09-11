@@ -48,6 +48,19 @@ function Write-Step {
     Write-Host "==> $Message" -ForegroundColor Cyan
 }
 
+function Get-ResponseUri {
+    param($Response)
+
+    if ($null -eq $Response) { return $null }
+    $base = $Response.BaseResponse
+    if ($null -eq $base) { return $null }
+    if ($base.ResponseUri) { return [string]$base.ResponseUri }
+    if ($base.RequestMessage -and $base.RequestMessage.RequestUri) {
+        return [string]$base.RequestMessage.RequestUri
+    }
+    return $null
+}
+
 function Get-ReleaseTag {
     param([string] $Requested)
 
@@ -56,19 +69,22 @@ function Get-ReleaseTag {
         return $Requested
     }
 
-    $latestUrl = "https://github.com/$Repository/releases/latest"
     try {
-        $null = Invoke-WebRequest -Uri $latestUrl -MaximumRedirection 0 -UseBasicParsing -Headers $UserAgent
-    } catch {
-        $response = $_.Exception.Response
-        if ($response -and $response.Headers['Location']) {
-            $location = [string]$response.Headers['Location']
-            if ($location -match '/releases/tag/(v?[A-Za-z0-9._-]+)') {
-                $tag = $Matches[1]
-                if ($tag -notmatch '^v') { $tag = "v$tag" }
-                return $tag
-            }
+        $resp = Invoke-WebRequest -Uri "https://github.com/$Repository/releases/latest" -UseBasicParsing -Headers $UserAgent
+        $uri = Get-ResponseUri $resp
+        if ($uri -match '/releases/tag/(v?[A-Za-z0-9._-]+)') {
+            $tag = $Matches[1]
+            if ($tag -notmatch '^v') { $tag = "v$tag" }
+            return $tag
         }
+
+        $html = $resp.Content
+        if ($html -is [byte[]]) { $html = [Text.Encoding]::UTF8.GetString($html) }
+        if ([string]$html -match '/releases/tag/(v\d+\.\d+\.\d+)') {
+            return $Matches[1]
+        }
+    } catch {
+        Write-Verbose "could not resolve latest tag: $($_.Exception.Message)"
     }
 
     return 'latest'
@@ -91,8 +107,10 @@ try {
     Invoke-WebRequest -Uri $zipUrl -OutFile $tempZip -UseBasicParsing -Headers $UserAgent
 
     $expected = $null
+    $tempSha = Join-Path $tempRoot "$AssetName.sha256"
     try {
-        $shaBody = (Invoke-WebRequest -Uri $shaUrl -UseBasicParsing -Headers $UserAgent).Content
+        Invoke-WebRequest -Uri $shaUrl -OutFile $tempSha -UseBasicParsing -Headers $UserAgent
+        $shaBody = [IO.File]::ReadAllText($tempSha)
         if ($shaBody -match '([0-9a-fA-F]{64})') {
             $expected = $Matches[1].ToLowerInvariant()
         }
