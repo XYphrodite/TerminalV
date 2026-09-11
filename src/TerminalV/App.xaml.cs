@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Text;
 using System.Windows;
+using TerminalV.Cli;
 using TerminalV.Pty;
 using TerminalV.Update;
 
@@ -11,30 +12,10 @@ public partial class App : Application
 {
     private void OnStartup(object sender, StartupEventArgs e)
     {
-        var args = Environment.GetCommandLineArgs();
-        if (HasFlag(args, "--help") || HasFlag(args, "-h") || HasFlag(args, "/?"))
+        var argv = Environment.GetCommandLineArgs().Skip(1).ToArray();
+        if (argv.Length > 0)
         {
-            WriteStdout(
-                $"""
-                TerminalV {AppVersion.Informational}
-                  --help       Print this text
-                  --version    Print the version
-                  --smoke      ConPTY self-test
-                """);
-            Shutdown(0);
-            return;
-        }
-
-        if (HasFlag(args, "--version"))
-        {
-            WriteStdout(AppVersion.Informational);
-            Shutdown(0);
-            return;
-        }
-
-        if (HasFlag(args, "--smoke"))
-        {
-            Shutdown(RunSmoke() ? 0 : 1);
+            Shutdown(RunCli(argv));
             return;
         }
 
@@ -42,18 +23,38 @@ public partial class App : Application
         new MainWindow().Show();
     }
 
-    private static bool HasFlag(string[] args, string flag) =>
-        args.Any(arg => string.Equals(arg, flag, StringComparison.OrdinalIgnoreCase));
-
-    private static void WriteStdout(string text)
+    private static int RunCli(string[] argv)
     {
-        using var stream = Console.OpenStandardOutput();
-        using var writer = new StreamWriter(stream, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false))
+        var command = argv[0];
+        if (IsHelp(command) || argv.Any(IsHelp) && !command.Equals("update", StringComparison.OrdinalIgnoreCase))
         {
-            AutoFlush = true
-        };
-        writer.WriteLine(text);
+            CliConsole.WriteLine(CliConsole.HelpText(AppVersion.Informational));
+            return 0;
+        }
+
+        if (command.Equals("--version", StringComparison.OrdinalIgnoreCase))
+        {
+            CliConsole.WriteLine(AppVersion.Informational);
+            return 0;
+        }
+
+        if (command.Equals("--smoke", StringComparison.OrdinalIgnoreCase))
+        {
+            return RunSmoke() ? 0 : 1;
+        }
+
+        if (command.Equals("update", StringComparison.OrdinalIgnoreCase))
+        {
+            return UpdateCommand.Run(argv.Skip(1).ToArray());
+        }
+
+        CliConsole.WriteError($"Unknown command: {command}");
+        CliConsole.WriteLine(CliConsole.HelpText(AppVersion.Informational));
+        return 1;
     }
+
+    private static bool IsHelp(string value) =>
+        value is "-h" or "-?" or "/?" || value.Equals("--help", StringComparison.OrdinalIgnoreCase);
 
     private static bool RunSmoke()
     {
