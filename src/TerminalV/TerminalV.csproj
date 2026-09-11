@@ -1,7 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <OutputType>WinExe</OutputType>
+    <OutputType>Exe</OutputType>
+    <StartupObject>TerminalV.Program</StartupObject>
+    <EnableDefaultApplicationDefinition>false</EnableDefaultApplicationDefinition>
     <TargetFramework>net10.0-windows</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
@@ -9,8 +11,8 @@
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <Product>TerminalV</Product>
     <AssemblyTitle>TerminalV</AssemblyTitle>
-    <Version>0.3.3</Version>
-    <InformationalVersion>0.3.3</InformationalVersion>
+    <Version>0.3.4</Version>
+    <InformationalVersion>0.3.4</InformationalVersion>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\TerminalV.ico</ApplicationIcon>
   </PropertyGroup>
@@ -27,6 +29,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ApplicationDefinition Remove="App.xaml" />
     <Resource Include="Assets\TerminalV.ico" />
   </ItemGroup>
 

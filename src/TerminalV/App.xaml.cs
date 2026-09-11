@@ -12,24 +12,12 @@ public partial class App : Application
 {
     protected override void OnStartup(StartupEventArgs e)
     {
-        var argv = Environment.GetCommandLineArgs().Skip(1).ToArray();
-        if (argv.Length > 0)
-        {
-            // Single-file host reads bundled assemblies from its own image.
-            // After `update` replaces that file, returning into WPF (Shutdown /
-            // DoStartup) loads types such as System.ComponentModel from the new
-            // bundle and crashes. Leave the process here.
-            var code = RunCli(argv);
-            CliConsole.Detach();
-            Environment.Exit(code);
-        }
-
         PendingUpdateApplier.Apply(Environment.ProcessPath);
         base.OnStartup(e);
         new MainWindow().Show();
     }
 
-    private static int RunCli(string[] argv)
+    internal static int RunCli(string[] argv)
     {
         var command = argv[0];
         if (IsHelp(command) || argv.Any(IsHelp) && !command.Equals("update", StringComparison.OrdinalIgnoreCase))
