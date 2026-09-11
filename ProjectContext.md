@@ -121,6 +121,7 @@ P/Invoke к `kernel32` для ConPTY написан вручную, отдель
 - `SelfUpdateService` сверяет SHA-256 zip, распаковывает, гоняет `TerminalV.exe --help` до замены и после, переименовывает текущий exe в `.old-*`.
 - `wwwroot` подменяется при следующем старте (`PendingUpdateApplier`), когда WebView2 уже не держит файлы.
 - Фоновая проверка после `init`; кнопка в сайдбаре ставит обновление и перезапускает процесс.
+- Подкоманда хоста `TerminalV update` / `TerminalV update --check` (`Cli/UpdateCommand.cs`): без окна, при открытом GUI не убивает сессии.
 
 **Dependencies**: `HttpClient`, `System.IO.Compression`, GitHub Releases API.
 
@@ -139,6 +140,7 @@ P/Invoke к `kernel32` для ConPTY написан вручную, отдель
 ```
 TerminalV/
 ├── src/TerminalV/          # WPF-хост
+│   ├── Cli/                # TerminalV update / --help
 │   ├── Host/               # JSON-мост с WebView2
 │   ├── Pty/                # ConPTY
 │   ├── App.xaml(.cs)
@@ -233,7 +235,7 @@ dotnet run --project src/TerminalV
 ## Document Information
 
 **Last Updated**: 2026-09-11  
-**Version**: 0.2.1  
+**Version**: 0.2.2  
 **Status**: Active  
 **Repository**: `https://github.com/XYphrodite/TerminalV`  
 **Workspace**: `C:\Repos\TerminalV`
