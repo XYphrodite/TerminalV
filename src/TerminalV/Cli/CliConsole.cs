@@ -32,6 +32,9 @@ internal static class CliConsole
         Console.SetOut(_out);
         Console.SetError(_err);
         _attached = true;
+        // Parent PowerShell still has the caret on the command line; start on a new row.
+        _out.WriteLine();
+        _out.Flush();
     }
 
     public static void WriteLine(string text)
