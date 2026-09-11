@@ -9,6 +9,12 @@ internal static class Program
     [STAThread]
     public static int Main(string[] args)
     {
+        if (args.Length > 0 && args[0].Equals("--host", StringComparison.OrdinalIgnoreCase))
+        {
+            TerminalV.Host.SessionHost.Run();
+            return 0;
+        }
+
         if (args.Length > 0)
         {
             Console.OutputEncoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);

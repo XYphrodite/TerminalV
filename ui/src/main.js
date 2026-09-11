@@ -160,12 +160,9 @@ function guessCwd(tab) {
 
 function serializeTab(tab) {
   try {
-    const length = tab.term.buffer.active.length;
-    const start = Math.max(0, length - 2000);
-    const end = Math.max(start, length - 1);
     return tab.serialize.serialize({
-      range: { start, end },
-      excludeAltBuffer: true
+      excludeAltBuffer: false,
+      excludeModes: false
     });
   } catch {
     return tab.buffer || "";
@@ -528,21 +525,21 @@ function newTab(options = {}) {
   observer.observe(hostEl);
 
   tabs.push(tab);
-  const createMsg = {
-    type: "create",
-    id,
-    cols: term.cols || 80,
-    rows: term.rows || 24,
-    cwd: options.cwd || undefined
-  };
-  if (!options.skipActivate) {
-    fit.fit();
-    createMsg.cols = term.cols;
-    createMsg.rows = term.rows;
-    post(createMsg);
-    activate(id);
+  const cols = term.cols || 80;
+  const rows = term.rows || 24;
+  if (options.live) {
+    post({ type: "attach", id });
   } else {
+    const createMsg = { type: "create", id, cols, rows, cwd: options.cwd || undefined };
+    if (!options.skipActivate) {
+      fit.fit();
+      createMsg.cols = term.cols;
+      createMsg.rows = term.rows;
+    }
     post(createMsg);
+  }
+  if (!options.skipActivate) {
+    activate(id);
   }
 }
 
@@ -684,14 +681,17 @@ function restoreSessions(records) {
     return;
   }
 
+  const live = new Set(window.__liveIds || []);
   let active = null;
   for (const record of records) {
+    const isLive = live.has(record.id);
     newTab({
       id: record.id,
       title: record.title,
       customTitle: record.customTitle,
-      buffer: record.buffer,
+      buffer: isLive ? undefined : record.buffer,
       cwd: record.cwd,
+      live: isLive,
       skipActivate: true
     });
     if (record.active) {
@@ -728,6 +728,7 @@ function handleHost(message) {
       Object.assign(settings, message.settings);
     }
     fillFonts(message.fonts);
+    window.__liveIds = message.liveIds || [];
     syncSettingsForm();
     if (tabs.length === 0) {
       restoreSessions(message.sessions);
