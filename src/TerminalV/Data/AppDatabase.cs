@@ -65,7 +65,7 @@ internal sealed class AppDatabase : IDisposable
     {
         using var cmd = _connection.CreateCommand();
         cmd.CommandText = """
-            SELECT id, title, custom_title, sort_order, is_active
+            SELECT id, title, custom_title, sort_order, is_active, buffer, cwd
             FROM sessions
             ORDER BY sort_order, updated_at
             """;
@@ -79,7 +79,9 @@ internal sealed class AppDatabase : IDisposable
                 Title = reader.GetString(1),
                 CustomTitle = reader.IsDBNull(2) ? null : reader.GetString(2),
                 SortOrder = reader.GetInt32(3),
-                Active = reader.GetInt32(4) != 0
+                Active = reader.GetInt32(4) != 0,
+                Buffer = reader.FieldCount > 5 && !reader.IsDBNull(5) ? reader.GetString(5) : null,
+                Cwd = reader.FieldCount > 6 && !reader.IsDBNull(6) ? reader.GetString(6) : null
             });
         }
 
@@ -102,14 +104,16 @@ internal sealed class AppDatabase : IDisposable
             using var insert = _connection.CreateCommand();
             insert.Transaction = tx;
             insert.CommandText = """
-                INSERT INTO sessions(id, title, custom_title, sort_order, is_active, created_at, updated_at)
-                VALUES ($id, $title, $custom, $sort, $active, $now, $now)
+                INSERT INTO sessions(id, title, custom_title, sort_order, is_active, buffer, cwd, created_at, updated_at)
+                VALUES ($id, $title, $custom, $sort, $active, $buffer, $cwd, $now, $now)
                 """;
             insert.Parameters.AddWithValue("$id", session.Id);
             insert.Parameters.AddWithValue("$title", session.Title);
             insert.Parameters.AddWithValue("$custom", (object?)session.CustomTitle ?? DBNull.Value);
             insert.Parameters.AddWithValue("$sort", session.SortOrder);
             insert.Parameters.AddWithValue("$active", session.Active ? 1 : 0);
+            insert.Parameters.AddWithValue("$buffer", (object?)session.Buffer ?? DBNull.Value);
+            insert.Parameters.AddWithValue("$cwd", (object?)session.Cwd ?? DBNull.Value);
             insert.Parameters.AddWithValue("$now", now);
             insert.ExecuteNonQuery();
         }
@@ -159,5 +163,20 @@ internal sealed class AppDatabase : IDisposable
             );
             """;
         sessions.ExecuteNonQuery();
+        TryAddColumn("ALTER TABLE sessions ADD COLUMN buffer TEXT;");
+        TryAddColumn("ALTER TABLE sessions ADD COLUMN cwd TEXT;");
+    }
+
+    private void TryAddColumn(string sql)
+    {
+        try
+        {
+            using var cmd = _connection.CreateCommand();
+            cmd.CommandText = sql;
+            cmd.ExecuteNonQuery();
+        }
+        catch (SqliteException)
+        {
+        }
     }
 }

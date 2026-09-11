@@ -18,4 +18,6 @@ internal sealed class SessionRecord
     public string? CustomTitle { get; set; }
     public int SortOrder { get; set; }
     public bool Active { get; set; }
+    public string? Buffer { get; set; }
+    public string? Cwd { get; set; }
 }

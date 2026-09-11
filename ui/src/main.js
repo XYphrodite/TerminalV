@@ -2,6 +2,7 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
+import { SerializeAddon } from "@xterm/addon-serialize";
 import "@xterm/xterm/css/xterm.css";
 import "./styles.css";
 import { THEMES, getTheme } from "./themes.js";
@@ -141,6 +142,36 @@ function persistSettings() {
   post({ type: "persist-settings", data: JSON.stringify(settings) });
 }
 
+function guessCwd(tab) {
+  const text = tab.title || "";
+  const match = text.match(/([A-Za-z]:\\(?:[^<>:"|?*\r\n]+\\)*[^<>:"|?*\r\n]*)/);
+  if (!match) {
+    return tab.cwd || null;
+  }
+
+  const path = match[1].replace(/\\+$/, "");
+  if (/\.(exe|dll|ps1)$/i.test(path)) {
+    return tab.cwd || null;
+  }
+
+  tab.cwd = path;
+  return path;
+}
+
+function serializeTab(tab) {
+  try {
+    const length = tab.term.buffer.active.length;
+    const start = Math.max(0, length - 2000);
+    const end = Math.max(start, length - 1);
+    return tab.serialize.serialize({
+      range: { start, end },
+      excludeAltBuffer: true
+    });
+  } catch {
+    return tab.buffer || "";
+  }
+}
+
 function persistSessions() {
   if (!readyForPersist) {
     return;
@@ -151,14 +182,16 @@ function persistSessions() {
     title: tab.title,
     customTitle: tab.customTitle ?? null,
     sortOrder: index,
-    active: tab.id === activeId
+    active: tab.id === activeId,
+    buffer: serializeTab(tab),
+    cwd: guessCwd(tab)
   }));
   post({ type: "persist-sessions", sessions: payload });
 }
 
 function schedulePersist() {
   window.clearTimeout(persistTimer);
-  persistTimer = window.setTimeout(persistSessions, 80);
+  persistTimer = window.setTimeout(persistSessions, 400);
 }
 
 window.terminalvFlush = () => {
@@ -439,6 +472,8 @@ function newTab(options = {}) {
   const fit = new FitAddon();
   term.loadAddon(fit);
   term.loadAddon(new WebLinksAddon());
+  const serialize = new SerializeAddon();
+  term.loadAddon(serialize);
   term.open(hostEl);
   try {
     term.loadAddon(new WebglAddon());
@@ -446,10 +481,16 @@ function newTab(options = {}) {
     // canvas renderer is fine
   }
 
+  if (options.buffer) {
+    term.write(options.buffer);
+  }
+
   const tab = {
     id,
     title: options.title || `Сессия ${index}`,
     customTitle: options.customTitle || undefined,
+    cwd: options.cwd || undefined,
+    buffer: options.buffer || "",
     renaming: false,
     unread: false,
     exited: false,
@@ -459,7 +500,8 @@ function newTab(options = {}) {
     overlayText,
     overlayBtn,
     term,
-    fit
+    fit,
+    serialize
   };
 
   overlayBtn.addEventListener("click", () => restart(tab));
@@ -470,6 +512,7 @@ function newTab(options = {}) {
       return;
     }
     tab.title = cleaned;
+    guessCwd(tab);
     renderTabs();
     schedulePersist();
   });
@@ -485,12 +528,21 @@ function newTab(options = {}) {
   observer.observe(hostEl);
 
   tabs.push(tab);
+  const createMsg = {
+    type: "create",
+    id,
+    cols: term.cols || 80,
+    rows: term.rows || 24,
+    cwd: options.cwd || undefined
+  };
   if (!options.skipActivate) {
     fit.fit();
-    post({ type: "create", id, cols: term.cols, rows: term.rows });
+    createMsg.cols = term.cols;
+    createMsg.rows = term.rows;
+    post(createMsg);
     activate(id);
   } else {
-    post({ type: "create", id, cols: 80, rows: 24 });
+    post(createMsg);
   }
 }
 
@@ -638,6 +690,8 @@ function restoreSessions(records) {
       id: record.id,
       title: record.title,
       customTitle: record.customTitle,
+      buffer: record.buffer,
+      cwd: record.cwd,
       skipActivate: true
     });
     if (record.active) {
@@ -711,6 +765,7 @@ function handleHost(message) {
 
   if (message.type === "data") {
     tab.term.write(message.data ?? "");
+    schedulePersist();
     if (tab.id !== activeId) {
       tab.unread = true;
       renderTabs();
