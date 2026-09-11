@@ -1,3 +1,5 @@
+using TerminalV.Data;
+
 namespace TerminalV.Host;
 
 internal sealed class IncomingMessage
@@ -8,4 +10,5 @@ internal sealed class IncomingMessage
     public string? RequestId { get; set; }
     public int Cols { get; set; }
     public int Rows { get; set; }
+    public List<SessionRecord>? Sessions { get; set; }
 }

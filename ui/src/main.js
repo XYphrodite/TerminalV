@@ -39,6 +39,7 @@ let nextIndex = 1;
 let appVersion = "0.3.0";
 let updateSupported = false;
 let persistTimer = 0;
+let readyForPersist = false;
 const clipboardWaiters = new Map();
 
 const settings = {
@@ -141,6 +142,10 @@ function persistSettings() {
 }
 
 function persistSessions() {
+  if (!readyForPersist) {
+    return;
+  }
+
   const payload = tabs.map((tab, index) => ({
     id: tab.id,
     title: tab.title,
@@ -148,13 +153,20 @@ function persistSessions() {
     sortOrder: index,
     active: tab.id === activeId
   }));
-  post({ type: "persist-sessions", data: JSON.stringify(payload) });
+  post({ type: "persist-sessions", sessions: payload });
 }
 
 function schedulePersist() {
   window.clearTimeout(persistTimer);
-  persistTimer = window.setTimeout(persistSessions, 200);
+  persistTimer = window.setTimeout(persistSessions, 80);
 }
+
+window.terminalvFlush = () => {
+  window.clearTimeout(persistTimer);
+  readyForPersist = true;
+  persistSessions();
+  persistSettings();
+};
 
 function renderTabs() {
   tabsEl.replaceChildren();
@@ -614,7 +626,9 @@ function toggleSidebar() {
 
 function restoreSessions(records) {
   if (!records?.length) {
+    readyForPersist = true;
     newTab();
+    persistSessions();
     return;
   }
 
@@ -631,7 +645,9 @@ function restoreSessions(records) {
     }
   }
   nextIndex = tabs.length + 1;
+  readyForPersist = true;
   activate(active || tabs[0].id);
+  persistSessions();
 }
 
 function handleHost(message) {
@@ -838,6 +854,7 @@ window.addEventListener(
 const webview = host();
 if (webview) {
   webview.addEventListener("message", (event) => handleHost(event.data));
+  post({ type: "ready" });
 } else {
   emptyEl.querySelector(".empty-sub").textContent =
     "Откройте приложение TerminalV, а не этот файл в браузере.";
