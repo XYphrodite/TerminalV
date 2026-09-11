@@ -31,6 +31,7 @@ internal sealed class TerminalBridge : IDisposable
     private readonly bool _canUpdate;
     private readonly CancellationTokenSource _updateCts = new();
     private readonly AppDatabase _db = new();
+    private readonly SessionClient _host = new();
     private int _updateBusy;
     private bool _disposed;
 
@@ -42,6 +43,8 @@ internal sealed class TerminalBridge : IDisposable
         _cwd = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         _buildNumber = Environment.OSVersion.Version.Build;
         _canUpdate = AppVersion.CanSelfUpdate(Environment.ProcessPath);
+        _host.Data += (id, data) => Post(new { type = "data", id, data });
+        _host.Exited += (id, code) => Post(new { type = "exit", id, code });
     }
 
     public void SendInit()
@@ -55,6 +58,7 @@ internal sealed class TerminalBridge : IDisposable
             updateSupported = _canUpdate,
             settings = _db.LoadSettings(),
             sessions = _db.LoadSessions(),
+            liveIds = LiveIds(),
             fonts = SystemFonts()
         });
 
@@ -86,16 +90,36 @@ internal sealed class TerminalBridge : IDisposable
             case "create":
                 Create(message);
                 break;
-            case "write":
-                if (message.Id is not null && message.Data is not null && _sessions.TryGetValue(message.Id, out var writing))
+            case "attach":
+                if (message.Id is not null && _host.Ensure())
                 {
-                    writing.Write(message.Data);
+                    _host.Attach(message.Id);
+                }
+                break;
+            case "write":
+                if (message.Id is not null && message.Data is not null)
+                {
+                    if (_host.Ensure())
+                    {
+                        _host.Write(message.Id, message.Data);
+                    }
+                    else if (_sessions.TryGetValue(message.Id, out var writing))
+                    {
+                        writing.Write(message.Data);
+                    }
                 }
                 break;
             case "resize":
-                if (message.Id is not null && _sessions.TryGetValue(message.Id, out var resizing))
+                if (message.Id is not null)
                 {
-                    resizing.Resize(message.Cols, message.Rows);
+                    if (_host.Ensure())
+                    {
+                        _host.Resize(message.Id, message.Cols, message.Rows);
+                    }
+                    else if (_sessions.TryGetValue(message.Id, out var resizing))
+                    {
+                        resizing.Resize(message.Cols, message.Rows);
+                    }
                 }
                 break;
             case "kill":
@@ -154,9 +178,13 @@ internal sealed class TerminalBridge : IDisposable
         _updateCts.Cancel();
         _updateCts.Dispose();
         _db.Dispose();
+        _host.Dispose();
         foreach (var id in _sessions.Keys)
         {
-            Kill(id);
+            if (_sessions.TryRemove(id, out var session))
+            {
+                session.Dispose();
+            }
         }
     }
 
@@ -283,6 +311,18 @@ internal sealed class TerminalBridge : IDisposable
             tag = report.Tag
         });
 
+    private string[] LiveIds()
+    {
+        try
+        {
+            return _host.Ensure() ? _host.List() : [];
+        }
+        catch
+        {
+            return [];
+        }
+    }
+
     private void Create(IncomingMessage message)
     {
         if (string.IsNullOrWhiteSpace(message.Id))
@@ -290,23 +330,26 @@ internal sealed class TerminalBridge : IDisposable
             return;
         }
 
-        Kill(message.Id);
-
         try
         {
             var cwd = !string.IsNullOrWhiteSpace(message.Cwd) && Directory.Exists(message.Cwd)
                 ? message.Cwd
                 : _cwd;
+            if (_host.Ensure())
+            {
+                _host.Create(message.Id, Math.Max(message.Cols, 1), Math.Max(message.Rows, 1), cwd);
+                return;
+            }
+
+            KillLocal(message.Id);
             var session = ConPtySession.Start(
                 message.Id,
                 _shell.CommandLine,
                 cwd,
                 Math.Max(message.Cols, 1),
                 Math.Max(message.Rows, 1));
-
             session.Output += data => Post(new { type = "data", id = session.Id, data });
             session.Exited += code => Post(new { type = "exit", id = session.Id, code });
-
             if (!_sessions.TryAdd(session.Id, session))
             {
                 session.Dispose();
@@ -319,6 +362,16 @@ internal sealed class TerminalBridge : IDisposable
     }
 
     private void Kill(string id)
+    {
+        if (_host.Ensure())
+        {
+            _host.Kill(id);
+        }
+
+        KillLocal(id);
+    }
+
+    private void KillLocal(string id)
     {
         if (_sessions.TryRemove(id, out var session))
         {
