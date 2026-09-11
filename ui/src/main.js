@@ -10,12 +10,18 @@ const panesEl = document.getElementById("panes");
 const emptyEl = document.getElementById("empty");
 const newTabBtn = document.getElementById("new-tab");
 const emptyNewBtn = document.getElementById("empty-new");
+const updateBar = document.getElementById("update-bar");
+const updateText = document.getElementById("update-text");
+const updateApply = document.getElementById("update-apply");
+const versionBtn = document.getElementById("app-version");
 
 const tabs = [];
 let activeId = null;
 let shellName = "PowerShell";
 let buildNumber = 22621;
 let nextIndex = 1;
+let appVersion = "0.2.0";
+let updateSupported = false;
 const clipboardWaiters = new Map();
 
 const theme = {
@@ -353,6 +359,45 @@ function restart(tab) {
   renderTabs();
 }
 
+function setUpdateBar(visible, text, options = {}) {
+  updateBar.classList.toggle("hidden", !visible);
+  updateBar.classList.toggle("error", Boolean(options.error));
+  updateText.textContent = text || "";
+  updateApply.classList.toggle("hidden", Boolean(options.hideButton));
+  updateApply.disabled = Boolean(options.disabled);
+  if (options.buttonLabel) {
+    updateApply.textContent = options.buttonLabel;
+  }
+}
+
+function handleUpdate(message) {
+  if (message.status === "available") {
+    setUpdateBar(true, `Доступно ${message.latest}`, { buttonLabel: "Обновить" });
+    return;
+  }
+  if (message.status === "downloading") {
+    setUpdateBar(true, "Скачивание обновления…", { hideButton: true });
+    return;
+  }
+  if (message.status === "restarting") {
+    setUpdateBar(true, `Установлено ${message.latest}. Перезапуск…`, { hideButton: true });
+    return;
+  }
+  if (message.status === "current") {
+    setUpdateBar(true, `Установлена актуальная версия ${message.current}`, {
+      hideButton: true
+    });
+    setTimeout(() => updateBar.classList.add("hidden"), 2500);
+    return;
+  }
+  if (message.status === "unsupported" || message.status === "error") {
+    setUpdateBar(true, message.message || "Не удалось проверить обновление", {
+      error: true,
+      hideButton: true
+    });
+  }
+}
+
 function handleHost(message) {
   if (!message || typeof message !== "object") {
     return;
@@ -365,11 +410,24 @@ function handleHost(message) {
     if (message.buildNumber) {
       buildNumber = message.buildNumber;
     }
+    if (message.version) {
+      appVersion = message.version;
+      versionBtn.textContent = `v${appVersion}`;
+    }
+    updateSupported = Boolean(message.updateSupported);
+    versionBtn.title = updateSupported
+      ? "Проверить обновления"
+      : "Самообновление работает в установленной копии";
     if (tabs.length === 0) {
       newTab();
     } else {
       renderTabs();
     }
+    return;
+  }
+
+  if (message.type === "update") {
+    handleUpdate(message);
     return;
   }
 
@@ -414,6 +472,8 @@ function handleHost(message) {
 
 newTabBtn.addEventListener("click", newTab);
 emptyNewBtn.addEventListener("click", newTab);
+updateApply.addEventListener("click", () => post({ type: "update-apply" }));
+versionBtn.addEventListener("click", () => post({ type: "update-check" }));
 
 window.addEventListener(
   "keydown",

@@ -1,9 +1,11 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Threading;
 using Microsoft.Web.WebView2.Core;
 using TerminalV.Pty;
+using TerminalV.Update;
 
 namespace TerminalV.Host;
 
@@ -21,6 +23,9 @@ internal sealed class TerminalBridge : IDisposable
     private readonly ShellInfo _shell;
     private readonly string _cwd;
     private readonly int _buildNumber;
+    private readonly bool _canUpdate;
+    private readonly CancellationTokenSource _updateCts = new();
+    private int _updateBusy;
     private bool _disposed;
 
     public TerminalBridge(Dispatcher dispatcher, CoreWebView2 webView)
@@ -30,6 +35,7 @@ internal sealed class TerminalBridge : IDisposable
         _shell = ShellResolver.Resolve();
         _cwd = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         _buildNumber = Environment.OSVersion.Version.Build;
+        _canUpdate = AppVersion.CanSelfUpdate(Environment.ProcessPath);
     }
 
     public void SendInit()
@@ -38,8 +44,15 @@ internal sealed class TerminalBridge : IDisposable
         {
             type = "init",
             shellName = _shell.DisplayName,
-            buildNumber = _buildNumber
+            buildNumber = _buildNumber,
+            version = AppVersion.Informational,
+            updateSupported = _canUpdate
         });
+
+        if (_canUpdate)
+        {
+            _ = CheckUpdatesAsync(silent: true);
+        }
     }
 
     public void Handle(string json)
@@ -100,6 +113,12 @@ internal sealed class TerminalBridge : IDisposable
                     });
                 }
                 break;
+            case "update-check":
+                _ = CheckUpdatesAsync(silent: false);
+                break;
+            case "update-apply":
+                _ = ApplyUpdateAsync();
+                break;
         }
     }
 
@@ -111,11 +130,136 @@ internal sealed class TerminalBridge : IDisposable
         }
 
         _disposed = true;
+        _updateCts.Cancel();
+        _updateCts.Dispose();
         foreach (var id in _sessions.Keys)
         {
             Kill(id);
         }
     }
+
+    private async Task CheckUpdatesAsync(bool silent)
+    {
+        if (!_canUpdate)
+        {
+            if (!silent)
+            {
+                Post(new
+                {
+                    type = "update",
+                    status = "unsupported",
+                    message = "Обновление доступно только для установленной копии TerminalV."
+                });
+            }
+
+            return;
+        }
+
+        try
+        {
+            using var source = new GitHubReleaseSource();
+            var service = new SelfUpdateService(Environment.ProcessPath!, AppVersion.Current, source);
+            var report = await service.CheckAsync(_updateCts.Token).ConfigureAwait(false);
+            if (report.Status == SelfUpdateStatus.AlreadyCurrent)
+            {
+                if (!silent)
+                {
+                    PostUpdate("current", report);
+                }
+
+                return;
+            }
+
+            PostUpdate("available", report);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception ex) when (silent)
+        {
+            Debug.WriteLine(ex);
+        }
+        catch (Exception ex)
+        {
+            Post(new { type = "update", status = "error", message = ex.Message });
+        }
+    }
+
+    private async Task ApplyUpdateAsync()
+    {
+        if (!_canUpdate)
+        {
+            Post(new
+            {
+                type = "update",
+                status = "unsupported",
+                message = "Обновление доступно только для установленной копии TerminalV."
+            });
+            return;
+        }
+
+        if (Interlocked.Exchange(ref _updateBusy, 1) == 1)
+        {
+            return;
+        }
+
+        Post(new { type = "update", status = "downloading", current = AppVersion.Informational });
+        try
+        {
+            using var source = new GitHubReleaseSource();
+            var service = new SelfUpdateService(Environment.ProcessPath!, AppVersion.Current, source);
+            var report = await service.ApplyAsync(_updateCts.Token).ConfigureAwait(false);
+            if (report.Status == SelfUpdateStatus.AlreadyCurrent)
+            {
+                PostUpdate("current", report);
+                return;
+            }
+
+            PostUpdate("restarting", report);
+            Restart();
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception ex)
+        {
+            Post(new { type = "update", status = "error", message = ex.Message });
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _updateBusy, 0);
+        }
+    }
+
+    private void Restart()
+    {
+        var path = Environment.ProcessPath;
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return;
+        }
+
+        var quoted = "\"" + path.Replace("\"", "\\\"") + "\"";
+        Process.Start(new ProcessStartInfo
+        {
+            FileName = "cmd.exe",
+            Arguments = "/c ping 127.0.0.1 -n 3 >nul & start \"\" " + quoted,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        });
+
+        _dispatcher.BeginInvoke(() => Application.Current.Shutdown());
+    }
+
+    private void PostUpdate(string status, SelfUpdateReport report) =>
+        Post(new
+        {
+            type = "update",
+            status,
+            current = report.Installed.ToString(),
+            latest = report.Release.ToString(),
+            tag = report.Tag
+        });
 
     private void Create(IncomingMessage message)
     {

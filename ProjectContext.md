@@ -111,7 +111,20 @@ P/Invoke к `kernel32` для ConPTY написан вручную, отдель
 - `ui/src/styles.css` — тёмная тема, сайдбар 228px.
 - Сборка кладётся в `src/TerminalV/wwwroot` (в git не коммитится).
 
-### 4. **Дистрибуция**
+### 4. **Update**
+**Type**: код внутри хоста  
+**Location**: `src/TerminalV/Update/`  
+**Purpose**: проверка и установка релизов, как `agent-sync update`
+
+- Репозиторий зашит: `XYphrodite/TerminalV`. Другой origin задать нельзя.
+- `GitHubReleaseSource` читает latest (или тег), качает `TerminalV-win-x64.zip` и `.sha256`.
+- `SelfUpdateService` сверяет SHA-256 zip, распаковывает, гоняет `TerminalV.exe --help` до замены и после, переименовывает текущий exe в `.old-*`.
+- `wwwroot` подменяется при следующем старте (`PendingUpdateApplier`), когда WebView2 уже не держит файлы.
+- Фоновая проверка после `init`; кнопка в сайдбаре ставит обновление и перезапускает процесс.
+
+**Dependencies**: `HttpClient`, `System.IO.Compression`, GitHub Releases API.
+
+### 5. **Дистрибуция**
 **Type**: скрипты  
 **Location**: `install.ps1`, `scripts/publish.ps1`  
 **Purpose**: self-contained zip и установка через `irm | iex`
@@ -155,7 +168,9 @@ Renderer → host:
 | `kill` | `id` | Закрыть сессию |
 | `clipboard-read` / `clipboard-write` | `requestId`, `data` | Буфер обмена Windows |
 
-Host → renderer: `init`, `data`, `exit`, `error`, `clipboard-data`.
+Host → renderer: `init`, `data`, `exit`, `error`, `clipboard-data`, `update`.
+
+Дополнительно renderer → host: `update-check`, `update-apply`.
 
 ---
 
@@ -198,6 +213,7 @@ dotnet run --project src/TerminalV
 - [x] Переименование вкладки, индикатор активности
 - [x] `irm` установщик и self-contained релиз win-x64
 - [x] `--smoke` для проверки ConPTY
+- [x] Самообновление: проверка GitHub Releases при старте, SHA-256, замена exe, откат, перезапуск
 
 ### Planned 📋
 
@@ -217,7 +233,7 @@ dotnet run --project src/TerminalV
 ## Document Information
 
 **Last Updated**: 2026-09-11  
-**Version**: 0.1.0  
+**Version**: 0.2.0  
 **Status**: Active  
 **Repository**: `https://github.com/XYphrodite/TerminalV`  
 **Workspace**: `C:\Repos\TerminalV`

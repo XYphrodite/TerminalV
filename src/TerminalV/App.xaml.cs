@@ -3,6 +3,7 @@ using System.IO;
 using System.Text;
 using System.Windows;
 using TerminalV.Pty;
+using TerminalV.Update;
 
 namespace TerminalV;
 
@@ -11,13 +12,47 @@ public partial class App : Application
     private void OnStartup(object sender, StartupEventArgs e)
     {
         var args = Environment.GetCommandLineArgs();
-        if (args.Any(arg => string.Equals(arg, "--smoke", StringComparison.OrdinalIgnoreCase)))
+        if (HasFlag(args, "--help") || HasFlag(args, "-h") || HasFlag(args, "/?"))
+        {
+            WriteStdout(
+                $"""
+                TerminalV {AppVersion.Informational}
+                  --help       Print this text
+                  --version    Print the version
+                  --smoke      ConPTY self-test
+                """);
+            Shutdown(0);
+            return;
+        }
+
+        if (HasFlag(args, "--version"))
+        {
+            WriteStdout(AppVersion.Informational);
+            Shutdown(0);
+            return;
+        }
+
+        if (HasFlag(args, "--smoke"))
         {
             Shutdown(RunSmoke() ? 0 : 1);
             return;
         }
 
+        PendingUpdateApplier.Apply(Environment.ProcessPath);
         new MainWindow().Show();
+    }
+
+    private static bool HasFlag(string[] args, string flag) =>
+        args.Any(arg => string.Equals(arg, flag, StringComparison.OrdinalIgnoreCase));
+
+    private static void WriteStdout(string text)
+    {
+        using var stream = Console.OpenStandardOutput();
+        using var writer = new StreamWriter(stream, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false))
+        {
+            AutoFlush = true
+        };
+        writer.WriteLine(text);
     }
 
     private static bool RunSmoke()
