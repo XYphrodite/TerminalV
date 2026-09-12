@@ -129,7 +129,11 @@ body,
 }
 
 .xterm-viewport {
-  overflow-y: auto !important;
+  overflow-y: auto;
+}
+
+.terminal-host.alt-screen .xterm-viewport {
+  overflow: hidden !important;
 }
 
 .tab {
@@ -480,9 +484,8 @@ body,
   padding: 0 16px;
 }
 
-.xterm,
-.xterm-viewport,
-.xterm-screen {
+.xterm {
+  width: 100%;
   height: 100%;
 }
 
