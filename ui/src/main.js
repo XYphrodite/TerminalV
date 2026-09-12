@@ -39,6 +39,7 @@ let nextIndex = 1;
 let appVersion = "0.3.0";
 let updateSupported = false;
 let persistTimer = 0;
+let fitTimer = 0;
 let readyForPersist = false;
 const clipboardWaiters = new Map();
 
@@ -124,6 +125,32 @@ function applyBackground(pane) {
   }
 }
 
+function applyFit(tab) {
+  if (!tab || tab.id !== activeId) {
+    return;
+  }
+
+  const proposed = tab.fit.proposeDimensions();
+  if (!proposed) {
+    return;
+  }
+  if (proposed.cols === tab.term.cols && proposed.rows === tab.term.rows) {
+    return;
+  }
+
+  tab.fit.fit();
+  post({ type: "resize", id: tab.id, cols: tab.term.cols, rows: tab.term.rows });
+}
+
+function scheduleFit(tab, immediate = false) {
+  window.clearTimeout(fitTimer);
+  if (immediate) {
+    applyFit(tab);
+    return;
+  }
+  fitTimer = window.setTimeout(() => applyFit(tab), 80);
+}
+
 function applyToTerminals() {
   const theme = termTheme();
   const size = effectiveFontSize();
@@ -134,8 +161,7 @@ function applyToTerminals() {
     tab.term.options.allowTransparency = Boolean(settings.backgroundPath);
     applyBackground(tab.pane);
     if (tab.id === activeId) {
-      tab.fit.fit();
-      post({ type: "resize", id: tab.id, cols: tab.term.cols, rows: tab.term.rows });
+      applyFit(tab);
     }
   }
   zoomValue.textContent = `${Math.round((size / settings.fontSize) * 100)}%`;
@@ -350,14 +376,9 @@ function activate(id) {
     patchTabRow(item);
   }
   requestAnimationFrame(() => {
-    const beforeCols = tab.term.cols;
-    const beforeRows = tab.term.rows;
     tab.term.refresh(0, Math.max(0, tab.term.rows - 1));
-    tab.fit.fit();
+    applyFit(tab);
     tab.term.focus();
-    if (tab.term.cols !== beforeCols || tab.term.rows !== beforeRows) {
-      post({ type: "resize", id: tab.id, cols: tab.term.cols, rows: tab.term.rows });
-    }
   });
   schedulePersist();
 }
@@ -584,8 +605,7 @@ function newTab(options = {}) {
     if (activeId !== id) {
       return;
     }
-    fit.fit();
-    post({ type: "resize", id, cols: term.cols, rows: term.rows });
+    scheduleFit(tab);
   });
   observer.observe(hostEl);
 
@@ -734,10 +754,7 @@ function toggleSidebar() {
   persistSettings();
   const tab = currentTab();
   if (tab) {
-    requestAnimationFrame(() => {
-      tab.fit.fit();
-      post({ type: "resize", id: tab.id, cols: tab.term.cols, rows: tab.term.rows });
-    });
+    requestAnimationFrame(() => scheduleFit(tab, true));
   }
 }
 

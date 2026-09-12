@@ -39,7 +39,6 @@ body,
   position: relative;
   display: grid;
   grid-template-columns: 228px 1fr;
-  transition: grid-template-columns 0.18s ease;
 }
 
 #app.collapsed {
