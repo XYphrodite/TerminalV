@@ -126,11 +126,35 @@ function applyBackground(pane) {
   }
 }
 
+function isTui(tab) {
+  return (
+    tab.term.buffer.active.type === "alternate" ||
+    Boolean(tab.term.element?.classList.contains("enable-mouse-events")) ||
+    Boolean(tab.tuiHint)
+  );
+}
+
+function pinViewport(tab) {
+  tab.term.scrollToBottom();
+  const viewport = tab.host.querySelector(".xterm-viewport");
+  if (viewport && viewport.scrollTop) {
+    viewport.scrollTop = 0;
+  }
+}
+
 function syncScrollLock(tab) {
-  const alt = tab.term.buffer.active.type === "alternate";
-  tab.host.classList.toggle("alt-screen", alt);
-  if (alt) {
-    tab.term.scrollToBottom();
+  const lock = isTui(tab);
+  const wasLock = tab.host.classList.contains("tui-lock");
+  tab.host.classList.toggle("tui-lock", lock);
+  if (lock) {
+    if (tab.term.options.scrollback !== 0) {
+      tab.term.options.scrollback = 0;
+    }
+    pinViewport(tab);
+    return;
+  }
+  if (wasLock) {
+    tab.term.options.scrollback = 8000;
   }
 }
 
@@ -613,7 +637,8 @@ function newTab(options = {}) {
     term,
     fit,
     serialize,
-    webgl: null
+    webgl: null,
+    tuiHint: false
   };
 
   overlayBtn.addEventListener("click", () => restart(tab));
@@ -630,6 +655,43 @@ function newTab(options = {}) {
   });
   attachCopyPaste(tab);
   tab.term.buffer.onBufferChange(() => syncScrollLock(tab));
+  const xtermEl = tab.term.element;
+  if (xtermEl) {
+    const mouseWatch = new MutationObserver(() => syncScrollLock(tab));
+    mouseWatch.observe(xtermEl, { attributes: true, attributeFilter: ["class"] });
+  }
+  tab.host.addEventListener(
+    "wheel",
+    (event) => {
+      if (!tab.host.classList.contains("tui-lock")) {
+        return;
+      }
+      if (event.ctrlKey || event.metaKey) {
+        return;
+      }
+      event.preventDefault();
+      pinViewport(tab);
+    },
+    { passive: false, capture: true }
+  );
+  tab.host.querySelector(".xterm-viewport")?.addEventListener(
+    "scroll",
+    () => {
+      if (tab.host.classList.contains("tui-lock")) {
+        pinViewport(tab);
+      }
+    },
+    { passive: true }
+  );
+  tab.term.attachCustomWheelEventHandler((event) => {
+    if (!tab.host.classList.contains("tui-lock")) {
+      return true;
+    }
+    if (!(event.ctrlKey || event.metaKey)) {
+      event.preventDefault();
+    }
+    return true;
+  });
   syncScrollLock(tab);
 
   const observer = new ResizeObserver(() => {
@@ -880,7 +942,13 @@ function handleHost(message) {
   }
 
   if (message.type === "data") {
-    tab.term.write(message.data ?? "");
+    const chunk = message.data ?? "";
+    if (/\x1b\[\?(?:1049|47|1047)l/.test(chunk)) {
+      tab.tuiHint = false;
+    } else if (/\x1b\[\?(?:1049|47|1047|1000|1002|1003)h/.test(chunk)) {
+      tab.tuiHint = true;
+    }
+    tab.term.write(chunk, () => syncScrollLock(tab));
     schedulePersist();
     if (tab.id !== activeId && !tab.unread) {
       tab.unread = true;
@@ -890,7 +958,9 @@ function handleHost(message) {
   }
 
   if (message.type === "exit") {
+    tab.tuiHint = false;
     tab.exited = true;
+    syncScrollLock(tab);
     tab.overlayText.textContent = `Процесс завершился с кодом ${message.code ?? 0}`;
     tab.overlay.classList.add("visible");
     renderTabs();
