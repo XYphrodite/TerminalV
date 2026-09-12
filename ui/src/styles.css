@@ -233,14 +233,22 @@ body,
 #app.collapsed .new-tab-label,
 #app.collapsed .hint,
 #app.collapsed .version,
-#app.collapsed .update-bar,
-#app.collapsed #collapse-btn {
+#app.collapsed .update-bar {
   display: none;
 }
 
 #app.collapsed .sidebar-head {
-  padding: 0;
+  flex-direction: column;
   justify-content: center;
+  height: auto;
+  min-height: 40px;
+  padding: 6px 0;
+  gap: 2px;
+}
+
+#app.collapsed .sidebar-head-actions {
+  flex-direction: column;
+  align-items: center;
 }
 
 #app.collapsed .tab {
@@ -253,26 +261,6 @@ body,
   width: 32px;
   padding: 0;
   margin: 0 auto;
-}
-
-.expand-btn {
-  display: none;
-  position: absolute;
-  left: 56px;
-  top: 8px;
-  z-index: 5;
-  width: 24px;
-  height: 24px;
-  border: 1px solid var(--sidebar-edge);
-  border-radius: 6px;
-  background: var(--sidebar);
-  color: var(--text);
-  cursor: pointer;
-}
-
-#app.collapsed .expand-btn {
-  display: grid;
-  place-items: center;
 }
 
 .sidebar-foot {
