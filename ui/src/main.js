@@ -21,7 +21,6 @@ const settingsEl = document.getElementById("settings");
 const settingsBtn = document.getElementById("settings-btn");
 const settingsClose = document.getElementById("settings-close");
 const collapseBtn = document.getElementById("collapse-btn");
-const expandBtn = document.getElementById("expand-btn");
 const themeGrid = document.getElementById("theme-grid");
 const fontFamilyEl = document.getElementById("font-family");
 const fontSizeEl = document.getElementById("font-size");
@@ -93,6 +92,10 @@ function applyChrome() {
   root.style.setProperty("--overlay", chrome.overlay);
   root.style.setProperty("--font-mono", settings.fontFamily);
   appEl.classList.toggle("collapsed", settings.sidebarCollapsed);
+  collapseBtn.textContent = settings.sidebarCollapsed ? "›" : "‹";
+  collapseBtn.title = settings.sidebarCollapsed
+    ? "Показать сессии (Ctrl+B)"
+    : "Свернуть список (Ctrl+B)";
   document.body.style.background = chrome.bg;
 }
 
@@ -867,7 +870,6 @@ settingsEl.addEventListener("click", (event) => {
   }
 });
 collapseBtn.addEventListener("click", toggleSidebar);
-expandBtn.addEventListener("click", toggleSidebar);
 bgPick.addEventListener("click", () => post({ type: "pick-background" }));
 bgClear.addEventListener("click", () => {
   settings.backgroundPath = null;
