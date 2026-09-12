@@ -126,6 +126,27 @@ function applyBackground(pane) {
   }
 }
 
+function syncScrollLock(tab) {
+  const alt = tab.term.buffer.active.type === "alternate";
+  tab.host.classList.toggle("alt-screen", alt);
+  if (alt) {
+    tab.term.scrollToBottom();
+  }
+}
+
+function pulseResize(tab) {
+  const cols = tab.term.cols;
+  const rows = tab.term.rows;
+  if (cols < 10 || rows < 4) {
+    return;
+  }
+  post({ type: "resize", id: tab.id, cols: cols - 1, rows });
+  window.setTimeout(() => {
+    post({ type: "resize", id: tab.id, cols, rows });
+    tab.term.refresh(0, Math.max(0, tab.term.rows - 1));
+  }, 40);
+}
+
 function applyFit(tab) {
   if (!tab || tab.id !== activeId) {
     return false;
@@ -608,6 +629,8 @@ function newTab(options = {}) {
     schedulePersist();
   });
   attachCopyPaste(tab);
+  tab.term.buffer.onBufferChange(() => syncScrollLock(tab));
+  syncScrollLock(tab);
 
   const observer = new ResizeObserver(() => {
     if (activeId !== id || Date.now() < ignoreFitUntil) {
@@ -625,6 +648,7 @@ function newTab(options = {}) {
   const rows = term.rows || 24;
   if (options.live) {
     post({ type: "attach", id });
+    window.setTimeout(() => pulseResize(tab), 300);
   } else {
     const createMsg = { type: "create", id, cols, rows, cwd: options.cwd || undefined };
     if (!options.skipActivate) {
