@@ -40,6 +40,7 @@ let appVersion = "0.3.0";
 let updateSupported = false;
 let persistTimer = 0;
 let fitTimer = 0;
+let ignoreFitUntil = 0;
 let readyForPersist = false;
 const clipboardWaiters = new Map();
 
@@ -127,25 +128,32 @@ function applyBackground(pane) {
 
 function applyFit(tab) {
   if (!tab || tab.id !== activeId) {
-    return;
+    return false;
+  }
+  if (Date.now() < ignoreFitUntil) {
+    return false;
   }
 
   const proposed = tab.fit.proposeDimensions();
-  if (!proposed) {
-    return;
+  if (!proposed || proposed.cols < 8 || proposed.rows < 4) {
+    return false;
   }
   if (proposed.cols === tab.term.cols && proposed.rows === tab.term.rows) {
-    return;
+    return false;
   }
 
-  tab.fit.fit();
-  post({ type: "resize", id: tab.id, cols: tab.term.cols, rows: tab.term.rows });
+  post({ type: "resize", id: tab.id, cols: proposed.cols, rows: proposed.rows });
+  tab.term.resize(proposed.cols, proposed.rows);
+  tab.term.refresh(0, Math.max(0, tab.term.rows - 1));
+  return true;
 }
 
 function scheduleFit(tab, immediate = false) {
   window.clearTimeout(fitTimer);
   if (immediate) {
-    applyFit(tab);
+    if (!applyFit(tab)) {
+      fitTimer = window.setTimeout(() => applyFit(tab), 80);
+    }
     return;
   }
   fitTimer = window.setTimeout(() => applyFit(tab), 80);
@@ -602,7 +610,7 @@ function newTab(options = {}) {
   attachCopyPaste(tab);
 
   const observer = new ResizeObserver(() => {
-    if (activeId !== id) {
+    if (activeId !== id || Date.now() < ignoreFitUntil) {
       return;
     }
     scheduleFit(tab);
@@ -752,10 +760,8 @@ function toggleSidebar() {
   settings.sidebarCollapsed = !settings.sidebarCollapsed;
   applyChrome();
   persistSettings();
-  const tab = currentTab();
-  if (tab) {
-    requestAnimationFrame(() => scheduleFit(tab, true));
-  }
+  ignoreFitUntil = Date.now() + 200;
+  window.clearTimeout(fitTimer);
 }
 
 function restoreSessions(records) {
