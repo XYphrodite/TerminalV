@@ -365,18 +365,27 @@ function closeTab(id) {
     return;
   }
 
+  const closingActive = activeId === id;
   const [tab] = tabs.splice(index, 1);
   post({ type: "kill", id });
-  tab.term.dispose();
+  dropWebgl(tab);
+  try {
+    tab.term.dispose();
+  } catch {
+    // already gone
+  }
   tab.pane.remove();
 
-  if (activeId === id) {
+  if (closingActive) {
     const next = tabs[index] || tabs[index - 1] || null;
     activeId = next?.id ?? null;
+    renderTabs();
     if (next) {
       activate(next.id);
       return;
     }
+    schedulePersist();
+    return;
   }
 
   renderTabs();
