@@ -39,6 +39,7 @@ body,
   position: relative;
   display: grid;
   grid-template-columns: 228px 1fr;
+  background: var(--bg);
 }
 
 #app.collapsed {
@@ -366,6 +367,7 @@ body,
   position: relative;
   min-width: 0;
   background: var(--bg);
+  overflow: hidden;
 }
 
 #panes {
@@ -399,6 +401,11 @@ body,
   position: absolute;
   inset: 10px 12px 12px;
   z-index: 1;
+  overflow: hidden;
+}
+
+#app.collapsed .terminal-host {
+  left: 188px;
 }
 
 .overlay {
