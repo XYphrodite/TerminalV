@@ -36,7 +36,7 @@ let activeId = null;
 let shellName = "PowerShell";
 let buildNumber = 22621;
 let nextIndex = 1;
-let appVersion = "0.4.9";
+let appVersion = "0.4.10";
 let updateSupported = false;
 let persistTimer = 0;
 let fitTimer = 0;
@@ -580,6 +580,12 @@ function applyZoomDelta(delta) {
 }
 
 function attachCopyPaste(tab) {
+  // Ctrl+V/Ctrl+Shift+V are handled above through readClipboard().
+  // Stop xterm's native paste event so the text is not sent a second time.
+  tab.host.addEventListener("paste", (event) => {
+    event.preventDefault();
+  }, true);
+
   tab.term.attachCustomKeyEventHandler((event) => {
     if (event.type !== "keydown") {
       return true;
