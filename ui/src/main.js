@@ -36,7 +36,7 @@ let activeId = null;
 let shellName = "PowerShell";
 let buildNumber = 22621;
 let nextIndex = 1;
-let appVersion = "0.4.12";
+let appVersion = "0.4.13";
 let updateSupported = false;
 let persistTimer = 0;
 let fitTimer = 0;
@@ -703,6 +703,7 @@ function newTab(options = {}) {
 
   overlayBtn.addEventListener("click", () => restart(tab));
   term.onData((data) => post({ type: "write", id, data }));
+  term.onBell(() => post({ type: "bell", id }));
   term.onTitleChange((title) => {
     const cleaned = title?.trim();
     if (!cleaned || tab.customTitle) {
