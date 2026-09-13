@@ -25,4 +25,7 @@ internal sealed class SessionRecord
     public bool Pinned { get; set; }
     public bool Hidden { get; set; }
     public bool Muted { get; set; }
+    // Snapshot, not a profile reference: editing/deleting a profile cannot change this session.
+    public string? Shell { get; set; }
+    public string? StartupCommand { get; set; }
 }

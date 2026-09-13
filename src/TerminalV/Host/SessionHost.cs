@@ -98,10 +98,12 @@ internal static class SessionHost
                     {
                         type = "list",
                         ids = Sessions.Keys.ToArray(),
-                        cwdTrackingSupported = true
+                        cwdTrackingSupported = true,
+                        launchProfilesSupported = true
                     });
                     break;
                 case "create":
+                case "create-profile":
                     Create(request);
                     break;
                 case "attach":
@@ -137,11 +139,17 @@ internal static class SessionHost
             return;
         }
 
-        Kill(request.Id);
         try
         {
+            if (request.Type == "create-profile" && Sessions.ContainsKey(request.Id))
+                throw new InvalidOperationException("Сессия уже работает. Повторный запуск профиля отменён.");
             var cwd = WorkingDirectory.Resolve(request.Cwd);
-            var shell = ShellResolver.Resolve(request.Cwd is null ? null : cwd.Path);
+            if (request.Type == "create-profile" && cwd.Notice is not null)
+                throw new DirectoryNotFoundException("Папка профиля недоступна. Запуск отменён: " + request.Cwd);
+            var shell = ShellResolver.Resolve(request.Cwd is null && request.Type != "create-profile" ? null : cwd.Path,
+                request.Type == "create-profile" ? request.Shell ?? "auto" : null,
+                request.Type == "create-profile" ? request.StartupCommand : null);
+            Kill(request.Id);
             ConPtySession.Start(
                 request.Id, shell.CommandLine, cwd.Path,
                 Math.Max(request.Cols, 1), Math.Max(request.Rows, 1), pty =>
@@ -261,6 +269,8 @@ internal static class SessionHost
         public string? Id { get; set; }
         public string? Data { get; set; }
         public string? Cwd { get; set; }
+        public string? Shell { get; set; }
+        public string? StartupCommand { get; set; }
         public int Cols { get; set; }
         public int Rows { get; set; }
     }

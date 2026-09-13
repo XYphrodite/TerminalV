@@ -6,28 +6,53 @@ internal readonly record struct ShellInfo(string CommandLine, string DisplayName
 
 internal static class ShellResolver
 {
-    public static ShellInfo Resolve(string? directory = null)
+    public static ShellInfo Resolve(string? directory = null, string? shell = null, string? startupCommand = null)
+    {
+        if (startupCommand is { Length: > 4096 } || startupCommand?.Contains('\0') == true)
+            throw new ArgumentException("Стартовая команда: максимум 4096 символов, без NUL.");
+        var executable = shell switch
+        {
+            null or "auto" => DefaultExecutable(),
+            "powershell" => WindowsPowerShell(),
+            "pwsh" => Candidates().FirstOrDefault(File.Exists) ??
+                throw new FileNotFoundException("PowerShell 7 не найден. Установите его или выберите другую оболочку."),
+            "cmd" => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "cmd.exe"),
+            _ => throw new ArgumentException("Неизвестная оболочка профиля.")
+        };
+        if (!File.Exists(executable)) throw new FileNotFoundException("Оболочка не найдена.", executable);
+        if (Path.GetFileName(executable).Equals("cmd.exe", StringComparison.OrdinalIgnoreCase))
+        {
+            if (startupCommand?.IndexOfAny(['\r', '\n']) >= 0)
+                throw new ArgumentException("Для cmd укажите одну строку команды; несколько команд можно соединить через &&.");
+            if (directory?.StartsWith(@"\\") == true)
+                throw new ArgumentException("cmd не поддерживает сетевую UNC-папку как текущую. Выберите PowerShell.");
+            // /s strips only the added outer quotes; /d disables registry AutoRun.
+            var command = string.IsNullOrWhiteSpace(startupCommand) ? "" : $" /s /k \"{startupCommand}\"";
+            return new($"\"{executable}\" /d{command}", "Командная строка");
+        }
+        return new(PowerShellIntegration.CommandLine(executable, directory, startupCommand), PrettyName(executable));
+    }
+
+    private static string WindowsPowerShell() => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.System), "WindowsPowerShell", "v1.0", "powershell.exe");
+
+    private static string DefaultExecutable()
     {
         var overridePath = Environment.GetEnvironmentVariable("TERMINALV_SHELL");
         if (!string.IsNullOrWhiteSpace(overridePath) && File.Exists(overridePath))
         {
-            return new(PowerShellIntegration.CommandLine(overridePath, directory), PrettyName(overridePath));
+            return overridePath;
         }
 
         foreach (var candidate in Candidates())
         {
             if (File.Exists(candidate))
             {
-                return new(PowerShellIntegration.CommandLine(candidate, directory), PrettyName(candidate));
+                return candidate;
             }
         }
 
-        var powershell = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.System),
-            "WindowsPowerShell",
-            "v1.0",
-            "powershell.exe");
-        return new(PowerShellIntegration.CommandLine(powershell, directory), "Windows PowerShell");
+        return WindowsPowerShell();
     }
 
     private static IEnumerable<string> Candidates()

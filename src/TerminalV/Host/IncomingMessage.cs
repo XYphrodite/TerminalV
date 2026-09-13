@@ -12,4 +12,7 @@ internal sealed class IncomingMessage
     public int Rows { get; set; }
     public List<SessionRecord>? Sessions { get; set; }
     public string? Cwd { get; set; }
+    public string? Shell { get; set; }
+    public string? StartupCommand { get; set; }
+    public List<LaunchProfile>? Profiles { get; set; }
 }

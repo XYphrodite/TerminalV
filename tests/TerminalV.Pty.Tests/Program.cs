@@ -7,7 +7,8 @@ using TerminalV.Host;
 var passed = 0;
 void Check(string name, Action test)
 {
-    test();
+    try { test(); }
+    catch (Exception ex) { Console.WriteLine($"FAIL {name}: {ex}"); throw; }
     Console.WriteLine($"PASS {name}");
     passed++;
 }
@@ -73,6 +74,24 @@ Check("launch command enables profiles, integrates both PowerShell executables o
     Equal(PowerShellIntegration.CommandLine(@"C:\Windows\cmd.exe"), "\"C:\\Windows\\cmd.exe\"");
 });
 
+Check("explicit shell selection ignores automatic override and validates command boundaries", () =>
+{
+    Equal(ShellResolver.Resolve(shell: "powershell").DisplayName, "Windows PowerShell");
+    Equal(ShellResolver.Resolve(shell: "cmd").CommandLine.EndsWith(" /d"), true);
+    foreach (var action in new Action[] {
+        () => ShellResolver.Resolve(shell: "unknown"),
+        () => ShellResolver.Resolve(shell: "cmd", startupCommand: "echo a\necho b"),
+        () => ShellResolver.Resolve(shell: "powershell", startupCommand: new string('x', 4097)),
+        () => ShellResolver.Resolve(shell: "powershell", startupCommand: "bad\0text"),
+        () => ShellResolver.Resolve(@"\\server\share", "cmd"),
+        () => PowerShellIntegration.CommandLine("custom.exe", startupCommand: "echo unsupported")
+    })
+    {
+        try { action(); throw new Exception("Invalid launch accepted"); }
+        catch (ArgumentException) { }
+    }
+});
+
 Check("list barriers silence only the attaching sessions until their cached output is drained", () =>
 {
     var guard = new OutputReplayGuard();
@@ -115,6 +134,40 @@ Check("reconnecting clears pending replay state, including attaches with no outp
     Equal(guard.CompleteList(), true);
 });
 
+Check("legacy host cannot silently launch a profile with the wrong shell", () =>
+{
+    using var server = new IsolatedHost(supportsProfiles: false);
+    using var client = new SessionClient(server.PipeName, () => { });
+    Equal(client.Ensure(), true);
+    try { client.Create("profile", 80, 24, null, "cmd", "echo test"); throw new Exception("Legacy host accepted a profile"); }
+    catch (InvalidOperationException ex) { Equal(ex.Message.Contains("не поддерживает профили"), true); }
+    Equal(server.Requests.Count, 1);
+    Equal(server.Requests.Single().GetProperty("type").GetString(), "list");
+    client.Create("default", 80, 24, null);
+    Equal(SpinWait.SpinUntil(() => server.Requests.Count == 2, 5000), true);
+    Equal(server.Requests.Last().GetProperty("type").GetString(), "create");
+});
+Check("profile transport sends one explicit create and reattachment never resends the startup script", () =>
+{
+    using var server = new IsolatedHost(supportsProfiles: true);
+    using var client = new SessionClient(server.PipeName, () => { });
+    var replay = new System.Collections.Concurrent.ConcurrentQueue<bool>();
+    client.Data += (_, _, historical) => replay.Enqueue(historical);
+    Equal(client.Ensure(), true);
+    const string command = "Write-Output 'Кириллица'\r\nWrite-Output \"quotes\"";
+    client.Create("profile", 100, 30, @"C:\Проект", "powershell", command);
+    client.Attach("profile");
+    client.List(); // ordered barrier: attach replay is drained before returning
+    Equal(server.Requests.Count(r => r.GetProperty("type").GetString() == "create-profile"), 1);
+    var create = server.Requests.Single(r => r.GetProperty("type").GetString() == "create-profile");
+    Equal(create.GetProperty("startupCommand").GetString(), command);
+    Equal(create.GetProperty("shell").GetString(), "powershell");
+    Equal(create.GetProperty("cwd").GetString(), @"C:\Проект");
+    Equal(replay.Single(), true);
+    Equal(server.Requests.Single(r => r.GetProperty("type").GetString() == "attach").TryGetProperty("startupCommand", out _), false);
+    Equal(server.Requests.Any(r => r.GetProperty("type").GetString() is "write" or "kill"), false);
+});
+
 var testRoot = Directory.CreateTempSubdirectory("terminalv-cwd-test-").FullName;
 try
 {
@@ -140,6 +193,37 @@ try
 
     foreach (var shell in shells)
     {
+        Check($"{Path.GetFileName(shell)}: startup script runs once, after cwd setup, without command quoting loss", () =>
+        {
+            var marker = Path.Combine(testRoot, Guid.NewGuid().ToString("N") + ".txt");
+            var startup = "$terminalVProfileValue = 'Кириллица & quotes \" literal'\r\n" +
+                "[IO.File]::AppendAllText(" + Quote(marker) + ", (Get-Location).Path + [Environment]::NewLine + $terminalVProfileValue + [Environment]::NewLine)";
+            var script = PowerShellIntegration.Script(target, startup) + "\nprompt\nprompt\n";
+            var info = new ProcessStartInfo(shell) { UseShellExecute = false, CreateNoWindow = true,
+                RedirectStandardOutput = true, RedirectStandardError = true };
+            foreach (var arg in new[] { "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", Encode(script) }) info.ArgumentList.Add(arg);
+            using var child = Process.Start(info)!;
+            var output = child.StandardOutput.ReadToEndAsync();
+            var errors = child.StandardError.ReadToEndAsync();
+            if (!child.WaitForExit(15000)) { child.Kill(); throw new Exception("Startup test timed out"); }
+            output.GetAwaiter().GetResult();
+            if (child.ExitCode != 0) throw new Exception(errors.GetAwaiter().GetResult());
+            var lines = File.ReadAllLines(marker);
+            Equal(lines.Length, 2);
+            Equal(lines[0], target);
+            Equal(lines[1], "Кириллица & quotes \" literal");
+
+            // A deleted cwd must stop the script, not run it in the home folder.
+            info.ArgumentList[^1] = Encode(PowerShellIntegration.Script(Path.Combine(testRoot, "missing"), startup));
+            using var missing = Process.Start(info)!;
+            var failedOutput = missing.StandardOutput.ReadToEndAsync();
+            var failedError = missing.StandardError.ReadToEndAsync();
+            if (!missing.WaitForExit(15000)) { missing.Kill(); throw new Exception("Missing cwd test timed out"); }
+            failedOutput.GetAwaiter().GetResult();
+            failedError.GetAwaiter().GetResult();
+            Equal(File.ReadAllLines(marker).Length, 2);
+        });
+
         Check($"{Path.GetFileName(shell)}: literal cwd, custom prompt, command status and provider fallback", () =>
         {
             // Profiles are deliberately disabled only in tests: the real profile may run user commands.
@@ -202,6 +286,38 @@ try
             Equal(child.WaitForExit(5000), true);
         });
     }
+
+    Check("cmd profile executes a quoted executable once and remains interactive in its starting folder", () =>
+    {
+        using var standardHandles = new GuiStandardHandles();
+        var exe = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "cmd.exe");
+        var markerFile = Path.Combine(testRoot, "cmd-starts.txt");
+        var command = ShellResolver.Resolve(target, "cmd", $"\"{exe}\" /d /c echo PROFILE_ONCE >> \"{markerFile}\"").CommandLine;
+        var output = new StringBuilder();
+        using var pty = ConPtySession.Start("cmd-profile-test", command, target, 160, 30, session =>
+        {
+            session.Output += chunk => {
+                lock (output) output.Append(chunk);
+                if (chunk.Contains("\u001b[6n")) session.Write("\u001b[1;1R");
+            };
+        });
+        using var child = Process.GetProcessById(pty.ProcessId);
+        // Raw output also contains an OSC window title with the command text.
+        // Count actual side effects, not occurrences in terminal escape sequences.
+        bool HasLines(int count)
+        {
+            try { return File.Exists(markerFile) && File.ReadAllLines(markerFile).Length == count; }
+            catch (IOException) { return false; }
+        }
+        Equal(SpinWait.SpinUntil(() => HasLines(1), 10000), true);
+        Equal(child.HasExited, false);
+        pty.Write($"echo INTERACTIVE_OK >> \"{markerFile}\"\r");
+        Equal(SpinWait.SpinUntil(() => HasLines(2), 10000), true);
+        Equal(File.ReadAllLines(markerFile).Count(line => line.Trim() == "PROFILE_ONCE"), 1);
+        Equal(pty.CurrentDirectory, target);
+        pty.Dispose();
+        Equal(child.WaitForExit(5000), true);
+    });
 }
 finally
 {

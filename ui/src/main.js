@@ -13,6 +13,7 @@ import { createCloseConfirmation } from "./close-confirmation.js";
 import { createTerminalSearch, isSearchShortcut, SEARCH_HIGHLIGHT_LIMIT } from "./terminal-search.js";
 import { createSessionOptions, sessionMetadata, sessionGroups, SESSION_COLORS } from "./session-management.js";
 import { createNotifications, createNotificationOutput } from "./notifications.js";
+import { createLaunchProfiles, PROFILE_SHELLS } from "./launch-profiles.js";
 
 const tabsEl = document.getElementById("tabs");
 const panesEl = document.getElementById("panes");
@@ -70,7 +71,7 @@ const settings = {
 const pasteController = createPasteController({
   dialog: document.getElementById("paste-confirmation"),
   readClipboard,
-  canPaste: (tab) => tabs.includes(tab) && tab.id === activeId && !tab.exited && !closeController.isOpen && !sessionOptions.isOpen,
+  canPaste: (tab) => tabs.includes(tab) && tab.id === activeId && !tab.exited && !closeController.isOpen && !sessionOptions.isOpen && !launchProfiles.isOpen,
   restoreFocus: () => currentTab()?.term.focus()
 });
 
@@ -121,8 +122,18 @@ const sessionOptions = createSessionOptions({
   }
 });
 
+const launchProfiles = createLaunchProfiles({
+  dialog: document.getElementById("launch-profiles"), post,
+  onLaunch: (options) => newTab(options),
+  restoreFocus: () => {
+    const tab = currentTab();
+    if (tab) tab.term.focus();
+    else document.getElementById("launch-profiles-btn").focus();
+  }
+});
+
 function isModalOpen() {
-  return pasteController.isOpen || closeController.isOpen || sessionOptions.isOpen;
+  return pasteController.isOpen || closeController.isOpen || sessionOptions.isOpen || launchProfiles.isOpen;
 }
 
 function openTabs() {
@@ -410,7 +421,9 @@ function persistSessions() {
     color: tab.color || null,
     pinned: tab.pinned,
     hidden: tab.hidden,
-    muted: tab.muted
+    muted: tab.muted,
+    shell: tab.shell || null,
+    startupCommand: tab.startupCommand || null
   }));
   post({ type: "persist-sessions", sessions: payload });
 }
@@ -438,7 +451,8 @@ function updateSessionSwitcher() {
 }
 
 function sessionMetaText(tab) {
-  return [tab.attention && "Сигнал", tab.muted && "Без звука", tab.pinned && "★", tab.exited ? "завершена" : shellName]
+  return [tab.attention && "Сигнал", tab.muted && "Без звука", tab.pinned && "★",
+    tab.exited ? "завершена" : tab.shell && tab.shell !== "auto" ? PROFILE_SHELLS[tab.shell] || tab.shell : shellName]
     .filter(Boolean).join(" · ");
 }
 
@@ -930,6 +944,10 @@ function newTab(options = {}) {
   const overlayBtn = document.createElement("button");
   overlayBtn.type = "button";
   overlayBtn.textContent = "Перезапустить";
+  if (options.startupCommand) {
+    overlayBtn.textContent = "Запустить со стартовой командой";
+    overlayBtn.title = options.startupCommand;
+  }
   overlay.append(overlayText, overlayBtn);
   pane.append(hostEl, overlay);
   panesEl.append(pane);
@@ -963,6 +981,8 @@ function newTab(options = {}) {
     title: options.title || `Сессия ${index}`,
     customTitle: options.customTitle || undefined,
     cwd: cwd || undefined,
+    shell: options.shell || undefined,
+    startupCommand: options.startupCommand || undefined,
     buffer: options.buffer || "",
     renaming: false,
     unread: false,
@@ -1052,14 +1072,15 @@ function newTab(options = {}) {
   if (options.live) {
     post({ type: "attach", id });
     window.setTimeout(() => pulseResize(tab), 300);
-  } else if (tab.hidden) {
+  } else if (tab.hidden || (options.restored && tab.shell)) {
     // The shell is gone (e.g. Windows restarted). Keep the saved screen, but
-    // never silently start a new process for a hidden session.
+    // never silently start a new process for a hidden or profile session.
     tab.exited = true;
     tab.overlayText.textContent = "Сессия не запущена. Сохранённый вывод доступен; запуск — кнопкой ниже.";
     tab.overlay.classList.add("visible");
   } else {
-    const createMsg = { type: "create", id, cols, rows, cwd: cwd || undefined };
+    const createMsg = { type: "create", id, cols, rows, cwd: cwd || undefined,
+      shell: tab.shell, startupCommand: tab.startupCommand };
     if (!options.skipActivate) {
       fit.fit();
       createMsg.cols = term.cols;
@@ -1076,6 +1097,7 @@ function newTab(options = {}) {
 }
 
 function restart(tab) {
+  if (!tab.exited || isModalOpen()) return;
   sessionOptions.cancel(tab);
   closeController.cancel(tab);
   if (tab.id === activeId) searchController.close({ focus: false });
@@ -1087,7 +1109,8 @@ function restart(tab) {
   notifications.acknowledge(tab);
   tab.output.reset();
   tab.fit.fit();
-  post({ type: "create", id: tab.id, cols: tab.term.cols, rows: tab.term.rows, cwd: tab.cwd });
+  post({ type: "create", id: tab.id, cols: tab.term.cols, rows: tab.term.rows, cwd: tab.cwd,
+    shell: tab.shell, startupCommand: tab.startupCommand });
   tab.term.focus();
   renderTabs();
 }
@@ -1227,6 +1250,9 @@ function restoreSessions(records) {
       ...sessionMetadata(record),
       buffer: isLive ? undefined : record.buffer,
       cwd: record.cwd,
+      shell: record.shell,
+      startupCommand: record.startupCommand,
+      restored: true,
       live: isLive,
       skipActivate: true
     });
@@ -1249,6 +1275,7 @@ function handleHost(message) {
   }
 
   if (message.type === "init") {
+    launchProfiles.setProfiles(message.profiles);
     if (message.shellName) {
       shellName = message.shellName;
     }
@@ -1278,6 +1305,11 @@ function handleHost(message) {
       renderTabs();
     }
     renderCwdNotice();
+    return;
+  }
+
+  if (message.type === "profiles-saved") {
+    launchProfiles.receive(message);
     return;
   }
 
@@ -1356,6 +1388,12 @@ function handleHost(message) {
 }
 
 newTabBtn.addEventListener("click", () => newTab());
+document.getElementById("launch-profiles-btn").addEventListener("click", () => {
+  if (isModalOpen() || !settingsEl.classList.contains("hidden")) return;
+  pasteController.cancel(currentTab());
+  searchController.close({ focus: false });
+  launchProfiles.open();
+});
 emptyNewBtn.addEventListener("click", () => newTab());
 updateApply.addEventListener("click", () => post({ type: "update-apply" }));
 versionBtn.addEventListener("click", () => post({ type: "update-check" }));
