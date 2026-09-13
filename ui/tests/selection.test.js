@@ -10,7 +10,7 @@ import test from "node:test";
 
 const uiRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
-test("copy selection in the installed xterm.js, using a real browser", async (t) => {
+async function runBrowserFixture(t, fixture) {
   const browser = [
     process.env.TERMINALV_TEST_BROWSER,
     "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe",
@@ -39,12 +39,14 @@ test("copy selection in the installed xterm.js, using a real browser", async (t)
   });
   const profile = await mkdtemp(join(tmpdir(), "terminalv-copy-test-"));
   try {
+    const screenshot = fixture === "paste-confirmation" && process.env.TERMINALV_TEST_SCREENSHOT;
     const output = await new Promise((resolve, reject) => {
       const child = spawn(browser, [
         "--headless", "--disable-gpu", "--no-first-run", "--no-default-browser-check",
         "--disable-extensions", "--disable-background-networking", "--disable-component-update",
         `--user-data-dir=${profile}`, "--dump-dom", "--virtual-time-budget=5000",
-        `http://127.0.0.1:${server.address().port}/tests/selection.fixture.html`
+        ...(screenshot ? [`--screenshot=${screenshot}`, "--window-size=800,600"] : []),
+        `http://127.0.0.1:${server.address().port}/tests/${fixture}.fixture.html${screenshot ? "?preview" : ""}`
       ], { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
       let stdout = "";
       let stderr = "";
@@ -52,7 +54,7 @@ test("copy selection in the installed xterm.js, using a real browser", async (t)
       child.stderr.on("data", (chunk) => { stderr += chunk; });
       const timer = setTimeout(() => {
         child.kill();
-        reject(new Error("Browser test timed out\n" + stderr));
+        reject(new Error(`${fixture} browser test timed out\n${stderr}`));
       }, 30000);
       child.once("error", (error) => { clearTimeout(timer); reject(error); });
       child.once("close", (code) => {
@@ -62,7 +64,7 @@ test("copy selection in the installed xterm.js, using a real browser", async (t)
       });
     });
     const result = output.match(/data-test-result="([A-Za-z0-9+/=]+)"/);
-    assert.ok(result, "Browser did not finish the copy tests\n" + output);
+    assert.ok(result, `Browser did not finish ${fixture} tests\n${output}`);
     const checks = JSON.parse(Buffer.from(result[1], "base64").toString("utf8"));
     assert.ok(checks.length > 0);
     for (const check of checks) {
@@ -74,4 +76,7 @@ test("copy selection in the installed xterm.js, using a real browser", async (t)
     // Only the isolated profile created by this test is removed.
     await rm(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   }
-});
+}
+
+test("copy selection in xterm.js", (t) => runBrowserFixture(t, "selection"));
+test("multiline paste confirmation in xterm.js", (t) => runBrowserFixture(t, "paste-confirmation"));
