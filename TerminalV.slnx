@@ -3,4 +3,7 @@
     <Project Path="src/TerminalV/TerminalV.csproj" />
     <Project Path="src/TerminalV.Com/TerminalV.Com.csproj" />
   </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/TerminalV.Pty.Tests/TerminalV.Pty.Tests.csproj" />
+  </Folder>
 </Solution>

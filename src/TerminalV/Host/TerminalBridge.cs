@@ -27,7 +27,6 @@ internal sealed class TerminalBridge : IDisposable
     private readonly CoreWebView2 _webView;
     private readonly ConcurrentDictionary<string, ConPtySession> _sessions = new();
     private readonly ShellInfo _shell;
-    private readonly string _cwd;
     private readonly int _buildNumber;
     private readonly bool _canUpdate;
     private readonly CancellationTokenSource _updateCts = new();
@@ -41,11 +40,12 @@ internal sealed class TerminalBridge : IDisposable
         _dispatcher = dispatcher;
         _webView = webView;
         _shell = ShellResolver.Resolve();
-        _cwd = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         _buildNumber = Environment.OSVersion.Version.Build;
         _canUpdate = AppVersion.CanSelfUpdate(Environment.ProcessPath);
         _host.Data += (id, data) => Post(new { type = "data", id, data });
         _host.Exited += (id, code) => Post(new { type = "exit", id, code });
+        _host.DirectoryChanged += (id, cwd, notice) => Post(new { type = "cwd", id, cwd, notice });
+        _host.Error += (id, message) => Post(new { type = "error", id, message });
     }
 
     public void SendInit()
@@ -60,6 +60,7 @@ internal sealed class TerminalBridge : IDisposable
             settings = _db.LoadSettings(),
             sessions = _db.LoadSessions(),
             liveIds = LiveIds(),
+            cwdTrackingSupported = _host.CwdTrackingSupported,
             fonts = SystemFonts()
         });
 
@@ -336,28 +337,29 @@ internal sealed class TerminalBridge : IDisposable
 
         try
         {
-            var cwd = !string.IsNullOrWhiteSpace(message.Cwd) && Directory.Exists(message.Cwd)
-                ? message.Cwd
-                : _cwd;
+            var cwd = WorkingDirectory.Resolve(message.Cwd);
+            Post(new { type = "cwd", id = message.Id, cwd = cwd.Path, notice = cwd.Notice });
             if (_host.Ensure())
             {
-                _host.Create(message.Id, Math.Max(message.Cols, 1), Math.Max(message.Rows, 1), cwd);
+                _host.Create(message.Id, Math.Max(message.Cols, 1), Math.Max(message.Rows, 1),
+                    message.Cwd is null ? null : cwd.Path);
                 return;
             }
 
             KillLocal(message.Id);
-            var session = ConPtySession.Start(
+            var shell = ShellResolver.Resolve(message.Cwd is null ? null : cwd.Path);
+            ConPtySession.Start(
                 message.Id,
-                _shell.CommandLine,
-                cwd,
+                shell.CommandLine,
+                cwd.Path,
                 Math.Max(message.Cols, 1),
-                Math.Max(message.Rows, 1));
-            session.Output += data => Post(new { type = "data", id = session.Id, data });
-            session.Exited += code => Post(new { type = "exit", id = session.Id, code });
-            if (!_sessions.TryAdd(session.Id, session))
-            {
-                session.Dispose();
-            }
+                Math.Max(message.Rows, 1), session =>
+                {
+                    session.Output += data => Post(new { type = "data", id = session.Id, data });
+                    session.DirectoryChanged += path => Post(new { type = "cwd", id = session.Id, cwd = path });
+                    session.Exited += code => Post(new { type = "exit", id = session.Id, code });
+                    _sessions[session.Id] = session;
+                });
         }
         catch (Exception ex)
         {

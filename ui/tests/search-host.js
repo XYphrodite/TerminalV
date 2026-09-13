@@ -16,7 +16,8 @@ window.chrome.webview = {
         sessions: [
           { id: "first", title: "Muse — поиск", active: true },
           { id: "second", title: "PowerShell — логи" }
-        ]
+        ],
+        ...window.testInit
       }));
     }
     if (message.type === "create") {

@@ -407,6 +407,22 @@ body,
   min-height: 0;
 }
 
+.cwd-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 8px 12px;
+  flex: 0 0 auto;
+  color: var(--text);
+  background: var(--sidebar);
+  border-bottom: 1px solid var(--sidebar-edge);
+  font-size: 12px;
+}
+
+.cwd-notice[hidden] { display: none; }
+.cwd-notice span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.cwd-notice button { flex: 0 0 auto; padding: 0 6px; }
+
 .terminal-search {
   display: flex;
   align-items: center;

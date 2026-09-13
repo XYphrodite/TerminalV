@@ -97,7 +97,8 @@ internal static class SessionHost
                     Send(new
                     {
                         type = "list",
-                        ids = Sessions.Keys.ToArray()
+                        ids = Sessions.Keys.ToArray(),
+                        cwdTrackingSupported = true
                     });
                     break;
                 case "create":
@@ -137,28 +138,43 @@ internal static class SessionHost
         }
 
         Kill(request.Id);
-        var cwd = !string.IsNullOrWhiteSpace(request.Cwd) && Directory.Exists(request.Cwd)
-            ? request.Cwd
-            : Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        var shell = ShellResolver.Resolve();
-        var pty = ConPtySession.Start(
-            request.Id,
-            shell.CommandLine,
-            cwd,
-            Math.Max(request.Cols, 1),
-            Math.Max(request.Rows, 1));
-        var hosted = new HostedSession(pty);
-        pty.Output += chunk =>
+        try
         {
-            hosted.Add(chunk);
-            Send(new { type = "data", id = request.Id, data = chunk });
-        };
-        pty.Exited += code =>
+            var cwd = WorkingDirectory.Resolve(request.Cwd);
+            var shell = ShellResolver.Resolve(request.Cwd is null ? null : cwd.Path);
+            ConPtySession.Start(
+                request.Id, shell.CommandLine, cwd.Path,
+                Math.Max(request.Cols, 1), Math.Max(request.Rows, 1), pty =>
+                {
+                    var hosted = new HostedSession(pty);
+                    pty.Output += chunk =>
+                    {
+                        lock (hosted.Gate)
+                        {
+                            hosted.Add(chunk);
+                            Send(new { type = "data", id = request.Id, data = chunk });
+                        }
+                    };
+                    pty.DirectoryChanged += _ =>
+                    {
+                        lock (hosted.Gate)
+                        {
+                            Send(new { type = "cwd", id = request.Id, cwd = pty.CurrentDirectory });
+                        }
+                    };
+                    pty.Exited += code =>
+                    {
+                        Send(new { type = "exit", id = request.Id, code });
+                        Kill(request.Id);
+                    };
+                    Sessions[request.Id] = hosted;
+                    Send(new { type = "cwd", id = request.Id, cwd = cwd.Path, notice = cwd.Notice });
+                });
+        }
+        catch (Exception ex)
         {
-            Send(new { type = "exit", id = request.Id, code });
-            Kill(request.Id);
-        };
-        Sessions[request.Id] = hosted;
+            Send(new { type = "error", id = request.Id, message = ex.Message });
+        }
     }
 
     private static void Attach(string? id)
@@ -169,10 +185,15 @@ internal static class SessionHost
             return;
         }
 
-        var snapshot = hosted.Snapshot();
-        if (snapshot.Length > 0)
+        lock (hosted.Gate)
         {
-            Send(new { type = "data", id, data = snapshot });
+            var snapshot = hosted.Snapshot();
+            if (snapshot.Length > 0)
+            {
+                Send(new { type = "data", id, data = snapshot });
+            }
+            // Kept independently of scrollback, including while the window is closed.
+            Send(new { type = "cwd", id, cwd = hosted.Pty.CurrentDirectory });
         }
     }
 
@@ -209,6 +230,7 @@ internal static class SessionHost
         private int _chars;
 
         public ConPtySession Pty { get; }
+        public object Gate { get; } = new();
 
         public HostedSession(ConPtySession pty) => Pty = pty;
 

@@ -88,3 +88,4 @@ test("multiline paste confirmation in xterm.js", (t) => runBrowserFixture(t, "pa
 test("terminal search in xterm.js", (t) => runBrowserFixture(t, "terminal-search"));
 test("search in the built TerminalV interface", (t) => runBrowserFixture(t, "search-ui"));
 test("close protection in the built TerminalV interface", (t) => runBrowserFixture(t, "close-ui"));
+test("working directory in the built TerminalV interface", (t) => runBrowserFixture(t, "cwd-ui"));

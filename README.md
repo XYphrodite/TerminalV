@@ -67,6 +67,20 @@ dotnet run --project src/TerminalV
 .\src\TerminalV\bin\Debug\net10.0-windows\TerminalV.exe --smoke
 ```
 
+Регрессионные проверки интерфейса (нужен установленный Edge или Chrome):
+
+```powershell
+npm.cmd --prefix ui test
+```
+
+Изолированные проверки интеграции рабочей папки с PowerShell и настоящим ConPTY:
+
+```powershell
+dotnet run --project tests/TerminalV.Pty.Tests -c Release
+```
+
+Тесты не загружают пользовательские профили и не подключаются к рабочему фоновому процессу TerminalV. Они запускают Windows PowerShell 5.1 и, если доступен, PowerShell 7 из `Program Files\PowerShell\7`. Для portable PowerShell 7 можно задать путь к `pwsh.exe` через `TERMINALV_TEST_PWSH`; при его отсутствии эта часть явно пропускается.
+
 ## Что умеет v0.4.18
 
 - Вертикальный список вкладок слева
