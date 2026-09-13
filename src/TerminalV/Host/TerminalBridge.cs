@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Media;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Media;
@@ -145,6 +146,9 @@ internal sealed class TerminalBridge : IDisposable
                         }
                     });
                 }
+                break;
+            case "bell":
+                SystemSounds.Beep.Play();
                 break;
             case "update-check":
                 _ = CheckUpdatesAsync(silent: false);
