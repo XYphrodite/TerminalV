@@ -118,8 +118,18 @@ internal sealed class AppDatabase : IDisposable
         return list;
     }
 
-    public void SaveSessions(IReadOnlyList<SessionRecord> sessions)
+    public List<PaneLayout> LoadLayouts()
     {
+        using var cmd = _connection.CreateCommand();
+        cmd.CommandText = "SELECT value FROM settings WHERE key = 'layouts'";
+        var value = cmd.ExecuteScalar() as string;
+        try { return value is null ? [] : JsonSerializer.Deserialize<List<PaneLayout>>(value, Json) ?? []; }
+        catch (JsonException) { return []; } // Session records are still restored as independent panes.
+    }
+
+    public void SaveSessions(IReadOnlyList<SessionRecord> sessions, IReadOnlyList<PaneLayout>? layouts = null)
+    {
+        var normalized = PaneLayout.Normalize(layouts ?? LoadLayouts(), sessions);
         using var tx = _connection.BeginTransaction();
         using (var clear = _connection.CreateCommand())
         {
@@ -157,6 +167,16 @@ internal sealed class AppDatabase : IDisposable
             insert.ExecuteNonQuery();
         }
 
+        using (var saveLayout = _connection.CreateCommand())
+        {
+            saveLayout.Transaction = tx;
+            saveLayout.CommandText = """
+                INSERT INTO settings(key, value) VALUES('layouts', $value)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value
+                """;
+            saveLayout.Parameters.AddWithValue("$value", JsonSerializer.Serialize(normalized, Json));
+            saveLayout.ExecuteNonQuery();
+        }
         tx.Commit();
     }
 

@@ -586,11 +586,34 @@ body,
   z-index: 0;
 }
 
-.pane.active {
+.pane.visible {
   display: block;
   pointer-events: auto;
   z-index: 2;
 }
+
+.pane-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; padding: 5px 10px; flex: 0 0 auto;
+  background: var(--sidebar); border-bottom: 1px solid var(--sidebar-edge); font-size: 12px; }
+.pane-toolbar[hidden] { display: none; }
+.pane-toolbar span { margin-right: auto; color: var(--muted); }
+.pane-toolbar button { height: 26px; }
+.pane-toolbar button:disabled { opacity: .45; cursor: default; }
+.pane-head { display: none; }
+.split-view .pane-head { position: absolute; inset: 0 0 auto; height: 28px; z-index: 3; display: flex; align-items: center;
+  gap: 8px; padding: 0 6px 0 10px; background: var(--sidebar); border-bottom: 1px solid var(--sidebar-edge); }
+.pane-title { min-width: 0; flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--muted); font-size: 12px; }
+.pane-close { border: 0; background: transparent; color: var(--muted); width: 24px; height: 24px; cursor: pointer; }
+.pane-close:hover { color: var(--danger); background: var(--tab-hover); }
+.split-view .pane.active { box-shadow: inset 0 0 0 1px var(--accent); }
+.split-view .pane.active .pane-title { color: var(--text); }
+.split-view .pane.active .pane-head { border-bottom-color: var(--accent); }
+.split-view .terminal-host, #app.collapsed .split-view .terminal-host { inset: 34px 8px 8px; }
+.tab.in-view:not(.active) .tab-title { text-decoration: underline; text-decoration-color: var(--accent-dim); text-underline-offset: 3px; }
+.pane-divider { position: absolute; z-index: 5; background: var(--sidebar-edge); cursor: row-resize; touch-action: none; }
+.pane-divider.columns { cursor: col-resize; }
+.pane-divider:hover, .pane-divider:focus-visible { background: var(--accent); outline: none; }
+.resizing .pane { pointer-events: none; }
+.split-view .overlay { flex-wrap: wrap; padding: 8px; overflow-wrap: anywhere; max-height: calc(100% - 40px); overflow: auto; }
 
 .terminal-host {
   position: absolute;

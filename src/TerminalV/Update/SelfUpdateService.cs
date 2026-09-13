@@ -80,6 +80,11 @@ internal sealed class SelfUpdateService
     {
         var installDirectory = Path.GetDirectoryName(_executablePath)
             ?? throw new InvalidOperationException("The install directory could not be determined.");
+        var marker = Path.Combine(installDirectory, PendingMarker);
+        if (Path.Exists(marker))
+        {
+            throw new InvalidOperationException("A previous update is pending. Restart TerminalV before updating again.");
+        }
 
         var staging = Path.Combine(installDirectory, StagingPrefix + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(staging);
@@ -95,22 +100,33 @@ internal sealed class SelfUpdateService
             ZipFile.ExtractToDirectory(zipPath, payload);
             File.Delete(zipPath);
 
-            var stagedExe = Path.Combine(payload, AppVersion.ExecutableName);
-            if (!File.Exists(stagedExe))
+            foreach (var required in new[] { AppVersion.ExecutableName, "TerminalV.com", Path.Combine("wwwroot", "index.html") })
             {
-                throw new InvalidDataException("The downloaded release does not contain TerminalV.exe.");
+                if (!File.Exists(Path.Combine(payload, required)))
+                {
+                    throw new InvalidDataException($"The downloaded release does not contain {required}.");
+                }
             }
 
+            var stagedExe = Path.Combine(payload, AppVersion.ExecutableName);
             if (!await ProbeAsync(stagedExe, cancellationToken).ConfigureAwait(false))
             {
                 throw new InvalidDataException("The downloaded release did not run.");
             }
 
             var retired = _replacer.Replace(_executablePath, stagedExe);
-            bool healthy;
             try
             {
-                healthy = await ProbeAsync(_executablePath, cancellationToken).ConfigureAwait(false);
+                if (!await ProbeAsync(_executablePath, cancellationToken).ConfigureAwait(false))
+                {
+                    throw new InvalidDataException("The downloaded release did not run after installation.");
+                }
+
+                // Publish the marker atomically. Failure must roll back the EXE as well.
+                var stagedMarker = Path.Combine(staging, "pending");
+                File.WriteAllText(stagedMarker, payload);
+                File.Move(stagedMarker, marker);
+                keepStaging = true;
             }
             catch
             {
@@ -118,14 +134,6 @@ internal sealed class SelfUpdateService
                 throw;
             }
 
-            if (!healthy)
-            {
-                _replacer.Restore(retired, _executablePath);
-                throw new InvalidDataException("The downloaded release did not run after installation.");
-            }
-
-            File.WriteAllText(Path.Combine(installDirectory, PendingMarker), payload);
-            keepStaging = true;
         }
         finally
         {
@@ -183,20 +191,25 @@ internal sealed class SelfUpdateService
 
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(ProbeTimeout);
+        var stdout = process.StandardOutput.ReadToEndAsync();
+        var stderr = process.StandardError.ReadToEndAsync();
         try
         {
             await process.WaitForExitAsync(timeout.Token).ConfigureAwait(false);
+            await Task.WhenAll(stdout, stderr).ConfigureAwait(false);
         }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException)
         {
             try
             {
                 process.Kill(entireProcessTree: true);
+                await process.WaitForExitAsync(CancellationToken.None).ConfigureAwait(false);
             }
             catch (InvalidOperationException)
             {
             }
 
+            cancellationToken.ThrowIfCancellationRequested();
             return false;
         }
 
@@ -207,7 +220,7 @@ internal sealed class SelfUpdateService
     {
         try
         {
-            if (Directory.Exists(path))
+            if (Directory.Exists(path) && IsRegularTree(path))
             {
                 Directory.Delete(path, recursive: true);
             }
@@ -218,5 +231,17 @@ internal sealed class SelfUpdateService
         catch (UnauthorizedAccessException)
         {
         }
+    }
+
+    // Never follow junctions/symlinks when moving or retiring an update directory.
+    internal static bool IsRegularTree(string path)
+    {
+        if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0) return false;
+        if (!Directory.Exists(path)) return true;
+        foreach (var entry in Directory.EnumerateFileSystemEntries(path))
+        {
+            if (!IsRegularTree(entry)) return false;
+        }
+        return true;
     }
 }

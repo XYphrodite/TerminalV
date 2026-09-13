@@ -148,6 +148,59 @@ try
         }
     });
 
+    Check("nested layouts and ratios survive reopening with the same session identities", () =>
+    {
+        var splitPath = Path.Combine(root, "split.db");
+        using (var db = new AppDatabase(splitPath))
+        {
+            Equal(db.LoadLayouts().Count, 0);
+            db.SaveSessions([new() { Id = "a", Active = true }, new() { Id = "b", Shell = "powershell", StartupCommand = "original" },
+                new() { Id = "c", Hidden = true }], [new() { Axis = "columns", Ratio = .65,
+                    First = new() { SessionId = "a" }, Second = new() { SessionId = "b" } }]);
+        }
+        using var reopened = new AppDatabase(splitPath);
+        Equal(reopened.LoadLayouts().Single().Ratio, .65);
+        Equal(reopened.LoadLayouts().Single().Second!.SessionId, "b");
+        Equal(reopened.LoadSessions()[0].Active, true);
+        Equal(reopened.LoadSessions()[1].StartupCommand, "original");
+        // A metadata-only writer must preserve existing layouts; hiding prunes only that leaf.
+        var records = reopened.LoadSessions();
+        reopened.SaveSessions(records);
+        Equal(reopened.LoadLayouts().Single().Ratio, .65);
+        records[0].Hidden = true;
+        reopened.SaveSessions(records);
+        Equal(reopened.LoadLayouts().Single().SessionId, "b");
+    });
+
+    Check("failed inventory writes roll back both layouts and sessions", () =>
+    {
+        using var db = new AppDatabase(Path.Combine(root, "atomic.db"));
+        db.SaveSessions([new() { Id = "kept" }], [new() { SessionId = "kept" }]);
+        try
+        {
+            db.SaveSessions([new() { Id = "duplicate" }, new() { Id = "duplicate" }], [new() { SessionId = "duplicate" }]);
+            throw new Exception("Duplicate accepted");
+        }
+        catch (SqliteException) { }
+        Equal(db.LoadSessions().Single().Id, "kept");
+        Equal(db.LoadLayouts().Single().SessionId, "kept");
+    });
+
+    Check("layout normalization recovers malformed references without dropping sessions", () =>
+    {
+        var sessions = Enumerable.Range(0, 20).Select(i => new SessionRecord { Id = i.ToString() }).ToList();
+        var tree = new PaneLayout { SessionId = "0" };
+        for (var i = 1; i < 20; i++) tree = new() { Axis = "rows", Ratio = 5, First = tree, Second = new() { SessionId = i.ToString() } };
+        IEnumerable<string> Leaves(PaneLayout node) => node.SessionId is { } id ? [id]
+            : Leaves(node.First!).Concat(Leaves(node.Second!));
+        var cleaned = PaneLayout.Normalize([tree, new() { Axis = "bad" }], sessions);
+        Equal(cleaned.SelectMany(Leaves).Distinct().Count(), 20);
+        Equal(cleaned.All(node => Leaves(node).Count() <= 8), true);
+        var pair = PaneLayout.Normalize([new() { Axis = "columns", Ratio = 10,
+            First = new() { SessionId = "0" }, Second = new() { SessionId = "1" } }], sessions);
+        Equal(pair[0].Ratio, .9);
+    });
+
     Check("fresh database has the same schema and reopening migration is idempotent", () =>
     {
         var freshPath = Path.Combine(root, "fresh.db");

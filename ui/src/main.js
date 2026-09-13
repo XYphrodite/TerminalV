@@ -14,6 +14,9 @@ import { createTerminalSearch, isSearchShortcut, SEARCH_HIGHLIGHT_LIMIT } from "
 import { createSessionOptions, sessionMetadata, sessionGroups, SESSION_COLORS } from "./session-management.js";
 import { createNotifications, createNotificationOutput } from "./notifications.js";
 import { createLaunchProfiles, PROFILE_SHELLS } from "./launch-profiles.js";
+import { normalizeLayouts, layoutFor, leafIds, splitSession, detachSession, layoutGeometry,
+  neighborPane, paneShortcut, MAX_PANES, MIN_PANE_WIDTH, MIN_PANE_HEIGHT } from "./pane-layout.js";
+import { createPaneView } from "./pane-view.js";
 
 const tabsEl = document.getElementById("tabs");
 const panesEl = document.getElementById("panes");
@@ -46,6 +49,7 @@ let showHiddenSessions = false;
 
 const tabs = [];
 let activeId = null;
+let layouts = [];
 let shellName = "PowerShell";
 let buildNumber = 22621;
 let nextIndex = 1;
@@ -136,6 +140,73 @@ function isModalOpen() {
   return pasteController.isOpen || closeController.isOpen || sessionOptions.isOpen || launchProfiles.isOpen;
 }
 
+const paneToolbar = document.getElementById("pane-toolbar");
+const splitRightBtn = document.getElementById("split-right");
+const splitDownBtn = document.getElementById("split-down");
+const detachPaneBtn = document.getElementById("detach-pane");
+const paneView = createPaneView({
+  container: panesEl, getRoot: () => layoutFor(layouts, activeId), getTabs: () => tabs,
+  canResize: () => !isModalOpen() && settingsEl.classList.contains("hidden"),
+  onResize: () => { scheduleFit(); schedulePersist(); updatePaneToolbar(); }
+});
+
+function visibleTabs() {
+  const ids = leafIds(layoutFor(layouts, activeId));
+  return ids.map((id) => tabs.find((tab) => tab.id === id)).filter(Boolean);
+}
+
+function isPaneVisible(tab) {
+  return Boolean(tab && !tab.hidden && leafIds(layoutFor(layouts, activeId)).includes(tab.id));
+}
+
+function canSplit(axis) {
+  const tab = currentTab(), count = visibleTabs().length;
+  if (!tab || !count || count >= MAX_PANES) return false;
+  const box = tab.pane.getBoundingClientRect();
+  return axis === "columns" ? box.width >= MIN_PANE_WIDTH * 2 + 6 : box.height >= MIN_PANE_HEIGHT * 2 + 6;
+}
+
+function updatePaneToolbar() {
+  const count = visibleTabs().length;
+  paneToolbar.hidden = !count;
+  document.getElementById("pane-count").textContent = `Панели · ${count}`;
+  splitRightBtn.disabled = !canSplit("columns");
+  splitDownBtn.disabled = !canSplit("rows");
+  detachPaneBtn.disabled = count < 2;
+  splitRightBtn.title = splitRightBtn.disabled ? `Недостаточно места или достигнут предел ${MAX_PANES} панелей` : "Разделить справа (Alt+Shift+=)";
+  splitDownBtn.title = splitDownBtn.disabled ? `Недостаточно места или достигнут предел ${MAX_PANES} панелей` : "Разделить снизу (Alt+Shift+-)";
+}
+
+function renderPaneLayout() {
+  paneView.render();
+  for (const tab of tabs) {
+    const visible = isPaneVisible(tab);
+    tab.pane.classList.toggle("active", tab.id === activeId && visible);
+    if (visible) ensureWebgl(tab); else dropWebgl(tab);
+    patchTabRow(tab);
+  }
+  updatePaneToolbar();
+  scheduleFit();
+}
+
+function splitPane(axis) {
+  if (isModalOpen() || !settingsEl.classList.contains("hidden") || !canSplit(axis)) return;
+  searchController.close({ focus: false });
+  pasteController.cancel(currentTab());
+  newTab({ splitFrom: activeId, splitAxis: axis });
+}
+
+splitRightBtn.addEventListener("click", () => splitPane("columns"));
+splitDownBtn.addEventListener("click", () => splitPane("rows"));
+detachPaneBtn.addEventListener("click", () => {
+  if (isModalOpen() || visibleTabs().length < 2) return;
+  layouts = detachSession(layouts, activeId);
+  renderPaneLayout();
+  persistSessions();
+  currentTab()?.term.focus();
+});
+new ResizeObserver(() => { updatePaneToolbar(); scheduleFit(); }).observe(panesEl);
+
 function openTabs() {
   return sessionGroups(tabs).flatMap((group) => group.tabs);
 }
@@ -150,6 +221,7 @@ function showSessionOptions(tab) {
 function revealTab(tab) {
   if (isModalOpen()) return;
   tab.hidden = false;
+  layouts = normalizeLayouts(layouts, tabs);
   showHiddenSessions = false;
   sessionFilter.value = "";
   renderTabs();
@@ -164,21 +236,24 @@ function hideTab(tab) {
   if (!tabs.includes(tab) || tab.hidden) return;
   const ordered = openTabs();
   const index = ordered.indexOf(tab);
+  const neighbor = visibleTabs().find((item) => item !== tab);
   closeController.cancel(tab);
   pasteController.cancel(tab);
   tab.hidden = true;
+  layouts = normalizeLayouts(layouts, tabs);
   tab.renaming = false;
   dropWebgl(tab);
   if (tab.id === activeId) {
     searchController.close({ focus: false });
     tab.pane.classList.remove("active");
     activeId = null;
-    const next = ordered[index + 1] || ordered[index - 1];
+    const next = neighbor || ordered[index + 1] || ordered[index - 1];
     if (next) activate(next.id);
   }
   if (!openTabs().length) showHiddenSessions = true;
   renderCwdNotice();
   renderTabs();
+  renderPaneLayout();
   // Persist all sessions, including hidden ones. No kill, create or PTY input.
   persistSessions();
 }
@@ -309,7 +384,7 @@ function syncScrollLock(tab) {
 }
 
 function pulseResize(tab) {
-  if (tab.hidden || tab.exited || !tabs.includes(tab)) return;
+  if (!isPaneVisible(tab) || tab.exited || !tabs.includes(tab)) return;
   const cols = tab.term.cols;
   const rows = tab.term.rows;
   if (cols < 10 || rows < 4) {
@@ -318,13 +393,14 @@ function pulseResize(tab) {
   post({ type: "resize", id: tab.id, cols: cols - 1, rows });
   window.setTimeout(() => {
     if (tab.exited || !tabs.includes(tab)) return;
-    post({ type: "resize", id: tab.id, cols, rows });
+    // A split/drag may have changed the size while the redraw pulse was pending.
+    post({ type: "resize", id: tab.id, cols: tab.term.cols, rows: tab.term.rows });
     tab.term.refresh(0, Math.max(0, tab.term.rows - 1));
   }, 40);
 }
 
 function applyFit(tab) {
-  if (!tab || tab.id !== activeId) {
+  if (!isPaneVisible(tab)) {
     return false;
   }
   if (Date.now() < ignoreFitUntil) {
@@ -332,14 +408,14 @@ function applyFit(tab) {
   }
 
   const proposed = tab.fit.proposeDimensions();
-  if (!proposed || proposed.cols < 8 || proposed.rows < 4) {
+  if (!proposed || proposed.cols < 2 || proposed.rows < 1) {
     return false;
   }
   if (proposed.cols === tab.term.cols && proposed.rows === tab.term.rows) {
     return false;
   }
 
-  post({ type: "resize", id: tab.id, cols: proposed.cols, rows: proposed.rows });
+  if (!tab.exited) post({ type: "resize", id: tab.id, cols: proposed.cols, rows: proposed.rows });
   tab.term.resize(proposed.cols, proposed.rows);
   tab.term.refresh(0, Math.max(0, tab.term.rows - 1));
   return true;
@@ -347,13 +423,10 @@ function applyFit(tab) {
 
 function scheduleFit(tab, immediate = false) {
   window.clearTimeout(fitTimer);
-  if (immediate) {
-    if (!applyFit(tab)) {
-      fitTimer = window.setTimeout(() => applyFit(tab), 80);
-    }
-    return;
-  }
-  fitTimer = window.setTimeout(() => applyFit(tab), 80);
+  const fitVisible = () => { for (const item of visibleTabs()) applyFit(item); };
+  if (immediate) fitVisible();
+  // One shared debounce fits ALL visible panels, not just the last observer.
+  fitTimer = window.setTimeout(fitVisible, Math.max(80, ignoreFitUntil - Date.now() + 1));
 }
 
 function applyToTerminals() {
@@ -365,7 +438,7 @@ function applyToTerminals() {
     tab.term.options.fontSize = size;
     tab.term.options.allowTransparency = Boolean(settings.backgroundPath);
     applyBackground(tab.pane);
-    if (tab.id === activeId) {
+    if (isPaneVisible(tab)) {
       applyFit(tab);
     }
   }
@@ -425,7 +498,7 @@ function persistSessions() {
     shell: tab.shell || null,
     startupCommand: tab.startupCommand || null
   }));
-  post({ type: "persist-sessions", sessions: payload });
+  post({ type: "persist-sessions", sessions: payload, layouts });
 }
 
 function schedulePersist() {
@@ -488,6 +561,7 @@ function renderTabs() {
       if (!tab.hidden) row.setAttribute("aria-selected", String(tab.id === activeId));
       applyNotificationRow(row, tab);
       row.classList.toggle("pinned", tab.pinned);
+      row.classList.toggle("in-view", isPaneVisible(tab));
       if (tab.color) row.style.setProperty("--session-color", SESSION_COLORS[tab.color].value);
 
       const accent = document.createElement("span");
@@ -688,12 +762,18 @@ function ensureWebgl(tab) {
 }
 
 function patchTabRow(tab) {
+  if (tab.paneTitle) {
+    tab.paneTitle.textContent = tab.customTitle || tab.title;
+    tab.paneTitle.title = tab.customTitle || tab.title;
+    tab.pane.setAttribute("aria-label", tab.customTitle || tab.title);
+  }
   const row = tabsEl.querySelector(`[data-id="${CSS.escape(tab.id)}"]`);
   if (!row) {
     return;
   }
 
   row.classList.toggle("active", tab.id === activeId);
+  row.classList.toggle("in-view", isPaneVisible(tab));
   if (!tab.hidden) row.setAttribute("aria-selected", String(tab.id === activeId));
   applyNotificationRow(row, tab);
   row.classList.toggle("unread", Boolean(tab.unread));
@@ -707,7 +787,7 @@ function patchTabRow(tab) {
   }
 }
 
-function activate(id) {
+function activate(id, { focus = true } = {}) {
   const tab = tabs.find((item) => item.id === id);
   if (!tab || tab.hidden) {
     return;
@@ -723,20 +803,14 @@ function activate(id) {
   notifications.acknowledge(tab);
   renderCwdNotice();
   tab.unread = false;
-  for (const item of tabs) {
-    const on = item.id === id;
-    item.pane.classList.toggle("active", on);
-    if (on) {
-      ensureWebgl(item);
-    } else {
-      dropWebgl(item);
-    }
-    patchTabRow(item);
-  }
+  renderPaneLayout();
+  // Change the input target now: a keystroke before the next paint must not
+  // reach the previously focused panel. Deferred focus could also steal a click.
+  if (focus && !searchController.isOpen && !isModalOpen() && settingsEl.classList.contains("hidden")) tab.term.focus();
   requestAnimationFrame(() => {
+    if (!tabs.includes(tab) || tab.id !== activeId) return;
     tab.term.refresh(0, Math.max(0, tab.term.rows - 1));
-    applyFit(tab);
-    if (!searchController.isOpen && !isModalOpen()) tab.term.focus();
+    for (const item of visibleTabs()) applyFit(item);
   });
   schedulePersist();
 }
@@ -757,14 +831,18 @@ function removeTab(tab) {
   const closingActive = activeId === tab.id;
   const ordered = openTabs();
   const visibleIndex = ordered.indexOf(tab);
+  const neighbor = visibleTabs().find((item) => item !== tab);
   sessionOptions.cancel(tab);
   if (closingActive) searchController.close({ focus: false });
   tabs.splice(index, 1);
+  layouts = normalizeLayouts(layouts, tabs);
   notifications.acknowledge(tab);
   pasteController.cancel(tab);
   if (!tab.exited) post({ type: "kill", id: tab.id });
   dropWebgl(tab);
   tab.output.dispose();
+  tab.resizeObserver?.disconnect();
+  tab.mouseWatch?.disconnect();
   try {
     tab.term.dispose();
   } catch {
@@ -773,7 +851,7 @@ function removeTab(tab) {
   tab.pane.remove();
 
   if (closingActive) {
-    const next = ordered[visibleIndex + 1] || ordered[visibleIndex - 1] || null;
+    const next = neighbor || ordered[visibleIndex + 1] || ordered[visibleIndex - 1] || null;
     activeId = next?.id ?? null;
     renderCwdNotice();
     renderTabs();
@@ -782,10 +860,12 @@ function removeTab(tab) {
       return;
     }
     schedulePersist();
+    renderPaneLayout();
     return;
   }
 
   renderTabs();
+  renderPaneLayout();
   schedulePersist();
 }
 
@@ -934,6 +1014,20 @@ function newTab(options = {}) {
   const pane = document.createElement("div");
   pane.className = "pane";
   pane.dataset.id = id;
+  pane.setAttribute("role", "region");
+  const paneHead = document.createElement("div");
+  paneHead.className = "pane-head";
+  const paneTitle = document.createElement("span");
+  paneTitle.className = "pane-title";
+  const paneClose = document.createElement("button");
+  paneClose.type = "button";
+  paneClose.className = "pane-close";
+  paneClose.textContent = "×";
+  paneClose.title = "Закрыть эту панель";
+  paneClose.setAttribute("aria-label", "Закрыть эту панель");
+  paneClose.addEventListener("click", (event) => { event.stopPropagation(); closeTab(id); });
+  paneHead.append(paneTitle, paneClose);
+  pane.append(paneHead);
 
   const hostEl = document.createElement("div");
   hostEl.className = "terminal-host";
@@ -988,6 +1082,7 @@ function newTab(options = {}) {
     unread: false,
     exited: false,
     pane,
+    paneTitle,
     host: hostEl,
     overlay,
     overlayText,
@@ -1001,6 +1096,14 @@ function newTab(options = {}) {
   };
 
   overlayBtn.addEventListener("click", () => restart(tab));
+  pane.addEventListener("pointerdown", (event) => {
+    if (!isPaneVisible(tab) || isModalOpen() || event.target.closest("button")) return;
+    if (activeId !== id) activate(id, { focus: false });
+  }, true);
+  paneHead.addEventListener("click", (event) => { if (!event.target.closest("button") && !isModalOpen()) activate(id); });
+  hostEl.addEventListener("focusin", () => {
+    if (activeId !== id && isPaneVisible(tab) && !isModalOpen()) activate(id, { focus: false });
+  });
   term.onData((data) => post({ type: "write", id, data }));
   tab.output = createNotificationOutput(term, () => notifications.bell(tab), () => syncScrollLock(tab));
   if (options.buffer) tab.output.write(options.buffer, true);
@@ -1019,6 +1122,7 @@ function newTab(options = {}) {
   const xtermEl = tab.term.element;
   if (xtermEl) {
     const mouseWatch = new MutationObserver(() => syncScrollLock(tab));
+    tab.mouseWatch = mouseWatch;
     mouseWatch.observe(xtermEl, { attributes: true, attributeFilter: ["class"] });
   }
   tab.host.addEventListener(
@@ -1056,14 +1160,19 @@ function newTab(options = {}) {
   syncScrollLock(tab);
 
   const observer = new ResizeObserver(() => {
-    if (activeId !== id || Date.now() < ignoreFitUntil) {
+    if (!isPaneVisible(tab)) {
       return;
     }
     scheduleFit(tab);
   });
   observer.observe(hostEl);
+  tab.resizeObserver = observer;
 
   tabs.push(tab);
+  if (!options.skipActivate) {
+    layouts = options.splitFrom ? splitSession(layouts, options.splitFrom, id, options.splitAxis)
+      : normalizeLayouts(layouts, tabs);
+  }
   if (!options.skipActivate && !tab.hidden) {
     ensureWebgl(tab);
   }
@@ -1229,9 +1338,10 @@ function toggleSidebar() {
   persistSettings();
   ignoreFitUntil = Date.now() + 200;
   window.clearTimeout(fitTimer);
+  scheduleFit();
 }
 
-function restoreSessions(records) {
+function restoreSessions(records, savedLayouts) {
   if (!records?.length) {
     readyForPersist = true;
     newTab();
@@ -1261,11 +1371,13 @@ function restoreSessions(records) {
     }
   }
   nextIndex = tabs.length + 1;
+  layouts = normalizeLayouts(savedLayouts, tabs);
   readyForPersist = true;
   const firstOpen = openTabs()[0];
   showHiddenSessions = !firstOpen;
   renderTabs();
   if (firstOpen) activate(active || firstOpen.id);
+  else renderPaneLayout();
   persistSessions();
 }
 
@@ -1300,7 +1412,7 @@ function handleHost(message) {
       : "";
     syncSettingsForm();
     if (tabs.length === 0) {
-      restoreSessions(message.sessions);
+      restoreSessions(message.sessions, message.layouts);
     } else {
       renderTabs();
     }
@@ -1438,6 +1550,21 @@ window.addEventListener(
   "keydown",
   (event) => {
     if (isModalOpen() || event.target === sessionFilter) {
+      return;
+    }
+    if (event.target.closest?.(".pane-divider")) return;
+    const paneAction = paneShortcut(event);
+    const editing = event.target.matches?.("input, textarea, select, [contenteditable=true]") &&
+      !event.target.classList.contains("xterm-helper-textarea");
+    if (paneAction && !editing && settingsEl.classList.contains("hidden")) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (paneAction === "columns" || paneAction === "rows") {
+        if (!event.repeat) splitPane(paneAction);
+      } else {
+        const next = neighborPane(layoutGeometry(layoutFor(layouts, activeId)).panes, activeId, paneAction);
+        if (next) activate(next);
+      }
       return;
     }
     if (settingsEl.classList.contains("hidden")) {

@@ -61,6 +61,7 @@ internal sealed class TerminalBridge : IDisposable
             updateSupported = _canUpdate,
             settings = _db.LoadSettings(),
             sessions = _db.LoadSessions(),
+            layouts = _db.LoadLayouts(),
             profiles = _db.LoadProfiles(),
             liveIds = LiveIds(),
             cwdTrackingSupported = _host.CwdTrackingSupported,
@@ -444,7 +445,7 @@ internal sealed class TerminalBridge : IDisposable
                 return;
             }
 
-            _db.SaveSessions(sessions);
+            _db.SaveSessions(sessions, message.Layouts);
         }
         catch (JsonException)
         {

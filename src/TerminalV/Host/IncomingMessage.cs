@@ -11,6 +11,7 @@ internal sealed class IncomingMessage
     public int Cols { get; set; }
     public int Rows { get; set; }
     public List<SessionRecord>? Sessions { get; set; }
+    public List<PaneLayout>? Layouts { get; set; }
     public string? Cwd { get; set; }
     public string? Shell { get; set; }
     public string? StartupCommand { get; set; }
