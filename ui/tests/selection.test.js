@@ -42,7 +42,8 @@ async function runBrowserFixture(t, fixture) {
   });
   const profile = await mkdtemp(join(tmpdir(), "terminalv-copy-test-"));
   try {
-    const screenshot = fixture === "search-ui" ? process.env.TERMINALV_SEARCH_SCREENSHOT :
+    const screenshot = fixture === "close-ui" ? process.env.TERMINALV_CLOSE_SCREENSHOT :
+      fixture === "search-ui" ? process.env.TERMINALV_SEARCH_SCREENSHOT :
       fixture === "paste-confirmation" && process.env.TERMINALV_TEST_SCREENSHOT;
     const output = await new Promise((resolve, reject) => {
       const child = spawn(browser, [
@@ -68,7 +69,7 @@ async function runBrowserFixture(t, fixture) {
       });
     });
     const result = output.match(/data-test-result="([A-Za-z0-9+/=]+)"/);
-    assert.ok(result, `Browser did not finish ${fixture} tests\n${output}`);
+    assert.ok(result, `Browser did not finish ${fixture} tests\n${output.match(/<body[^>]*>/)?.[0]}\n${output.slice(-3000)}`);
     const checks = JSON.parse(Buffer.from(result[1], "base64").toString("utf8"));
     assert.ok(checks.length > 0);
     for (const check of checks) {
@@ -86,3 +87,4 @@ test("copy selection in xterm.js", (t) => runBrowserFixture(t, "selection"));
 test("multiline paste confirmation in xterm.js", (t) => runBrowserFixture(t, "paste-confirmation"));
 test("terminal search in xterm.js", (t) => runBrowserFixture(t, "terminal-search"));
 test("search in the built TerminalV interface", (t) => runBrowserFixture(t, "search-ui"));
+test("close protection in the built TerminalV interface", (t) => runBrowserFixture(t, "close-ui"));

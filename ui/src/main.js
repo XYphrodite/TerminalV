@@ -9,6 +9,7 @@ import "./styles.css";
 import { THEMES, getTheme } from "./themes.js";
 import { getPlainSelection } from "./selection.js";
 import { createPasteController } from "./paste-confirmation.js";
+import { createCloseConfirmation } from "./close-confirmation.js";
 import { createTerminalSearch, isSearchShortcut, SEARCH_HIGHLIGHT_LIMIT } from "./terminal-search.js";
 
 const tabsEl = document.getElementById("tabs");
@@ -63,7 +64,7 @@ const settings = {
 const pasteController = createPasteController({
   dialog: document.getElementById("paste-confirmation"),
   readClipboard,
-  canPaste: (tab) => tabs.includes(tab) && tab.id === activeId && !tab.exited,
+  canPaste: (tab) => tabs.includes(tab) && tab.id === activeId && !tab.exited && !closeController.isOpen,
   restoreFocus: () => currentTab()?.term.focus()
 });
 
@@ -71,6 +72,25 @@ const searchController = createTerminalSearch({
   panel: document.getElementById("terminal-search"),
   onVisibilityChange: (tab) => scheduleFit(tab, true)
 });
+
+const closeController = createCloseConfirmation({
+  dialog: document.getElementById("close-confirmation"),
+  canClose: (tab) => tabs.includes(tab),
+  onConfirm: removeTab,
+  // A clipboard request started just before closing must not open a second dialog.
+  onShow: () => pasteController.cancel(currentTab()),
+  restoreFocus: (previous) => {
+    if (searchController.isOpen && previous?.isConnected && searchController.contains(previous)) {
+      previous.focus({ preventScroll: true });
+    } else {
+      currentTab()?.term.focus();
+    }
+  }
+});
+
+function isModalOpen() {
+  return pasteController.isOpen || closeController.isOpen;
+}
 
 function host() {
   return window.chrome?.webview ?? null;
@@ -493,6 +513,7 @@ function activate(id) {
   }
 
   if (activeId !== id) {
+    closeController.cancel();
     searchController.close({ focus: false });
     pasteController.cancel(currentTab());
   }
@@ -511,22 +532,29 @@ function activate(id) {
   requestAnimationFrame(() => {
     tab.term.refresh(0, Math.max(0, tab.term.rows - 1));
     applyFit(tab);
-    if (!searchController.isOpen) tab.term.focus();
+    if (!searchController.isOpen && !isModalOpen()) tab.term.focus();
   });
   schedulePersist();
 }
 
 function closeTab(id) {
-  const index = tabs.findIndex((tab) => tab.id === id);
+  if (isModalOpen()) return;
+  const tab = tabs.find((item) => item.id === id);
+  if (tab) closeController.request(tab);
+}
+
+function removeTab(tab) {
+  // Use object identity so an old confirmation cannot target a replacement session.
+  const index = tabs.indexOf(tab);
   if (index < 0) {
     return;
   }
 
-  const closingActive = activeId === id;
+  const closingActive = activeId === tab.id;
   if (closingActive) searchController.close({ focus: false });
-  const [tab] = tabs.splice(index, 1);
+  tabs.splice(index, 1);
   pasteController.cancel(tab);
-  post({ type: "kill", id });
+  if (!tab.exited) post({ type: "kill", id: tab.id });
   dropWebgl(tab);
   try {
     tab.term.dispose();
@@ -841,6 +869,7 @@ function newTab(options = {}) {
 }
 
 function restart(tab) {
+  closeController.cancel(tab);
   if (tab.id === activeId) searchController.close({ focus: false });
   pasteController.cancel(tab);
   tab.exited = false;
@@ -1078,6 +1107,7 @@ function handleHost(message) {
   if (message.type === "exit") {
     tab.tuiHint = false;
     tab.exited = true;
+    closeController.cancel(tab);
     pasteController.cancel(tab);
     syncScrollLock(tab);
     tab.overlayText.textContent = `Процесс завершился с кодом ${message.code ?? 0}`;
@@ -1088,6 +1118,7 @@ function handleHost(message) {
 
   if (message.type === "error") {
     tab.exited = true;
+    closeController.cancel(tab);
     pasteController.cancel(tab);
     tab.overlayText.textContent = message.message || "Не удалось запустить сессию";
     tab.overlay.classList.add("visible");
@@ -1101,7 +1132,7 @@ updateApply.addEventListener("click", () => post({ type: "update-apply" }));
 versionBtn.addEventListener("click", () => post({ type: "update-check" }));
 settingsBtn.addEventListener("click", openSettings);
 searchBtn.addEventListener("click", () => {
-  if (!pasteController.isOpen && settingsEl.classList.contains("hidden")) {
+  if (!isModalOpen() && settingsEl.classList.contains("hidden")) {
     searchController.open(currentTab());
   }
 });
@@ -1139,7 +1170,7 @@ bgOpacityEl.addEventListener("change", persistSettings);
 window.addEventListener(
   "keydown",
   (event) => {
-    if (pasteController.isOpen) {
+    if (isModalOpen()) {
       return;
     }
     if (settingsEl.classList.contains("hidden")) {
@@ -1188,7 +1219,8 @@ window.addEventListener(
     }
     if (event.ctrlKey && event.shiftKey && event.code === "KeyW") {
       event.preventDefault();
-      if (activeId) {
+      event.stopPropagation();
+      if (!event.repeat && activeId) {
         closeTab(activeId);
       }
       return;
@@ -1219,7 +1251,7 @@ window.addEventListener(
 window.addEventListener(
   "wheel",
   (event) => {
-    if (pasteController.isOpen || searchController.contains(event.target)) {
+    if (isModalOpen() || searchController.contains(event.target)) {
       return;
     }
     if (!(event.ctrlKey || event.metaKey)) {
