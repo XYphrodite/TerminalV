@@ -262,21 +262,22 @@ function persistSettings() {
   post({ type: "persist-settings", data: JSON.stringify(settings) });
 }
 
-function guessCwd(tab) {
-  const text = tab.title || "";
-  const match = text.match(/([A-Za-z]:\\(?:[^<>:"|?*\r\n]+\\)*[^<>:"|?*\r\n]*)/);
-  if (!match) {
-    return tab.cwd || null;
-  }
+const cwdNotice = document.getElementById("cwd-notice");
+let legacyHostNotice = "";
 
-  const path = match[1].replace(/\\+$/, "");
-  if (/\.(exe|dll|ps1)$/i.test(path)) {
-    return tab.cwd || null;
-  }
-
-  tab.cwd = path;
-  return path;
+function renderCwdNotice() {
+  const text = currentTab()?.cwdNotice || legacyHostNotice;
+  cwdNotice.hidden = !text;
+  cwdNotice.querySelector("span").textContent = text;
 }
+
+cwdNotice.querySelector("button").addEventListener("click", () => {
+  const tab = currentTab();
+  if (tab?.cwdNotice) tab.cwdNotice = "";
+  else legacyHostNotice = "";
+  renderCwdNotice();
+  if (!isModalOpen() && !searchController.isOpen) tab?.term.focus();
+});
 
 function serializeTab(tab) {
   try {
@@ -301,7 +302,7 @@ function persistSessions() {
     sortOrder: index,
     active: tab.id === activeId,
     buffer: serializeTab(tab),
-    cwd: guessCwd(tab)
+    cwd: tab.cwd || null
   }));
   post({ type: "persist-sessions", sessions: payload });
 }
@@ -518,6 +519,7 @@ function activate(id) {
     pasteController.cancel(currentTab());
   }
   activeId = id;
+  renderCwdNotice();
   tab.unread = false;
   for (const item of tabs) {
     const on = item.id === id;
@@ -566,6 +568,7 @@ function removeTab(tab) {
   if (closingActive) {
     const next = tabs[index] || tabs[index - 1] || null;
     activeId = next?.id ?? null;
+    renderCwdNotice();
     renderTabs();
     if (next) {
       activate(next.id);
@@ -715,6 +718,9 @@ function attachCopyPaste(tab) {
 }
 
 function newTab(options = {}) {
+  // Restored tabs explicitly carry their own cwd (possibly null). Only a fresh
+  // tab inherits the active session, never a title or another restored tab.
+  const cwd = Object.hasOwn(options, "cwd") ? options.cwd : currentTab()?.cwd;
   const id = options.id || uuid();
   const index = options.title ? nextIndex : nextIndex++;
   const pane = document.createElement("div");
@@ -765,7 +771,7 @@ function newTab(options = {}) {
     id,
     title: options.title || `Сессия ${index}`,
     customTitle: options.customTitle || undefined,
-    cwd: options.cwd || undefined,
+    cwd: cwd || undefined,
     buffer: options.buffer || "",
     renaming: false,
     unread: false,
@@ -792,7 +798,6 @@ function newTab(options = {}) {
       return;
     }
     tab.title = cleaned;
-    guessCwd(tab);
     patchTabRow(tab);
     schedulePersist();
   });
@@ -855,7 +860,7 @@ function newTab(options = {}) {
     post({ type: "attach", id });
     window.setTimeout(() => pulseResize(tab), 300);
   } else {
-    const createMsg = { type: "create", id, cols, rows, cwd: options.cwd || undefined };
+    const createMsg = { type: "create", id, cols, rows, cwd: cwd || undefined };
     if (!options.skipActivate) {
       fit.fit();
       createMsg.cols = term.cols;
@@ -873,10 +878,12 @@ function restart(tab) {
   if (tab.id === activeId) searchController.close({ focus: false });
   pasteController.cancel(tab);
   tab.exited = false;
+  tab.cwdNotice = "";
+  renderCwdNotice();
   tab.overlay.classList.remove("visible");
   tab.term.reset();
   tab.fit.fit();
-  post({ type: "create", id: tab.id, cols: tab.term.cols, rows: tab.term.rows });
+  post({ type: "create", id: tab.id, cols: tab.term.cols, rows: tab.term.rows, cwd: tab.cwd });
   tab.term.focus();
   renderTabs();
 }
@@ -1053,12 +1060,16 @@ function handleHost(message) {
     }
     fillFonts(message.fonts);
     window.__liveIds = message.liveIds || [];
+    legacyHostNotice = message.cwdTrackingSupported === false
+      ? "Фоновый процесс TerminalV старой версии: текущая папка пока не отслеживается. После завершения нужных задач перезагрузите Windows. Работающие сессии не прерываются."
+      : "";
     syncSettingsForm();
     if (tabs.length === 0) {
       restoreSessions(message.sessions);
     } else {
       renderTabs();
     }
+    renderCwdNotice();
     return;
   }
 
@@ -1085,6 +1096,14 @@ function handleHost(message) {
 
   const tab = tabs.find((item) => item.id === message.id);
   if (!tab) {
+    return;
+  }
+
+  if (message.type === "cwd") {
+    if (typeof message.cwd === "string" && message.cwd.length > 0) tab.cwd = message.cwd;
+    if (message.notice) tab.cwdNotice = message.notice;
+    renderCwdNotice();
+    schedulePersist();
     return;
   }
 

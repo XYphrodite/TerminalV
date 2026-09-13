@@ -17,13 +17,16 @@ internal sealed class ConPtySession : IDisposable
     private readonly FileStream _outputStream;
     private readonly StreamWriter _writer;
     private readonly object _writeGate = new();
+    private readonly WorkingDirectoryTracker _directory;
     private int _disposed;
 
     public string Id { get; }
     public int ProcessId { get; }
+    public string CurrentDirectory => _directory.CurrentDirectory;
 
     public event Action<string>? Output;
     public event Action<uint>? Exited;
+    public event Action<string>? DirectoryChanged;
 
     private ConPtySession(
         string id,
@@ -32,9 +35,12 @@ internal sealed class ConPtySession : IDisposable
         IntPtr pseudoConsoleValue,
         NativeMethods.ProcessInformation processInfo,
         FileStream inputStream,
-        FileStream outputStream)
+        FileStream outputStream,
+        string workingDirectory)
     {
         Id = id;
+        _directory = new WorkingDirectoryTracker(workingDirectory);
+        _directory.Changed += path => DirectoryChanged?.Invoke(path);
         _pseudoConsole = pseudoConsole;
         _attributeList = attributeList;
         _pseudoConsoleValue = pseudoConsoleValue;
@@ -48,8 +54,6 @@ internal sealed class ConPtySession : IDisposable
             AutoFlush = true
         };
 
-        _ = Task.Factory.StartNew(ReadLoop, TaskCreationOptions.LongRunning);
-        _ = Task.Factory.StartNew(WaitLoop, TaskCreationOptions.LongRunning);
     }
 
     public static ConPtySession Start(
@@ -57,7 +61,8 @@ internal sealed class ConPtySession : IDisposable
         string commandLine,
         string workingDirectory,
         int cols,
-        int rows)
+        int rows,
+        Action<ConPtySession>? configure = null)
     {
         if (!NativeMethods.CreatePipe(out var inputRead, out var inputWrite, IntPtr.Zero, 0))
         {
@@ -112,7 +117,21 @@ internal sealed class ConPtySession : IDisposable
         var inputStream = new FileStream(inputWrite, FileAccess.Write);
         var outputStream = new FileStream(outputRead, FileAccess.Read);
 
-        return new ConPtySession(id, hPC, startupInfo.lpAttributeList, IntPtr.Zero, processInfo, inputStream, outputStream);
+        var session = new ConPtySession(id, hPC, startupInfo.lpAttributeList, IntPtr.Zero,
+            processInfo, inputStream, outputStream, workingDirectory);
+        // Subscribe before reading: the first prompt may already contain the real directory.
+        try
+        {
+            configure?.Invoke(session);
+        }
+        catch
+        {
+            session.Dispose();
+            throw;
+        }
+        _ = Task.Factory.StartNew(session.ReadLoop, TaskCreationOptions.LongRunning);
+        _ = Task.Factory.StartNew(session.WaitLoop, TaskCreationOptions.LongRunning);
+        return session;
     }
 
     public void Write(string data)
@@ -231,7 +250,9 @@ internal sealed class ConPtySession : IDisposable
                 var charCount = decoder.GetChars(buffer, 0, read, chars, 0);
                 if (charCount > 0)
                 {
-                    Output?.Invoke(new string(chars, 0, charCount));
+                    var chunk = new string(chars, 0, charCount);
+                    _directory.Feed(chunk);
+                    Output?.Invoke(chunk);
                 }
             }
         }

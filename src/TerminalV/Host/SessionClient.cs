@@ -21,6 +21,9 @@ internal sealed class SessionClient : IDisposable
 
     public event Action<string, string>? Data;
     public event Action<string, uint>? Exited;
+    public event Action<string, string, string?>? DirectoryChanged;
+    public event Action<string, string>? Error;
+    public bool? CwdTrackingSupported { get; private set; }
 
     public bool Ensure()
     {
@@ -82,6 +85,9 @@ internal sealed class SessionClient : IDisposable
             {
                 ids = array.EnumerateArray().Select(item => item.GetString() ?? "").Where(id => id.Length > 0).ToArray();
             }
+
+            CwdTrackingSupported = root.TryGetProperty("cwdTrackingSupported", out var supported) &&
+                supported.ValueKind == JsonValueKind.True;
 
             ready.Set();
         }
@@ -156,6 +162,15 @@ internal sealed class SessionClient : IDisposable
                     {
                         var code = root.TryGetProperty("code", out var codeEl) ? codeEl.GetUInt32() : 0;
                         Exited?.Invoke(id, code);
+                    }
+                    else if (type == "cwd" && id is not null && root.TryGetProperty("cwd", out var cwdEl))
+                    {
+                        var notice = root.TryGetProperty("notice", out var noticeEl) ? noticeEl.GetString() : null;
+                        DirectoryChanged?.Invoke(id, cwdEl.GetString() ?? "", notice);
+                    }
+                    else if (type == "error" && id is not null && root.TryGetProperty("message", out var errorEl))
+                    {
+                        Error?.Invoke(id, errorEl.GetString() ?? "");
                     }
                 }
             }

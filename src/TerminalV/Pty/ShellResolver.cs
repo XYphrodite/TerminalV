@@ -6,19 +6,19 @@ internal readonly record struct ShellInfo(string CommandLine, string DisplayName
 
 internal static class ShellResolver
 {
-    public static ShellInfo Resolve()
+    public static ShellInfo Resolve(string? directory = null)
     {
         var overridePath = Environment.GetEnvironmentVariable("TERMINALV_SHELL");
         if (!string.IsNullOrWhiteSpace(overridePath) && File.Exists(overridePath))
         {
-            return new(Quote(overridePath) + " -NoLogo", PrettyName(overridePath));
+            return new(PowerShellIntegration.CommandLine(overridePath, directory), PrettyName(overridePath));
         }
 
         foreach (var candidate in Candidates())
         {
             if (File.Exists(candidate))
             {
-                return new(Quote(candidate) + " -NoLogo", PrettyName(candidate));
+                return new(PowerShellIntegration.CommandLine(candidate, directory), PrettyName(candidate));
             }
         }
 
@@ -27,7 +27,7 @@ internal static class ShellResolver
             "WindowsPowerShell",
             "v1.0",
             "powershell.exe");
-        return new(Quote(powershell) + " -NoLogo", "Windows PowerShell");
+        return new(PowerShellIntegration.CommandLine(powershell, directory), "Windows PowerShell");
     }
 
     private static IEnumerable<string> Candidates()
@@ -79,8 +79,6 @@ internal static class ShellResolver
 
         return null;
     }
-
-    private static string Quote(string path) => $"\"{path}\"";
 
     private static string PrettyName(string path)
     {
