@@ -712,7 +712,7 @@ select {
   border-color: var(--accent);
 }
 
-.paste-dialog {
+.confirmation-dialog {
   width: min(520px, calc(100vw - 32px));
   max-height: calc(100vh - 32px);
   margin: auto;
@@ -726,32 +726,32 @@ select {
   overflow: auto;
 }
 
-.paste-dialog[open] {
+.confirmation-dialog[open] {
   display: flex;
   flex-direction: column;
 }
 
-.paste-dialog::backdrop {
+.confirmation-dialog::backdrop {
   background: #00000077;
 }
 
-.paste-dialog-content {
+.confirmation-content {
   padding: 24px;
   min-height: 0;
   overflow: auto;
 }
 
-.paste-dialog h2 {
+.confirmation-dialog h2 {
   margin: 0 0 12px;
   font-size: 20px;
   font-weight: 600;
 }
 
-.paste-dialog p {
+.confirmation-dialog p {
   margin: 0;
 }
 
-.paste-dialog .paste-preview-label {
+.confirmation-dialog .paste-preview-label {
   margin: 18px 0 8px;
 }
 
@@ -766,13 +766,13 @@ select {
   font: 600 13px/1.35 var(--font-mono);
 }
 
-.paste-dialog .paste-preview-truncated {
+.confirmation-dialog .paste-preview-truncated {
   margin-top: 10px;
   color: var(--muted);
   font-size: 12px;
 }
 
-.paste-dialog-actions {
+.confirmation-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
@@ -782,7 +782,7 @@ select {
   flex-shrink: 0;
 }
 
-.paste-dialog-actions button {
+.confirmation-actions button {
   flex: 1 1 180px;
   min-height: 34px;
   padding: 6px 12px;
@@ -802,11 +802,25 @@ select {
   color: var(--text);
 }
 
-.paste-dialog-actions button:hover {
+.confirmation-actions button:hover {
   filter: brightness(1.1);
 }
 
-.paste-dialog :focus-visible {
+.confirmation-dialog :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 3px;
+}
+
+.confirmation-dialog .close-session-name {
+  margin-bottom: 16px;
+  max-height: 120px;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  font-weight: 600;
+}
+
+.close-confirm {
+  background: var(--danger);
+  color: var(--ink);
 }

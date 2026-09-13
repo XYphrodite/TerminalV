@@ -119,12 +119,16 @@
   await check("closing the searched tab clears the bar, including the last tab", async () => {
     doc.getElementById("search-btn").click();
     doc.querySelector(".tab.active .tab-close").click();
+    equal(doc.getElementById("close-confirmation").open, true);
+    doc.querySelector("[data-close-confirm]").click();
     equal(panel.hidden, true);
     await delay();
     equal(doc.querySelectorAll(".tab").length, 1);
     doc.getElementById("search-btn").click();
     await query("ошибка");
     doc.querySelector(".tab.active .tab-close").click();
+    equal(doc.getElementById("close-confirmation").open, true);
+    doc.querySelector("[data-close-confirm]").click();
     equal(panel.hidden, true);
     doc.getElementById("search-btn").click();
     equal(panel.hidden, true);

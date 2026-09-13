@@ -1,0 +1,271 @@
+<!doctype html>
+<meta charset="utf-8">
+<style>html, body { margin: 0; height: 100%; } iframe { width: 100%; height: 100%; border: 0; display: block; }</style>
+<script type="module">
+  const source = await (await fetch("/app/index.html")).text();
+  const results = [];
+  window.addEventListener("error", (event) => { document.body.dataset.testError = event.message; });
+  window.addEventListener("unhandledrejection", (event) => { document.body.dataset.testError = String(event.reason); });
+  const delay = (ms = 100) => new Promise((resolve) => setTimeout(resolve, ms));
+  function equal(actual, expected) {
+    if (actual !== expected) throw new Error(`Expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
+  }
+  async function setup() {
+    const frame = document.createElement("iframe");
+    frame.srcdoc = source.replace("<head>", `<head><base href="${location.origin}/app/"><script src="/tests/search-host.js"><\/script>`);
+    const loaded = new Promise((resolve) => frame.addEventListener("load", resolve, { once: true }));
+    document.body.append(frame);
+    await loaded;
+    await delay();
+    const app = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const dialog = doc.getElementById("close-confirmation");
+    const state = {
+      frame, app, doc, dialog,
+      confirm: dialog.querySelector("[data-close-confirm]"),
+      cancel: dialog.querySelector("[data-close-cancel]"),
+      name: dialog.querySelector("[data-close-name]"),
+      tabs: () => doc.querySelectorAll(".tab").length,
+      activeId: () => doc.querySelector(".tab.active")?.dataset.id,
+      terminalInput: () => doc.querySelector(".pane.active .xterm-helper-textarea"),
+      row: (id) => doc.querySelector(`.tab[data-id="${id}"]`),
+      messages: (type) => app.hostMessages.filter((message) => message.type === type),
+      key: (target, key, options = {}) => {
+        const event = new app.KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...options });
+        target.dispatchEvent(event);
+        return event;
+      }
+    };
+    return state;
+  }
+  async function check(name, run) {
+    document.body.dataset.testProgress = `setup: ${name}`;
+    const s = await setup();
+    document.body.dataset.testProgress = name;
+    try {
+      equal(s.tabs(), 2);
+      await run(s);
+      equal(s.messages("write").length, 0);
+      equal(s.app.hostErrors.length, 0);
+      results.push({ name, ok: true });
+    } catch (error) {
+      results.push({ name, ok: false, error: error.stack });
+    } finally {
+      s.cancel.click();
+      s.frame.remove();
+    }
+  }
+
+  await check("close button asks first; Cancel preserves session, buffer and focus", async (s) => {
+    const pane = s.doc.querySelector('.pane[data-id="first"]');
+    s.row("first").querySelector(".tab-close").click();
+    equal(s.dialog.open, true);
+    equal(s.name.textContent, "Muse — поиск");
+    equal(s.doc.activeElement, s.cancel);
+    equal(s.tabs(), 2);
+    equal(s.messages("kill").length, 0);
+    s.cancel.click();
+    equal(s.dialog.open, false);
+    equal(s.tabs(), 2);
+    equal(s.doc.querySelector('.pane[data-id="first"]'), pane);
+    equal(s.doc.activeElement, s.terminalInput());
+    equal(s.messages("kill").length, 0);
+  });
+
+  await check("Ctrl+Shift+W works in both layouts and native Escape cancels", async (s) => {
+    for (const key of ["W", "Ц"]) {
+      const event = s.key(s.terminalInput(), key, { code: "KeyW", ctrlKey: true, shiftKey: true });
+      equal(event.defaultPrevented, true);
+      equal(s.dialog.open, true);
+      equal(s.doc.activeElement, s.cancel);
+      s.dialog.dispatchEvent(new s.app.Event("cancel", { cancelable: true }));
+      equal(s.dialog.open, false);
+      equal(s.messages("kill").length, 0);
+    }
+    s.key(s.terminalInput(), "Ц", { code: "KeyW", ctrlKey: true, shiftKey: true, repeat: true });
+    equal(s.dialog.open, false);
+  });
+
+  await check("middle click closes only the named inactive session after approval", async (s) => {
+    s.row("second").dispatchEvent(new s.app.MouseEvent("auxclick", { button: 1, bubbles: true, cancelable: true }));
+    equal(s.dialog.open, true);
+    equal(s.name.textContent, "PowerShell — логи");
+    equal(s.activeId(), "first");
+    equal(s.messages("kill").length, 0);
+    s.confirm.click();
+    equal(s.tabs(), 1);
+    equal(s.messages("kill")[0].id, "second");
+    equal(s.activeId(), "first");
+    equal(s.doc.activeElement, s.terminalInput());
+  });
+
+  await check("duplicate requests cannot retarget the dialog and approval executes once", async (s) => {
+    s.row("first").querySelector(".tab-close").click();
+    s.row("second").querySelector(".tab-close").click();
+    equal(s.name.textContent, "Muse — поиск");
+    s.key(s.cancel, "Ц", { code: "KeyW", ctrlKey: true, shiftKey: true, repeat: true });
+    s.key(s.cancel, "T", { code: "KeyT", ctrlKey: true, shiftKey: true });
+    s.key(s.cancel, "F", { code: "KeyF", ctrlKey: true, shiftKey: true });
+    equal(s.tabs(), 2);
+    equal(s.doc.getElementById("terminal-search").hidden, true);
+    s.confirm.click();
+    s.confirm.click();
+    equal(s.tabs(), 1);
+    equal(s.messages("kill").length, 1);
+    equal(s.messages("kill")[0].id, "first");
+    await delay();
+    equal(s.activeId(), "second");
+    equal(s.doc.activeElement, s.terminalInput());
+  });
+
+  await check("an exited tab closes immediately without sending kill again", async (s) => {
+    s.app.sendHost({ type: "exit", id: "second", code: 0 });
+    s.row("second").querySelector(".tab-close").click();
+    equal(s.dialog.open, false);
+    equal(s.tabs(), 1);
+    equal(s.messages("kill").length, 0);
+    equal(s.activeId(), "first");
+  });
+
+  for (const type of ["exit", "error"]) {
+    await check(`${type} while confirming cancels the dialog and retains the output tab`, async (s) => {
+      s.row("first").querySelector(".tab-close").click();
+      s.app.sendHost({ type, id: "first", code: 1, message: "Test error" });
+      equal(s.dialog.open, false);
+      equal(s.tabs(), 2);
+      equal(s.doc.querySelector('.pane[data-id="first"] .overlay').classList.contains("visible"), true);
+      s.confirm.click();
+      equal(s.messages("kill").length, 0);
+      s.row("first").querySelector(".tab-close").click();
+      equal(s.dialog.open, false);
+      equal(s.tabs(), 1);
+    });
+  }
+
+  await check("restarting a target invalidates its old confirmation", async (s) => {
+    s.row("first").querySelector(".tab-close").click();
+    s.doc.querySelector('.pane[data-id="first"] .overlay button').click();
+    equal(s.dialog.open, false);
+    s.confirm.click();
+    equal(s.tabs(), 2);
+    equal(s.messages("kill").length, 0);
+    equal(s.messages("create").length, 3);
+  });
+
+  await check("a programmatic tab switch invalidates an open confirmation", async (s) => {
+    s.row("first").querySelector(".tab-close").click();
+    s.row("second").click();
+    equal(s.dialog.open, false);
+    s.confirm.click();
+    equal(s.messages("kill").length, 0);
+    equal(s.activeId(), "second");
+  });
+
+  await check("a late clipboard read cannot open paste confirmation over close confirmation", async (s) => {
+    let resolveRead;
+    Object.defineProperty(s.app.navigator, "clipboard", {
+      configurable: true, value: { readText: () => new Promise((resolve) => { resolveRead = resolve; }) }
+    });
+    s.key(s.terminalInput(), "м", { code: "KeyV", ctrlKey: true });
+    equal(typeof resolveRead, "function");
+    s.row("first").querySelector(".tab-close").click();
+    equal(s.dialog.open, true);
+    resolveRead("first\nsecond");
+    await delay();
+    equal(s.doc.getElementById("paste-confirmation").open, false);
+    equal(s.doc.activeElement, s.cancel);
+    s.cancel.click();
+    equal(s.tabs(), 2);
+    equal(s.messages("kill").length, 0);
+  });
+
+  await check("an existing paste dialog prevents a second close dialog", async (s) => {
+    Object.defineProperty(s.app.navigator, "clipboard", {
+      configurable: true, value: { readText: async () => "first\nsecond" }
+    });
+    s.key(s.terminalInput(), "v", { code: "KeyV", ctrlKey: true });
+    await delay();
+    equal(s.doc.getElementById("paste-confirmation").open, true);
+    s.row("first").querySelector(".tab-close").click();
+    equal(s.dialog.open, false);
+    equal(s.tabs(), 2);
+    s.doc.querySelector("[data-paste-cancel]").click();
+  });
+
+  await check("cancel preserves an open search and restores its input focus", async (s) => {
+    s.doc.getElementById("search-btn").click();
+    const input = s.doc.querySelector("[data-search-input]");
+    input.value = "ошибка";
+    input.dispatchEvent(new s.app.Event("input"));
+    await delay(150);
+    s.row("first").querySelector(".tab-close").click();
+    s.cancel.click();
+    equal(s.doc.getElementById("terminal-search").hidden, false);
+    equal(s.doc.activeElement, input);
+    equal(input.value, "ошибка");
+    equal(s.doc.querySelector("[data-search-count]").textContent, "1 / 2");
+  });
+
+  await check("delayed close notifications cannot cancel a newly opened confirmation", async (s) => {
+    s.row("first").querySelector(".tab-close").click();
+    s.dialog.close();
+    // Drive the notification explicitly so the handler test does not depend on
+    // rendering/event scheduling inside dynamically replaced headless iframes.
+    s.dialog.dispatchEvent(new s.app.Event("close"));
+    equal(s.messages("kill").length, 0);
+    s.row("first").querySelector(".tab-close").click();
+    s.cancel.click();
+    s.row("second").querySelector(".tab-close").click();
+    s.dialog.dispatchEvent(new s.app.Event("close"));
+    await delay(250);
+    equal(s.dialog.open, true);
+    equal(s.name.textContent, "PowerShell — логи");
+    s.confirm.click();
+    equal(s.messages("kill")[0].id, "second");
+  });
+
+  await check("untrusted titles stay plain text and long names fit a narrow light dialog", async (s) => {
+    s.frame.style.width = "640px";
+    s.doc.getElementById("settings-btn").click();
+    [...s.doc.querySelectorAll(".theme-card")].find((button) => /light/i.test(button.textContent)).click();
+    s.doc.getElementById("settings-close").click();
+    const title = '<img src="x" onerror="window.badClose=true">' + "Я".repeat(500);
+    s.app.sendHost({ type: "data", id: "first", data: "\x1b]0;" + title + "\x07" });
+    await delay();
+    s.row("first").querySelector(".tab-close").click();
+    equal(s.name.textContent, title);
+    equal(s.name.querySelector("img"), null);
+    for (const element of [s.name, s.confirm, s.cancel]) {
+      const rect = element.getBoundingClientRect();
+      equal(rect.right <= s.dialog.getBoundingClientRect().right, true);
+      equal(rect.left >= s.dialog.getBoundingClientRect().left, true);
+    }
+    equal(s.doc.activeElement, s.cancel);
+  });
+
+  await check("window-close persistence keeps live sessions even with a pending dialog", async (s) => {
+    s.row("first").querySelector(".tab-close").click();
+    s.app.terminalvFlush();
+    equal(s.messages("persist-sessions").at(-1).sessions.length, 2);
+    equal(s.messages("kill").length, 0);
+  });
+
+  await check("confirming the last live tab leaves the empty screen without an extra kill", async (s) => {
+    s.app.sendHost({ type: "exit", id: "second", code: 0 });
+    s.row("second").querySelector(".tab-close").click();
+    s.row("first").querySelector(".tab-close").click();
+    equal(s.tabs(), 1);
+    s.confirm.click();
+    s.confirm.click();
+    equal(s.tabs(), 0);
+    equal(s.messages("kill").length, 1);
+    equal(s.doc.getElementById("empty").classList.contains("hidden"), false);
+  });
+
+  if (new URL(location.href).searchParams.has("preview")) {
+    document.body.dataset.testProgress = "preview";
+    const sample = await setup();
+    sample.row("first").querySelector(".tab-close").click();
+  }
+  document.body.setAttribute("data-test-result", btoa(unescape(encodeURIComponent(JSON.stringify(results)))));
+</script>
