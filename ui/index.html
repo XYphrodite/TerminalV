@@ -16,7 +16,11 @@
             <button id="collapse-btn" type="button" class="icon-btn" title="Свернуть список (Ctrl+B)">‹</button>
           </div>
         </div>
-        <div id="tabs" class="tabs" role="tablist"></div>
+        <div class="session-tools">
+          <input id="session-filter" type="search" placeholder="Найти сессию…" aria-label="Поиск сессии по названию или группе" autocomplete="off" spellcheck="false" />
+          <button id="hidden-sessions" type="button" class="ghost" aria-pressed="false" title="Показать скрытые сессии">Скрытые · 0</button>
+        </div>
+        <div id="tabs" class="tabs" role="tablist" aria-label="Сессии"></div>
         <div class="sidebar-foot">
           <button id="new-tab" type="button">
             <span class="plus">+</span>
@@ -108,6 +112,25 @@
         <button type="button" class="close-confirm" data-close-confirm>Завершить сессию</button>
         <button type="button" class="paste-cancel" data-close-cancel autofocus>Отмена</button>
       </div>
+    </dialog>
+    <dialog id="session-options" class="confirmation-dialog" aria-labelledby="session-options-title">
+      <form>
+        <div class="confirmation-content">
+          <h2 id="session-options-title">Управление сессией</h2>
+          <p class="close-session-name" data-session-name></p>
+          <label class="field-label" for="session-group">Группа проекта</label>
+          <input id="session-group" data-session-group type="text" maxlength="80" list="session-groups" placeholder="Без группы" autocomplete="off" />
+          <datalist id="session-groups"></datalist>
+          <label class="field-label" for="session-color">Цветовая метка</label>
+          <select id="session-color" data-session-color><option value="">Без метки</option></select>
+          <label class="session-pin-field"><input type="checkbox" data-session-pinned /> Закрепить вверху группы</label>
+        </div>
+        <div class="confirmation-actions">
+          <button type="submit" class="paste-confirm">Сохранить</button>
+          <button type="button" class="paste-cancel" data-session-cancel>Отмена</button>
+          <button type="button" class="ghost session-hide" data-session-hide>Скрыть, оставив работать</button>
+        </div>
+      </form>
     </dialog>
     <script type="module" src="/src/main.js"></script>
   </body>

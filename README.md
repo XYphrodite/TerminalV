@@ -81,6 +81,12 @@ dotnet run --project tests/TerminalV.Pty.Tests -c Release
 
 Тесты не загружают пользовательские профили и не подключаются к рабочему фоновому процессу TerminalV. Они запускают Windows PowerShell 5.1 и, если доступен, PowerShell 7 из `Program Files\PowerShell\7`. Для portable PowerShell 7 можно задать путь к `pwsh.exe` через `TERMINALV_TEST_PWSH`; при его отсутствии эта часть явно пропускается.
 
+Проверки миграции базы, групп и скрытых сессий на временных SQLite-файлах (рабочая база пользователя не используется):
+
+```powershell
+dotnet run --project tests/TerminalV.Data.Tests -c Release
+```
+
 ## Что умеет v0.4.18
 
 - Вертикальный список вкладок слева

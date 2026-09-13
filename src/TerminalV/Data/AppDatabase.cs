@@ -15,11 +15,11 @@ internal sealed class AppDatabase : IDisposable
 
     private readonly SqliteConnection _connection;
 
-    public AppDatabase()
+    public AppDatabase(string? databasePath = null)
     {
         _connection = new SqliteConnection(new SqliteConnectionStringBuilder
         {
-            DataSource = AppPaths.Database,
+            DataSource = databasePath ?? AppPaths.Database,
             Mode = SqliteOpenMode.ReadWriteCreate
         }.ToString());
         _connection.Open();
@@ -65,7 +65,8 @@ internal sealed class AppDatabase : IDisposable
     {
         using var cmd = _connection.CreateCommand();
         cmd.CommandText = """
-            SELECT id, title, custom_title, sort_order, is_active, buffer, cwd
+            SELECT id, title, custom_title, sort_order, is_active, buffer, cwd,
+                   group_name, color, is_pinned, is_hidden
             FROM sessions
             ORDER BY sort_order, updated_at
             """;
@@ -81,7 +82,11 @@ internal sealed class AppDatabase : IDisposable
                 SortOrder = reader.GetInt32(3),
                 Active = reader.GetInt32(4) != 0,
                 Buffer = reader.FieldCount > 5 && !reader.IsDBNull(5) ? reader.GetString(5) : null,
-                Cwd = reader.FieldCount > 6 && !reader.IsDBNull(6) ? reader.GetString(6) : null
+                Cwd = reader.IsDBNull(6) ? null : reader.GetString(6),
+                Group = reader.IsDBNull(7) ? null : reader.GetString(7),
+                Color = reader.IsDBNull(8) ? null : reader.GetString(8),
+                Pinned = reader.GetInt32(9) != 0,
+                Hidden = reader.GetInt32(10) != 0
             });
         }
 
@@ -104,16 +109,22 @@ internal sealed class AppDatabase : IDisposable
             using var insert = _connection.CreateCommand();
             insert.Transaction = tx;
             insert.CommandText = """
-                INSERT INTO sessions(id, title, custom_title, sort_order, is_active, buffer, cwd, created_at, updated_at)
-                VALUES ($id, $title, $custom, $sort, $active, $buffer, $cwd, $now, $now)
+                INSERT INTO sessions(id, title, custom_title, sort_order, is_active, buffer, cwd,
+                                     group_name, color, is_pinned, is_hidden, created_at, updated_at)
+                VALUES ($id, $title, $custom, $sort, $active, $buffer, $cwd,
+                        $group, $color, $pinned, $hidden, $now, $now)
                 """;
             insert.Parameters.AddWithValue("$id", session.Id);
             insert.Parameters.AddWithValue("$title", session.Title);
             insert.Parameters.AddWithValue("$custom", (object?)session.CustomTitle ?? DBNull.Value);
             insert.Parameters.AddWithValue("$sort", session.SortOrder);
-            insert.Parameters.AddWithValue("$active", session.Active ? 1 : 0);
+            insert.Parameters.AddWithValue("$active", session.Active && !session.Hidden ? 1 : 0);
             insert.Parameters.AddWithValue("$buffer", (object?)session.Buffer ?? DBNull.Value);
             insert.Parameters.AddWithValue("$cwd", (object?)session.Cwd ?? DBNull.Value);
+            insert.Parameters.AddWithValue("$group", (object?)session.Group ?? DBNull.Value);
+            insert.Parameters.AddWithValue("$color", (object?)session.Color ?? DBNull.Value);
+            insert.Parameters.AddWithValue("$pinned", session.Pinned ? 1 : 0);
+            insert.Parameters.AddWithValue("$hidden", session.Hidden ? 1 : 0);
             insert.Parameters.AddWithValue("$now", now);
             insert.ExecuteNonQuery();
         }
@@ -165,6 +176,23 @@ internal sealed class AppDatabase : IDisposable
         sessions.ExecuteNonQuery();
         TryAddColumn("ALTER TABLE sessions ADD COLUMN buffer TEXT;");
         TryAddColumn("ALTER TABLE sessions ADD COLUMN cwd TEXT;");
+        // Check columns explicitly: do not silently treat a failed migration as success.
+        using var columns = _connection.CreateCommand();
+        columns.CommandText = "PRAGMA table_info(sessions)";
+        var existing = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        using (var reader = columns.ExecuteReader())
+        {
+            while (reader.Read()) existing.Add(reader.GetString(1));
+        }
+        foreach (var (name, definition) in new[] {
+            ("group_name", "TEXT"), ("color", "TEXT"),
+            ("is_pinned", "INTEGER NOT NULL DEFAULT 0"), ("is_hidden", "INTEGER NOT NULL DEFAULT 0") })
+        {
+            if (existing.Contains(name)) continue;
+            using var add = _connection.CreateCommand();
+            add.CommandText = $"ALTER TABLE sessions ADD COLUMN {name} {definition}";
+            add.ExecuteNonQuery();
+        }
     }
 
     private void TryAddColumn(string sql)
