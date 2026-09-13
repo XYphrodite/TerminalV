@@ -36,13 +36,14 @@ let activeId = null;
 let shellName = "PowerShell";
 let buildNumber = 22621;
 let nextIndex = 1;
-let appVersion = "0.3.0";
+let appVersion = "0.4.9";
 let updateSupported = false;
 let persistTimer = 0;
 let fitTimer = 0;
 let ignoreFitUntil = 0;
 let readyForPersist = false;
 const clipboardWaiters = new Map();
+let draggedTabId = null;
 
 const settings = {
   themeId: "midnight",
@@ -285,6 +286,7 @@ function renderTabs() {
   for (const tab of tabs) {
     const row = document.createElement("div");
     row.className = `tab${tab.id === activeId ? " active" : ""}${tab.unread ? " unread" : ""}`;
+    row.draggable = !tab.renaming;
     row.dataset.id = tab.id;
     row.setAttribute("role", "tab");
     row.setAttribute("aria-selected", String(tab.id === activeId));
@@ -350,10 +352,67 @@ function renderTabs() {
         closeTab(tab.id);
       }
     });
+    row.addEventListener("dragstart", (event) => {
+      draggedTabId = tab.id;
+      row.classList.add("dragging");
+      event.dataTransfer.effectAllowed = "move";
+      event.dataTransfer.setData("text/plain", tab.id);
+    });
+    row.addEventListener("dragover", (event) => {
+      if (!draggedTabId || draggedTabId === tab.id) {
+        return;
+      }
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "move";
+      clearTabDropIndicators();
+      row.classList.add(event.clientY < row.getBoundingClientRect().top + row.offsetHeight / 2
+        ? "drag-over-before"
+        : "drag-over-after");
+    });
+    row.addEventListener("dragleave", () => {
+      row.classList.remove("drag-over-before", "drag-over-after");
+    });
+    row.addEventListener("drop", (event) => {
+      event.preventDefault();
+      if (!draggedTabId || draggedTabId === tab.id) {
+        return;
+      }
+      const before = event.clientY < row.getBoundingClientRect().top + row.offsetHeight / 2;
+      moveTab(draggedTabId, tab.id, before);
+    });
+    row.addEventListener("dragend", () => {
+      draggedTabId = null;
+      clearTabDropIndicators();
+      row.classList.remove("dragging");
+    });
     tabsEl.append(row);
   }
 
   emptyEl.classList.toggle("hidden", tabs.length > 0);
+}
+
+function clearTabDropIndicators() {
+  tabsEl.querySelectorAll(".drag-over-before, .drag-over-after").forEach((row) => {
+    row.classList.remove("drag-over-before", "drag-over-after");
+  });
+}
+
+function moveTab(sourceId, targetId, before) {
+  const sourceIndex = tabs.findIndex((tab) => tab.id === sourceId);
+  const targetIndex = tabs.findIndex((tab) => tab.id === targetId);
+  if (sourceIndex < 0 || targetIndex < 0 || sourceIndex === targetIndex) {
+    return;
+  }
+
+  const [source] = tabs.splice(sourceIndex, 1);
+  let insertIndex = tabs.findIndex((tab) => tab.id === targetId);
+  if (!before) {
+    insertIndex += 1;
+  }
+  tabs.splice(insertIndex, 0, source);
+  draggedTabId = null;
+  renderTabs();
+  schedulePersist();
 }
 
 function finishRename(tab, value) {

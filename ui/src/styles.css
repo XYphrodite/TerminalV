@@ -150,6 +150,30 @@ body,
   cursor: pointer;
 }
 
+.tab.dragging {
+  opacity: 0.45;
+}
+
+.tab.drag-over-before::before,
+.tab.drag-over-after::after {
+  content: "";
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+  pointer-events: none;
+}
+
+.tab.drag-over-before::before {
+  top: -3px;
+}
+
+.tab.drag-over-after::after {
+  bottom: -3px;
+}
+
 .tab:hover {
   background: var(--tab-hover);
 }
