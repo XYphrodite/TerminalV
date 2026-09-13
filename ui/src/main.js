@@ -7,6 +7,7 @@ import "@xterm/xterm/css/xterm.css";
 import "./styles.css";
 import { THEMES, getTheme } from "./themes.js";
 import { getPlainSelection } from "./selection.js";
+import { createPasteController } from "./paste-confirmation.js";
 
 const tabsEl = document.getElementById("tabs");
 const panesEl = document.getElementById("panes");
@@ -55,6 +56,13 @@ const settings = {
   backgroundPath: null,
   backgroundOpacity: 0.25
 };
+
+const pasteController = createPasteController({
+  dialog: document.getElementById("paste-confirmation"),
+  readClipboard,
+  canPaste: (tab) => tabs.includes(tab) && tab.id === activeId && !tab.exited,
+  restoreFocus: () => currentTab()?.term.focus()
+});
 
 function host() {
   return window.chrome?.webview ?? null;
@@ -476,6 +484,9 @@ function activate(id) {
     return;
   }
 
+  if (activeId !== id) {
+    pasteController.cancel(currentTab());
+  }
   activeId = id;
   tab.unread = false;
   for (const item of tabs) {
@@ -504,6 +515,7 @@ function closeTab(id) {
 
   const closingActive = activeId === id;
   const [tab] = tabs.splice(index, 1);
+  pasteController.cancel(tab);
   post({ type: "kill", id });
   dropWebgl(tab);
   try {
@@ -537,40 +549,22 @@ async function copyText(text) {
   }
 }
 
-function readClipboard() {
-  return navigator.clipboard.readText().catch(
-    () =>
-      new Promise((resolve) => {
-        const requestId = uuid();
-        clipboardWaiters.set(requestId, resolve);
-        post({ type: "clipboard-read", requestId });
-        setTimeout(() => {
-          if (clipboardWaiters.has(requestId)) {
-            clipboardWaiters.delete(requestId);
-            resolve("");
-          }
-        }, 1000);
-      })
-  );
-}
-
-function pasteText(tab, text) {
-  if (text) {
-    // Let xterm normalize line endings and apply bracketed paste mode.
-    tab.term.paste(text);
-  }
-}
-
-function pasteFromClipboard(tab) {
-  if (tab.pastePending) {
-    return;
-  }
-  tab.pastePending = true;
-  readClipboard()
-    .then((text) => pasteText(tab, text))
-    .finally(() => {
-      tab.pastePending = false;
+async function readClipboard() {
+  try {
+    return await navigator.clipboard.readText();
+  } catch {
+    return new Promise((resolve) => {
+      const requestId = uuid();
+      clipboardWaiters.set(requestId, resolve);
+      post({ type: "clipboard-read", requestId });
+      setTimeout(() => {
+        if (clipboardWaiters.has(requestId)) {
+          clipboardWaiters.delete(requestId);
+          resolve("");
+        }
+      }, 1000);
     });
+  }
 }
 
 function isZoomEvent(event) {
@@ -600,7 +594,7 @@ function applyZoomDelta(delta) {
 }
 
 function attachCopyPaste(tab) {
-  // Ctrl+V/Ctrl+Shift+V are handled above through readClipboard().
+  // Shortcuts and right-click use pasteController, including confirmation.
   // Stop xterm's native paste event so the text is not sent a second time.
   tab.host.addEventListener("paste", (event) => {
     event.preventDefault();
@@ -650,11 +644,13 @@ function attachCopyPaste(tab) {
         }
         return false;
       }
-      if (isPasteKey && !event.shiftKey) {
+      if (isPasteKey) {
+        event.preventDefault();
+        event.stopPropagation();
         if (event.repeat) {
           return false;
         }
-        pasteFromClipboard(tab);
+        void pasteController.request(tab);
         return false;
       }
       if (event.shiftKey && isCopyKey) {
@@ -663,13 +659,6 @@ function attachCopyPaste(tab) {
         if (tab.term.hasSelection()) {
           copyText(tab.term.getSelection());
         }
-        return false;
-      }
-      if (event.shiftKey && isPasteKey) {
-        if (event.repeat) {
-          return false;
-        }
-        pasteFromClipboard(tab);
         return false;
       }
     }
@@ -683,7 +672,7 @@ function attachCopyPaste(tab) {
       tab.term.clearSelection();
       return;
     }
-    pasteFromClipboard(tab);
+    void pasteController.request(tab);
   });
 }
 
@@ -750,8 +739,7 @@ function newTab(options = {}) {
     fit,
     serialize,
     webgl: null,
-    tuiHint: false,
-    pastePending: false
+    tuiHint: false
   };
 
   overlayBtn.addEventListener("click", () => restart(tab));
@@ -840,6 +828,7 @@ function newTab(options = {}) {
 }
 
 function restart(tab) {
+  pasteController.cancel(tab);
   tab.exited = false;
   tab.overlay.classList.remove("visible");
   tab.term.reset();
@@ -1074,6 +1063,7 @@ function handleHost(message) {
   if (message.type === "exit") {
     tab.tuiHint = false;
     tab.exited = true;
+    pasteController.cancel(tab);
     syncScrollLock(tab);
     tab.overlayText.textContent = `Процесс завершился с кодом ${message.code ?? 0}`;
     tab.overlay.classList.add("visible");
@@ -1083,6 +1073,7 @@ function handleHost(message) {
 
   if (message.type === "error") {
     tab.exited = true;
+    pasteController.cancel(tab);
     tab.overlayText.textContent = message.message || "Не удалось запустить сессию";
     tab.overlay.classList.add("visible");
     renderTabs();
@@ -1128,6 +1119,9 @@ bgOpacityEl.addEventListener("change", persistSettings);
 window.addEventListener(
   "keydown",
   (event) => {
+    if (pasteController.isOpen) {
+      return;
+    }
     if (event.key === "Escape" && !settingsEl.classList.contains("hidden")) {
       event.preventDefault();
       closeSettings();
@@ -1196,6 +1190,9 @@ window.addEventListener(
 window.addEventListener(
   "wheel",
   (event) => {
+    if (pasteController.isOpen) {
+      return;
+    }
     if (!(event.ctrlKey || event.metaKey)) {
       return;
     }

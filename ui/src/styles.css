@@ -629,3 +629,102 @@ select {
 .ghost:hover {
   border-color: var(--accent);
 }
+
+.paste-dialog {
+  width: min(520px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  margin: auto;
+  padding: 0;
+  border: 1px solid var(--sidebar-edge);
+  border-radius: 10px;
+  background: var(--sidebar);
+  color: var(--text);
+  font: 14px/1.4 var(--font-ui);
+  box-shadow: 0 16px 60px #00000055;
+  overflow: auto;
+}
+
+.paste-dialog[open] {
+  display: flex;
+  flex-direction: column;
+}
+
+.paste-dialog::backdrop {
+  background: #00000077;
+}
+
+.paste-dialog-content {
+  padding: 24px;
+  min-height: 0;
+  overflow: auto;
+}
+
+.paste-dialog h2 {
+  margin: 0 0 12px;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.paste-dialog p {
+  margin: 0;
+}
+
+.paste-dialog .paste-preview-label {
+  margin: 18px 0 8px;
+}
+
+.paste-preview {
+  margin: 0;
+  max-height: 180px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+  tab-size: 4;
+  font: 600 13px/1.35 var(--font-mono);
+}
+
+.paste-dialog .paste-preview-truncated {
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.paste-dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 24px;
+  background: var(--bg);
+  border-top: 1px solid var(--sidebar-edge);
+  flex-shrink: 0;
+}
+
+.paste-dialog-actions button {
+  flex: 1 1 180px;
+  min-height: 34px;
+  padding: 6px 12px;
+  border: 1px solid var(--sidebar-edge);
+  border-radius: 5px;
+  font: 14px var(--font-ui);
+  cursor: pointer;
+}
+
+.paste-confirm {
+  background: var(--accent);
+  color: var(--ink);
+}
+
+.paste-cancel {
+  background: var(--tab-hover);
+  color: var(--text);
+}
+
+.paste-dialog-actions button:hover {
+  filter: brightness(1.1);
+}
+
+.paste-dialog :focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}

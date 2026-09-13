@@ -1,0 +1,201 @@
+<!doctype html>
+<meta charset="utf-8">
+<link rel="stylesheet" href="/node_modules/@xterm/xterm/css/xterm.css">
+<link rel="stylesheet" href="/src/styles.css">
+<script src="/node_modules/@xterm/xterm/lib/xterm.js"></script>
+<script type="module">
+  import { createPasteController } from "/src/paste-confirmation.js";
+
+  const template = new DOMParser().parseFromString(await (await fetch("/index.html")).text(), "text/html")
+    .getElementById("paste-confirmation");
+  const results = [];
+  const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+  function equal(actual, expected) {
+    if (actual !== expected) {
+      throw new Error(`Expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
+    }
+  }
+  function setup() {
+    const dialog = document.importNode(template, true);
+    const host = document.createElement("div");
+    document.body.append(host, dialog);
+    const term = new Terminal({ cols: 80, rows: 10 });
+    term.open(host);
+    term.focus();
+    const tab = { term };
+    const data = [];
+    term.onData((text) => data.push(text));
+    const state = { tab, term, data, dialog, text: "", reads: 0, active: tab, live: true };
+    state.read = async () => state.text;
+    state.controller = createPasteController({
+      dialog,
+      readClipboard: () => { state.reads++; return state.read(); },
+      canPaste: (target) => state.live && target === state.active,
+      restoreFocus: () => state.active?.term.focus()
+    });
+    state.request = () => state.controller.request(tab);
+    state.write = (text) => new Promise((resolve) => term.write(text, resolve));
+    state.confirm = dialog.querySelector("[data-paste-confirm]");
+    state.cancel = dialog.querySelector("[data-paste-cancel]");
+    state.preview = dialog.querySelector("[data-paste-preview]");
+    state.cleanup = () => {
+      state.controller.cancel(tab);
+      dialog.remove();
+      term.dispose();
+      host.remove();
+    };
+    return state;
+  }
+  async function check(name, run) {
+    const state = setup();
+    try {
+      await run(state);
+      results.push({ name, ok: true });
+    } catch (error) {
+      results.push({ name, ok: false, error: error.stack });
+    } finally {
+      state.cleanup();
+    }
+  }
+
+  await check("empty clipboard and single-line text need no dialog", async (s) => {
+    await s.request();
+    equal(s.data.length, 0);
+    s.text = 'Write-Output "Одна строка"';
+    await s.request();
+    equal(s.dialog.open, false);
+    equal(s.data.length, 1);
+    equal(s.data[0], s.text);
+  });
+
+  await check("LF, CRLF, CR and a trailing newline wait for approval", async (s) => {
+    for (const text of ["first\nsecond", "first\r\nsecond", "first\rsecond", "command\n", "command\r\n", "\n"]) {
+      s.text = text;
+      await s.request();
+      equal(s.dialog.open, true);
+      equal(s.data.length, 0);
+      equal(s.preview.textContent, text);
+      equal(document.activeElement, s.cancel);
+      s.cancel.click();
+    }
+  });
+
+  await check("approval sends the displayed snapshot once using bracketed paste", async (s) => {
+    await s.write("\x1b[?2004h");
+    s.text = 'Write-Output "Первая"\r\nWrite-Output "Вторая"';
+    await s.request();
+    const shown = s.preview.textContent;
+    s.text = "clipboard changed";
+    await s.request();
+    equal(s.reads, 1);
+    s.confirm.click();
+    s.confirm.click();
+    equal(s.data.length, 1);
+    equal(s.data[0], "\x1b[200~" + shown.replace(/\r?\n/g, "\r") + "\x1b[201~");
+    equal(s.preview.textContent, "");
+    equal(s.dialog.open, false);
+    equal(document.activeElement, s.term.textarea);
+  });
+
+  await check("Cancel inserts nothing and restores terminal focus", async (s) => {
+    s.text = "first\nsecond";
+    await s.request();
+    s.cancel.click();
+    equal(s.dialog.open, false);
+    equal(s.data.length, 0);
+    equal(document.activeElement, s.term.textarea);
+    s.text = "next paste";
+    await s.request();
+    equal(s.data[0], "next paste");
+  });
+
+  await check("native dialog cancel (Escape) never sends input", async (s) => {
+    s.text = "first\nsecond";
+    await s.request();
+    s.dialog.dispatchEvent(new Event("cancel", { cancelable: true }));
+    equal(s.dialog.open, false);
+    equal(s.data.length, 0);
+  });
+
+  await check("duplicate requests during clipboard read and preview are ignored", async (s) => {
+    let resolveRead;
+    s.read = () => new Promise((resolve) => { resolveRead = resolve; });
+    const first = s.request();
+    await s.request();
+    equal(s.reads, 1);
+    resolveRead("first\nsecond");
+    await first;
+    await s.request();
+    equal(s.reads, 1);
+    s.confirm.click();
+    equal(s.data.length, 1);
+  });
+
+  await check("cancelling a closed tab ignores a late clipboard response", async (s) => {
+    let resolveRead;
+    s.read = () => new Promise((resolve) => { resolveRead = resolve; });
+    const reading = s.request();
+    s.live = false;
+    s.controller.cancel(s.tab);
+    resolveRead("first\nsecond");
+    await reading;
+    equal(s.dialog.open, false);
+    equal(s.data.length, 0);
+  });
+
+  await check("a changed or exited target cannot receive a confirmed paste", async (s) => {
+    s.text = "first\nsecond";
+    await s.request();
+    s.active = null;
+    s.confirm.click();
+    equal(s.data.length, 0);
+    s.active = s.tab;
+    await s.request();
+    s.live = false;
+    s.confirm.click();
+    equal(s.data.length, 0);
+  });
+
+  await check("preview treats markup as text and truncation does not truncate the paste", async (s) => {
+    s.text = '<img src="x" onerror="window.badPaste = true">\n' + "я".repeat(15000);
+    await s.request();
+    equal(s.preview.querySelector("img"), null);
+    equal(s.preview.textContent, s.text.slice(0, 12000));
+    equal(s.dialog.querySelector("[data-paste-truncated]").hidden, false);
+    s.confirm.click();
+    equal(s.data[0], s.text.replace(/\n/g, "\r"));
+  });
+
+  await check("failed clipboard read releases the pending operation", async (s) => {
+    s.read = () => Promise.reject(new Error("Clipboard unavailable"));
+    await s.request();
+    equal(s.dialog.open, false);
+    equal(s.data.length, 0);
+    s.read = () => "recovered";
+    await s.request();
+    equal(s.data[0], "recovered");
+  });
+
+  await check("external dialog close cancels; old close events do not cancel a new preview", async (s) => {
+    s.text = "first\nsecond";
+    await s.request();
+    s.dialog.close();
+    await tick();
+    equal(s.data.length, 0);
+    await s.request();
+    equal(s.dialog.open, true);
+    s.cancel.click();
+    await s.request();
+    await tick();
+    equal(s.dialog.open, true);
+    s.confirm.click();
+    equal(s.data.length, 1);
+  });
+
+  document.body.setAttribute("data-test-result", btoa(unescape(encodeURIComponent(JSON.stringify(results)))));
+  if (new URL(location.href).searchParams.has("preview")) {
+    const sample = setup();
+    sample.text = 'Write-Output "Первая строка"\nWrite-Output "Вторая строка — проверка кириллицы"\nWrite-Output "Третья строка"';
+    await sample.request();
+  }
+</script>

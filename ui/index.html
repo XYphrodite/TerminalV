@@ -70,6 +70,19 @@
         <input id="bg-opacity" type="range" min="0" max="80" step="1" value="25" />
       </div>
     </div>
+    <dialog id="paste-confirmation" class="paste-dialog" role="alertdialog" aria-labelledby="paste-title" aria-describedby="paste-description">
+      <div class="paste-dialog-content">
+        <h2 id="paste-title">Предупреждение</h2>
+        <p id="paste-description">Вы собираетесь вставить текст, содержащий несколько строк. Если вы вставите этот текст в оболочку, это может привести к непреднамеренному выполнению команд. Продолжить?</p>
+        <p id="paste-preview-label" class="paste-preview-label">Содержимое буфера обмена (предварительный просмотр):</p>
+        <pre class="paste-preview" data-paste-preview tabindex="0" aria-labelledby="paste-preview-label"></pre>
+        <p class="paste-preview-truncated" data-paste-truncated hidden>Показано начало текста. При подтверждении будет вставлен весь текст.</p>
+      </div>
+      <div class="paste-dialog-actions">
+        <button type="button" class="paste-confirm" data-paste-confirm>Вставить в любом случае</button>
+        <button type="button" class="paste-cancel" data-paste-cancel autofocus>Отмена</button>
+      </div>
+    </dialog>
     <script type="module" src="/src/main.js"></script>
   </body>
 </html>
