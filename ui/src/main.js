@@ -36,7 +36,7 @@ let activeId = null;
 let shellName = "PowerShell";
 let buildNumber = 22621;
 let nextIndex = 1;
-let appVersion = "0.4.14";
+let appVersion = "0.4.15";
 let updateSupported = false;
 let persistTimer = 0;
 let fitTimer = 0;
@@ -560,6 +560,18 @@ function pasteText(tab, text) {
   }
 }
 
+function pasteFromClipboard(tab) {
+  if (tab.pastePending) {
+    return;
+  }
+  tab.pastePending = true;
+  readClipboard()
+    .then((text) => pasteText(tab, text))
+    .finally(() => {
+      tab.pastePending = false;
+    });
+}
+
 function isZoomEvent(event) {
   if (!(event.ctrlKey || event.metaKey) || event.altKey) {
     return false;
@@ -591,6 +603,7 @@ function attachCopyPaste(tab) {
   // Stop xterm's native paste event so the text is not sent a second time.
   tab.host.addEventListener("paste", (event) => {
     event.preventDefault();
+    event.stopPropagation();
   }, true);
 
   tab.term.attachCustomKeyEventHandler((event) => {
@@ -615,7 +628,10 @@ function attachCopyPaste(tab) {
         return false;
       }
       if (isPasteKey && !event.shiftKey) {
-        readClipboard().then((text) => pasteText(tab, text));
+        if (event.repeat) {
+          return false;
+        }
+        pasteFromClipboard(tab);
         return false;
       }
       if (event.shiftKey && isCopyKey) {
@@ -623,7 +639,10 @@ function attachCopyPaste(tab) {
         return false;
       }
       if (event.shiftKey && isPasteKey) {
-        readClipboard().then((text) => pasteText(tab, text));
+        if (event.repeat) {
+          return false;
+        }
+        pasteFromClipboard(tab);
         return false;
       }
     }
@@ -637,7 +656,7 @@ function attachCopyPaste(tab) {
       tab.term.clearSelection();
       return;
     }
-    readClipboard().then((text) => pasteText(tab, text));
+    pasteFromClipboard(tab);
   });
 }
 
@@ -704,7 +723,8 @@ function newTab(options = {}) {
     fit,
     serialize,
     webgl: null,
-    tuiHint: false
+    tuiHint: false,
+    pastePending: false
   };
 
   overlayBtn.addEventListener("click", () => restart(tab));
