@@ -11,6 +11,7 @@
         <div class="sidebar-head">
           <span class="sessions-label">Сессии</span>
           <div class="sidebar-head-actions">
+            <button id="search-btn" type="button" class="icon-btn" title="Поиск по выводу (Ctrl+Shift+F)" aria-label="Поиск по выводу">⌕</button>
             <button id="settings-btn" type="button" class="icon-btn" title="Оформление (Ctrl+,)">⚙</button>
             <button id="collapse-btn" type="button" class="icon-btn" title="Свернуть список (Ctrl+B)">‹</button>
           </div>
@@ -30,6 +31,16 @@
         </div>
       </aside>
       <main id="main">
+        <section id="terminal-search" class="terminal-search" role="search" aria-label="Поиск по выводу текущей вкладки" hidden>
+          <input type="text" data-search-input aria-label="Найти в текущей вкладке" placeholder="Найти в текущей вкладке" autocomplete="off" spellcheck="false" />
+          <span class="search-count" data-search-count role="status" aria-live="polite" aria-atomic="true"></span>
+          <div class="search-actions">
+            <button type="button" data-search-case aria-label="Учитывать регистр" aria-pressed="false" title="Учитывать регистр">Aa</button>
+            <button type="button" data-search-previous aria-label="Предыдущее совпадение" title="Предыдущее совпадение (Shift+Enter)" disabled>↑</button>
+            <button type="button" data-search-next aria-label="Следующее совпадение" title="Следующее совпадение (Enter)" disabled>↓</button>
+            <button type="button" data-search-close aria-label="Закрыть поиск" title="Закрыть поиск (Esc)">×</button>
+          </div>
+        </section>
         <div id="panes"></div>
         <div id="empty" class="empty hidden">
           <div class="empty-mark">V</div>

@@ -3,11 +3,13 @@ import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { SerializeAddon } from "@xterm/addon-serialize";
+import { SearchAddon } from "@xterm/addon-search";
 import "@xterm/xterm/css/xterm.css";
 import "./styles.css";
 import { THEMES, getTheme } from "./themes.js";
 import { getPlainSelection } from "./selection.js";
 import { createPasteController } from "./paste-confirmation.js";
+import { createTerminalSearch, isSearchShortcut, SEARCH_HIGHLIGHT_LIMIT } from "./terminal-search.js";
 
 const tabsEl = document.getElementById("tabs");
 const panesEl = document.getElementById("panes");
@@ -21,6 +23,7 @@ const versionBtn = document.getElementById("app-version");
 const appEl = document.getElementById("app");
 const settingsEl = document.getElementById("settings");
 const settingsBtn = document.getElementById("settings-btn");
+const searchBtn = document.getElementById("search-btn");
 const settingsClose = document.getElementById("settings-close");
 const collapseBtn = document.getElementById("collapse-btn");
 const themeGrid = document.getElementById("theme-grid");
@@ -62,6 +65,11 @@ const pasteController = createPasteController({
   readClipboard,
   canPaste: (tab) => tabs.includes(tab) && tab.id === activeId && !tab.exited,
   restoreFocus: () => currentTab()?.term.focus()
+});
+
+const searchController = createTerminalSearch({
+  panel: document.getElementById("terminal-search"),
+  onVisibilityChange: (tab) => scheduleFit(tab, true)
 });
 
 function host() {
@@ -485,6 +493,7 @@ function activate(id) {
   }
 
   if (activeId !== id) {
+    searchController.close({ focus: false });
     pasteController.cancel(currentTab());
   }
   activeId = id;
@@ -502,7 +511,7 @@ function activate(id) {
   requestAnimationFrame(() => {
     tab.term.refresh(0, Math.max(0, tab.term.rows - 1));
     applyFit(tab);
-    tab.term.focus();
+    if (!searchController.isOpen) tab.term.focus();
   });
   schedulePersist();
 }
@@ -514,6 +523,7 @@ function closeTab(id) {
   }
 
   const closingActive = activeId === id;
+  if (closingActive) searchController.close({ focus: false });
   const [tab] = tabs.splice(index, 1);
   pasteController.cancel(tab);
   post({ type: "kill", id });
@@ -715,6 +725,8 @@ function newTab(options = {}) {
   term.loadAddon(new WebLinksAddon());
   const serialize = new SerializeAddon();
   term.loadAddon(serialize);
+  const search = new SearchAddon({ highlightLimit: SEARCH_HIGHLIGHT_LIMIT });
+  term.loadAddon(search);
   term.open(hostEl);
 
   if (options.buffer) {
@@ -738,6 +750,7 @@ function newTab(options = {}) {
     term,
     fit,
     serialize,
+    search,
     webgl: null,
     tuiHint: false
   };
@@ -828,6 +841,7 @@ function newTab(options = {}) {
 }
 
 function restart(tab) {
+  if (tab.id === activeId) searchController.close({ focus: false });
   pasteController.cancel(tab);
   tab.exited = false;
   tab.overlay.classList.remove("visible");
@@ -938,6 +952,7 @@ function syncSettingsForm() {
 }
 
 function openSettings() {
+  searchController.close({ focus: false });
   settingsEl.classList.remove("hidden");
 }
 
@@ -1085,6 +1100,11 @@ emptyNewBtn.addEventListener("click", () => newTab());
 updateApply.addEventListener("click", () => post({ type: "update-apply" }));
 versionBtn.addEventListener("click", () => post({ type: "update-check" }));
 settingsBtn.addEventListener("click", openSettings);
+searchBtn.addEventListener("click", () => {
+  if (!pasteController.isOpen && settingsEl.classList.contains("hidden")) {
+    searchController.open(currentTab());
+  }
+});
 settingsClose.addEventListener("click", closeSettings);
 settingsEl.addEventListener("click", (event) => {
   if (event.target === settingsEl) {
@@ -1121,6 +1141,15 @@ window.addEventListener(
   (event) => {
     if (pasteController.isOpen) {
       return;
+    }
+    if (settingsEl.classList.contains("hidden")) {
+      if (isSearchShortcut(event)) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!event.repeat) searchController.open(currentTab());
+        return;
+      }
+      if (searchController.handleKeyDown(event)) return;
     }
     if (event.key === "Escape" && !settingsEl.classList.contains("hidden")) {
       event.preventDefault();
@@ -1190,7 +1219,7 @@ window.addEventListener(
 window.addEventListener(
   "wheel",
   (event) => {
-    if (pasteController.isOpen) {
+    if (pasteController.isOpen || searchController.contains(event.target)) {
       return;
     }
     if (!(event.ctrlKey || event.metaKey)) {

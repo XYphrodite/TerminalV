@@ -1,0 +1,143 @@
+<!doctype html>
+<meta charset="utf-8">
+<style>html, body { margin: 0; height: 100%; } iframe { width: 100%; height: 100%; border: 0; display: block; }</style>
+<script type="module">
+  const results = [];
+  const delay = (ms = 300) => new Promise((resolve) => setTimeout(resolve, ms));
+  const frame = document.createElement("iframe");
+  const source = await (await fetch("/app/index.html")).text();
+  frame.srcdoc = source.replace("<head>", `<head><base href="${location.origin}/app/"><script src="/tests/search-host.js"><\/script>`);
+  const loaded = new Promise((resolve) => frame.addEventListener("load", resolve, { once: true }));
+  document.body.append(frame);
+  await loaded;
+  const app = frame.contentWindow;
+  const doc = frame.contentDocument;
+  const panel = doc.getElementById("terminal-search");
+  const input = panel.querySelector("[data-search-input]");
+  const count = panel.querySelector("[data-search-count]");
+  const key = (target, key, options = {}) => {
+    const event = new app.KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...options });
+    target.dispatchEvent(event);
+    return event;
+  };
+  const terminalInput = () => doc.querySelector(".pane.active .xterm-helper-textarea");
+  function equal(actual, expected) {
+    if (actual !== expected) throw new Error(`Expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
+  }
+  async function check(name, run) {
+    try { await run(); results.push({ name, ok: true }); }
+    catch (error) { results.push({ name, ok: false, error: error.stack }); }
+  }
+  async function query(text) {
+    input.value = text;
+    input.dispatchEvent(new app.Event("input", { bubbles: true }));
+    await delay();
+  }
+  await delay();
+
+  await check("Russian physical shortcut opens the actual search bar without PTY input", async () => {
+    equal(doc.querySelectorAll(".tab").length, 2);
+    equal(panel.hidden, true);
+    key(terminalInput(), "А", { code: "KeyF", ctrlKey: true, shiftKey: true });
+    equal(panel.hidden, false);
+    await delay();
+    equal(doc.activeElement, input);
+    await query("ошибка");
+    equal(count.textContent, "1 / 2");
+    equal(app.hostMessages.filter((m) => m.type === "write").length, 0);
+    // Opening the bar reserves space instead of covering the first output row.
+    equal(doc.getElementById("panes").getBoundingClientRect().top >= panel.getBoundingClientRect().bottom, true);
+  });
+
+  await check("search editing cannot trigger global terminal shortcuts", async () => {
+    const tabCount = doc.querySelectorAll(".tab").length;
+    key(input, "W", { code: "KeyW", ctrlKey: true, shiftKey: true });
+    key(input, "T", { code: "KeyT", ctrlKey: true, shiftKey: true });
+    key(input, "b", { code: "KeyB", ctrlKey: true });
+    key(input, "v", { code: "KeyV", ctrlKey: true });
+    key(input, "c", { code: "KeyC", ctrlKey: true });
+    equal(doc.querySelectorAll(".tab").length, tabCount);
+    equal(doc.getElementById("app").classList.contains("collapsed"), false);
+    equal(doc.getElementById("paste-confirmation").open, false);
+    equal(app.hostMessages.filter((m) => ["write", "kill", "clipboard-read"].includes(m.type)).length, 0);
+    key(input, "Enter");
+    equal(count.textContent, "2 / 2");
+    key(input, "Enter", { shiftKey: true });
+    equal(count.textContent, "1 / 2");
+  });
+
+  await check("switching tabs closes search and the next search targets only the active tab", async () => {
+    doc.querySelectorAll(".tab")[1].click();
+    equal(panel.hidden, true);
+    await delay();
+    equal(doc.activeElement, terminalInput());
+    doc.getElementById("search-btn").click();
+    await query("ошибка");
+    equal(count.textContent, "Нет совпадений");
+    await query("unique");
+    equal(count.textContent, "1 / 1");
+    key(input, "Escape");
+    equal(panel.hidden, true);
+    equal(doc.activeElement, terminalInput());
+  });
+
+  await check("search stays responsive as the active session receives new output", async () => {
+    key(terminalInput(), "F", { code: "KeyF", ctrlKey: true, shiftKey: true });
+    await query("unique");
+    app.sendHost({ type: "data", id: "second", data: "\r\nunique again" });
+    await delay();
+    equal(count.textContent.endsWith(" / 2"), true);
+    equal(doc.activeElement, input);
+    doc.getElementById("settings-btn").click();
+    equal(panel.hidden, true);
+    equal(doc.getElementById("settings").classList.contains("hidden"), false);
+    doc.getElementById("settings-close").click();
+  });
+
+  await check("search remains inside a narrow window and uses the selected light theme", async () => {
+    frame.style.width = "640px";
+    doc.getElementById("settings-btn").click();
+    const lightTheme = [...doc.querySelectorAll(".theme-card")].find((button) => /light/i.test(button.textContent));
+    if (!lightTheme) throw new Error("Missing light theme fixture");
+    lightTheme.click();
+    doc.getElementById("settings-close").click();
+    doc.getElementById("search-btn").click();
+    await query("unique");
+    equal(count.textContent.endsWith(" / 2"), true);
+    for (const element of [input, count, ...panel.querySelectorAll("button")]) {
+      const rect = element.getBoundingClientRect();
+      equal(rect.right <= panel.getBoundingClientRect().right, true);
+      equal(rect.left >= panel.getBoundingClientRect().left, true);
+    }
+    key(input, "Escape");
+    frame.style.width = "100%";
+    doc.getElementById("settings-btn").click();
+    doc.querySelector(".theme-card").click();
+    doc.getElementById("settings-close").click();
+  });
+
+  await check("closing the searched tab clears the bar, including the last tab", async () => {
+    doc.getElementById("search-btn").click();
+    doc.querySelector(".tab.active .tab-close").click();
+    equal(panel.hidden, true);
+    await delay();
+    equal(doc.querySelectorAll(".tab").length, 1);
+    doc.getElementById("search-btn").click();
+    await query("ошибка");
+    doc.querySelector(".tab.active .tab-close").click();
+    equal(panel.hidden, true);
+    doc.getElementById("search-btn").click();
+    equal(panel.hidden, true);
+    equal(app.hostMessages.filter((m) => m.type === "write").length, 0);
+    await delay();
+    equal(app.hostErrors.length, 0);
+  });
+
+  if (new URL(location.href).searchParams.has("preview")) {
+    app.sendHost({ type: "init", sessions: [{ id: "first", title: "Muse — поиск", active: true }] });
+    await delay();
+    doc.getElementById("search-btn").click();
+    await query("ошибка");
+  }
+  document.body.setAttribute("data-test-result", btoa(unescape(encodeURIComponent(JSON.stringify(results)))));
+</script>

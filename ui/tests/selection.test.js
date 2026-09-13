@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 const uiRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const appRoot = resolve(uiRoot, "../src/TerminalV/wwwroot");
 
 async function runBrowserFixture(t, fixture) {
   const browser = [
@@ -20,8 +21,10 @@ async function runBrowserFixture(t, fixture) {
 
   const server = createServer(async (request, response) => {
     try {
-      const path = resolve(uiRoot, "." + decodeURIComponent(new URL(request.url, "http://localhost").pathname));
-      if (!path.startsWith(uiRoot + sep)) {
+      const pathname = decodeURIComponent(new URL(request.url, "http://localhost").pathname);
+      const root = pathname.startsWith("/app/") ? appRoot : uiRoot;
+      const path = resolve(root, "." + (root === appRoot ? pathname.slice(4) : pathname));
+      if (!path.startsWith(root + sep)) {
         response.writeHead(403).end();
         return;
       }
@@ -39,12 +42,13 @@ async function runBrowserFixture(t, fixture) {
   });
   const profile = await mkdtemp(join(tmpdir(), "terminalv-copy-test-"));
   try {
-    const screenshot = fixture === "paste-confirmation" && process.env.TERMINALV_TEST_SCREENSHOT;
+    const screenshot = fixture === "search-ui" ? process.env.TERMINALV_SEARCH_SCREENSHOT :
+      fixture === "paste-confirmation" && process.env.TERMINALV_TEST_SCREENSHOT;
     const output = await new Promise((resolve, reject) => {
       const child = spawn(browser, [
         "--headless", "--disable-gpu", "--no-first-run", "--no-default-browser-check",
         "--disable-extensions", "--disable-background-networking", "--disable-component-update",
-        `--user-data-dir=${profile}`, "--dump-dom", "--virtual-time-budget=5000",
+        `--user-data-dir=${profile}`, "--dump-dom", "--virtual-time-budget=10000",
         ...(screenshot ? [`--screenshot=${screenshot}`, "--window-size=800,600"] : []),
         `http://127.0.0.1:${server.address().port}/tests/${fixture}.fixture.html${screenshot ? "?preview" : ""}`
       ], { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
@@ -80,3 +84,5 @@ async function runBrowserFixture(t, fixture) {
 
 test("copy selection in xterm.js", (t) => runBrowserFixture(t, "selection"));
 test("multiline paste confirmation in xterm.js", (t) => runBrowserFixture(t, "paste-confirmation"));
+test("terminal search in xterm.js", (t) => runBrowserFixture(t, "terminal-search"));
+test("search in the built TerminalV interface", (t) => runBrowserFixture(t, "search-ui"));

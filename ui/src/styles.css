@@ -394,14 +394,96 @@ body,
 
 #main {
   position: relative;
+  display: flex;
+  flex-direction: column;
   min-width: 0;
   background: var(--bg);
   overflow: hidden;
 }
 
 #panes {
-  position: absolute;
-  inset: 0;
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+.terminal-search {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--sidebar);
+  border-bottom: 1px solid var(--sidebar-edge);
+  color: var(--text);
+  font: 13px var(--font-ui);
+}
+
+.terminal-search[hidden] {
+  display: none;
+}
+
+.terminal-search input {
+  flex: 1 1 180px;
+  min-width: 0;
+  height: 30px;
+  padding: 4px 8px;
+  border: 1px solid var(--sidebar-edge);
+  border-radius: 5px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  user-select: text;
+}
+
+.terminal-search input::placeholder {
+  color: var(--muted);
+}
+
+.terminal-search.no-results input {
+  border-color: var(--danger);
+}
+
+.search-count {
+  color: var(--muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.search-actions {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.search-actions button {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text);
+  font: 14px var(--font-ui);
+  cursor: pointer;
+}
+
+.search-actions button:hover:not(:disabled),
+.search-actions button[aria-pressed="true"] {
+  background: var(--tab-active);
+  border-color: var(--accent);
+}
+
+.search-actions button:disabled {
+  color: var(--muted);
+  opacity: 0.5;
+  cursor: default;
+}
+
+.terminal-search :focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 
 .pane {
