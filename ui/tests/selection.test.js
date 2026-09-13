@@ -9,7 +9,10 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 const uiRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const appRoot = resolve(uiRoot, "../src/TerminalV/wwwroot");
+// Point at an extracted Windows package for pre-release checks of the actual payload.
+const appRoot = process.env.TERMINALV_TEST_APP_ROOT
+  ? resolve(process.env.TERMINALV_TEST_APP_ROOT)
+  : resolve(uiRoot, "../src/TerminalV/wwwroot");
 
 async function runBrowserFixture(t, fixture) {
   const browser = [
@@ -42,7 +45,8 @@ async function runBrowserFixture(t, fixture) {
   });
   const profile = await mkdtemp(join(tmpdir(), "terminalv-copy-test-"));
   try {
-    const screenshot = fixture === "profiles-ui" ? process.env.TERMINALV_PROFILES_SCREENSHOT :
+    const screenshot = fixture === "panes-ui" ? process.env.TERMINALV_PANES_SCREENSHOT :
+      fixture === "profiles-ui" ? process.env.TERMINALV_PROFILES_SCREENSHOT :
       fixture === "notifications-ui" ? process.env.TERMINALV_NOTIFICATIONS_SCREENSHOT :
       fixture === "sessions-ui" ? process.env.TERMINALV_SESSIONS_SCREENSHOT :
       fixture === "close-ui" ? process.env.TERMINALV_CLOSE_SCREENSHOT :
@@ -96,3 +100,4 @@ test("session management in the built TerminalV interface", (t) => runBrowserFix
 test("notification replay suppression in xterm.js", (t) => runBrowserFixture(t, "notification-output"));
 test("notifications in the built TerminalV interface", (t) => runBrowserFixture(t, "notifications-ui"));
 test("launch profiles in the built TerminalV interface", (t) => runBrowserFixture(t, "profiles-ui"));
+test("split panes in the built TerminalV interface", (t) => runBrowserFixture(t, "panes-ui"));

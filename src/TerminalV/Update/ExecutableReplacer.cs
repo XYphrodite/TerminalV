@@ -73,7 +73,8 @@ internal sealed class ExecutableReplacer : IExecutableReplacer
 
         var removed = 0;
         var prefix = Path.GetFileName(current) + RetiredSuffix;
-        foreach (var candidate in Directory.EnumerateFiles(directory, prefix + "*"))
+        foreach (var candidate in Directory.EnumerateFiles(directory, prefix + "*")
+                     .Where(path => IsRetiredName(Path.GetFileName(path), prefix)))
         {
             try
             {
@@ -88,12 +89,16 @@ internal sealed class ExecutableReplacer : IExecutableReplacer
             }
         }
 
-        foreach (var candidate in Directory.EnumerateDirectories(directory, "wwwroot.old-*"))
+        foreach (var candidate in Directory.EnumerateDirectories(directory, "wwwroot.old-*")
+                     .Where(path => IsRetiredName(Path.GetFileName(path), "wwwroot.old-")))
         {
             try
             {
-                Directory.Delete(candidate, recursive: true);
-                removed++;
+                if (SelfUpdateService.IsRegularTree(candidate))
+                {
+                    Directory.Delete(candidate, recursive: true);
+                    removed++;
+                }
             }
             catch (IOException)
             {
@@ -105,6 +110,10 @@ internal sealed class ExecutableReplacer : IExecutableReplacer
 
         return removed;
     }
+
+    private static bool IsRetiredName(string name, string prefix) =>
+        name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) &&
+        name.Length == prefix.Length + 17 && name[prefix.Length..].All(char.IsAsciiDigit);
 
     private static string RequireFullPath(string value, string parameterName)
     {

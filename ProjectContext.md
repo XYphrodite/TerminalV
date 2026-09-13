@@ -108,6 +108,8 @@ P/Invoke к `kernel32` для ConPTY написан вручную, отдель
 **Purpose**: вертикальные вкладки и xterm.js
 
 - `ui/src/main.js` — вкладки, шорткаты, copy/paste, overlay «процесс завершился».
+- `ui/src/pane-layout.js` — деревья расположений (до восьми сессий), нормализация, геометрия и навигация.
+- `ui/src/pane-view.js` — размещение уже созданных DOM-терминалов и разделители; перестановка/resize не пересоздают xterm или ConPTY.
 - `ui/src/styles.css` — тёмная тема, сайдбар 228px.
 - Сборка кладётся в `src/TerminalV/wwwroot` (в git не коммитится).
 
@@ -118,8 +120,8 @@ P/Invoke к `kernel32` для ConPTY написан вручную, отдель
 
 - Репозиторий зашит: `XYphrodite/TerminalV`. Другой origin задать нельзя.
 - `GitHubReleaseSource` и `install.ps1` качают файлы с `github.com/releases/.../download`, без REST API (лимит 60 запросов/час его не касается).
-- `SelfUpdateService` сверяет SHA-256 zip, распаковывает, гоняет `TerminalV.exe --help` до замены и после, переименовывает текущий exe в `.old-*`.
-- `wwwroot` подменяется при следующем старте (`PendingUpdateApplier`), когда WebView2 уже не держит файлы.
+- `SelfUpdateService` сверяет SHA-256 zip и наличие EXE/COM/index.html, гоняет `TerminalV.exe --help` до замены и после, переименовывает текущий exe в `.old-*`. Ошибка проверки или атомарной записи pending-маркера откатывает EXE; повторная установка поверх pending запрещена.
+- `wwwroot` и `TerminalV.com` подменяются при следующем старте (`PendingUpdateApplier`). Ошибка замены COM возвращает UI в прежнее состояние и сохраняет возможность повторить попытку. Маркер принимается только для `<install>/.terminalv-update-<GUID>/payload`; переходы через junction/symlink запрещены. Очистка ограничена распознаваемыми именами staging/retired, не произвольным родителем строки из маркера.
 - Фоновая проверка после `init`; кнопка в сайдбаре ставит обновление и перезапускает процесс.
 - Подкоманда хоста `TerminalV update` / `TerminalV update --check` (`Cli/UpdateCommand.cs`): без окна, при открытом GUI не убивает сессии.
 
@@ -127,10 +129,12 @@ P/Invoke к `kernel32` для ConPTY написан вручную, отдель
 
 ### 5. **Дистрибуция**
 **Type**: скрипты  
-**Location**: `install.ps1`, `scripts/publish.ps1`  
+**Location**: `install.ps1`, `scripts/publish.ps1`, `scripts/verify-package.ps1`
+
 **Purpose**: self-contained zip и установка через `irm | iex`
 
-- `scripts/publish.ps1` — `dotnet publish` win-x64 single-file + `wwwroot`, zip, SHA-256.
+- `scripts/publish.ps1` — `dotnet publish` win-x64 single-file + COM + `wwwroot`, zip, SHA-256. Свежий staging для каждой сборки, без удаления `artifacts`; существующий ZIP/хеш не перезаписываются. `-OutputDirectory` выбирает новый каталог пакета.
+- `scripts/verify-package.ps1` — Release-сборка, тесты локального ZIP/CLI/обновления, ConPTY и SQLite, затем браузерные тесты с `TERMINALV_TEST_APP_ROOT`, указывающим на UI из архива. `TerminalV.Package.Tests` использует локальный `IReleaseSource` и временные копии файлов, без сети, рабочей базы, GUI и пользовательского host pipe.
 - `install.ps1` — ASCII-only, совместим с Windows PowerShell 5.1 и `irm | iex`.
 
 ---
@@ -173,6 +177,8 @@ Renderer → host:
 Host → renderer: `init`, `data`, `exit`, `error`, `clipboard-data`, `update`.
 
 Дополнительно renderer → host: `update-check`, `update-apply`.
+
+`persist-sessions` передаёт `sessions` и `layouts`: лес бинарных деревьев с листьями `{sessionId}` и разделениями `{axis: "columns" | "rows", ratio, first, second}`. Расположение сохраняется в ключе `layouts` таблицы `settings` в одной транзакции со списком сессий; `init` возвращает его отдельно от настроек оформления. `Data/PaneLayout` отбрасывает неизвестные, скрытые и повторные ссылки, а оставшиеся сессии открывает отдельно. Сессия по-прежнему имеет один ID и один процесс; несколько связанных сессий могут быть видимы одновременно, но фокус ввода только один. Профильные сессии без живого процесса не запускаются автоматически при восстановлении расположения.
 
 ---
 

@@ -36,6 +36,12 @@
         </div>
       </aside>
       <main id="main">
+        <div id="pane-toolbar" class="pane-toolbar" role="group" aria-label="Разделение экрана" hidden>
+          <span id="pane-count">Панели · 1</span>
+          <button id="split-right" type="button" class="ghost" title="Разделить справа (Alt+Shift+=)">▥ Справа</button>
+          <button id="split-down" type="button" class="ghost" title="Разделить снизу (Alt+Shift+-)">▤ Снизу</button>
+          <button id="detach-pane" type="button" class="ghost" title="Показать активную панель отдельно, не завершая сессию">Отделить</button>
+        </div>
         <section id="terminal-search" class="terminal-search" role="search" aria-label="Поиск по выводу текущей вкладки" hidden>
           <input type="text" data-search-input aria-label="Найти в текущей вкладке" placeholder="Найти в текущей вкладке" autocomplete="off" spellcheck="false" />
           <span class="search-count" data-search-count role="status" aria-live="polite" aria-atomic="true"></span>
