@@ -6,6 +6,7 @@ import { SerializeAddon } from "@xterm/addon-serialize";
 import "@xterm/xterm/css/xterm.css";
 import "./styles.css";
 import { THEMES, getTheme } from "./themes.js";
+import { getPlainSelection } from "./selection.js";
 
 const tabsEl = document.getElementById("tabs");
 const panesEl = document.getElementById("panes");
@@ -36,7 +37,7 @@ let activeId = null;
 let shellName = "PowerShell";
 let buildNumber = 22621;
 let nextIndex = 1;
-let appVersion = "0.4.16";
+let appVersion = "0.4.17";
 let updateSupported = false;
 let persistTimer = 0;
 let fitTimer = 0;
@@ -536,14 +537,6 @@ async function copyText(text) {
   }
 }
 
-function plainSelection(tab) {
-  return tab.term.getSelection()
-    .replace(/\r\n?/g, "\n")
-    .split("\n")
-    .map((line) => line.trim())
-    .join("\r\n");
-}
-
 function readClipboard() {
   return navigator.clipboard.readText().catch(
     () =>
@@ -614,8 +607,16 @@ function attachCopyPaste(tab) {
     event.stopPropagation();
   }, true);
   tab.host.addEventListener("copy", (event) => {
+    if (!tab.term.hasSelection()) {
+      return;
+    }
     event.preventDefault();
     event.stopPropagation();
+    if (event.clipboardData) {
+      event.clipboardData.setData("text/plain", tab.term.getSelection());
+    } else {
+      copyText(tab.term.getSelection());
+    }
   }, true);
 
   tab.term.attachCustomKeyEventHandler((event) => {
@@ -631,11 +632,17 @@ function attachCopyPaste(tab) {
     const isCopyKey = key === "c" || event.code === "KeyC";
     const isPasteKey = key === "v" || event.code === "KeyV";
     if ((event.ctrlKey || event.metaKey) && event.altKey && isCopyKey) {
-      copyText(plainSelection(tab));
+      event.preventDefault();
+      event.stopPropagation();
+      if (tab.term.hasSelection()) {
+        copyText(getPlainSelection(tab.term));
+      }
       return false;
     }
     if ((event.ctrlKey || event.metaKey) && !event.altKey) {
       if (isCopyKey && !event.shiftKey) {
+        event.preventDefault();
+        event.stopPropagation();
         if (tab.term.hasSelection()) {
           copyText(tab.term.getSelection());
         } else {
@@ -651,7 +658,11 @@ function attachCopyPaste(tab) {
         return false;
       }
       if (event.shiftKey && isCopyKey) {
-        copyText(tab.term.getSelection());
+        event.preventDefault();
+        event.stopPropagation();
+        if (tab.term.hasSelection()) {
+          copyText(tab.term.getSelection());
+        }
         return false;
       }
       if (event.shiftKey && isPasteKey) {
