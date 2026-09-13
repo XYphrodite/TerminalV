@@ -27,6 +27,7 @@
             <span class="new-tab-label">Новая вкладка</span>
           </button>
           <div class="hint">Ctrl+Shift+T</div>
+          <button id="launch-profiles-btn" type="button" class="ghost" title="Профили запуска" aria-label="Профили запуска">Профили<span aria-hidden="true"> ▾</span></button>
           <div id="update-bar" class="update-bar hidden">
             <div id="update-text" class="update-text"></div>
             <button id="update-apply" type="button">Обновить</button>
@@ -132,6 +133,43 @@
           <button type="submit" class="paste-confirm">Сохранить</button>
           <button type="button" class="paste-cancel" data-session-cancel>Отмена</button>
           <button type="button" class="ghost session-hide" data-session-hide>Скрыть, оставив работать</button>
+        </div>
+      </form>
+    </dialog>
+    <dialog id="launch-profiles" class="confirmation-dialog" aria-labelledby="launch-profiles-title">
+      <form>
+        <div class="confirmation-content">
+          <h2 id="launch-profiles-title">Профили запуска</h2>
+          <div class="profile-picker">
+            <select data-profile-select aria-label="Сохранённый профиль"></select>
+            <button type="button" class="ghost" data-profile-new>Новый</button>
+          </div>
+          <fieldset>
+            <legend class="sr-only">Параметры запуска</legend>
+            <label class="field-label" for="profile-title">Название вкладки</label>
+            <input id="profile-title" data-profile-title type="text" maxlength="80" required autocomplete="off" />
+            <div class="profile-columns">
+              <div><label class="field-label" for="profile-shell">Оболочка</label><select id="profile-shell" data-profile-shell></select></div>
+              <div><label class="field-label" for="profile-color">Цветовая метка</label><select id="profile-color" data-profile-color><option value="">Без метки</option></select></div>
+            </div>
+            <label class="field-label" for="profile-cwd">Стартовая папка</label>
+            <input id="profile-cwd" data-profile-cwd type="text" maxlength="2048" placeholder="Домашняя папка" autocomplete="off" spellcheck="false" />
+            <label class="field-label" for="profile-command">Стартовая команда (необязательно)</label>
+            <textarea id="profile-command" data-profile-command rows="3" maxlength="4096" spellcheck="false" placeholder="Например: muse"></textarea>
+            <p class="notification-hint">Команда выполняется при явном запуске или перезапуске сессии, но не при подключении к работающей. Вводите только команды, которым доверяете. Для cmd — одна строка.</p>
+            <div class="profile-actions">
+              <button type="submit" class="ghost" data-profile-save>Сохранить</button>
+              <button type="submit" class="paste-confirm" data-profile-launch>Сохранить и запустить</button>
+              <button type="button" class="ghost" data-profile-delete>Удалить…</button>
+            </div>
+            <div class="profile-delete-confirm" data-profile-delete-confirm hidden>
+              <p>Удалить профиль «<span data-profile-delete-name></span>»? Работающие сессии не изменятся.</p>
+              <button type="button" class="close-confirm" data-profile-confirm-delete>Удалить профиль</button>
+              <button type="button" class="ghost" data-profile-keep>Отмена</button>
+            </div>
+          </fieldset>
+          <p class="profile-status" data-profile-error role="status" aria-live="polite"></p>
+          <button type="button" class="paste-cancel profile-close" data-profile-cancel>Закрыть без изменений</button>
         </div>
       </form>
     </dialog>

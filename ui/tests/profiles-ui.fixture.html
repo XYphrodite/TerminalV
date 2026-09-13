@@ -1,0 +1,248 @@
+<!doctype html>
+<meta charset="utf-8">
+<style>html, body { margin: 0; height: 100%; } iframe { width: 100%; height: 100%; border: 0; display: block; }</style>
+<script type="module">
+  const source = await (await fetch("/app/index.html")).text();
+  const results = [];
+  const delay = (ms = 100) => new Promise((resolve) => setTimeout(resolve, ms));
+  function equal(actual, expected) {
+    if (JSON.stringify(actual) !== JSON.stringify(expected)) throw new Error(`Expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
+  }
+  const profile = { id: "project", title: "Проект <img> & имя", shell: "powershell", color: "green",
+    cwd: "C:\\Проект O'Brien [test]", startupCommand: "Write-Output 'Первая строка'\r\nWrite-Output 'Вторая строка'" };
+  async function setup(overrides = {}) {
+    const frame = document.createElement("iframe");
+    const init = { profiles: [profile], sessions: [{ id: "live", title: "Текущая", cwd: "C:\\Active", active: true }],
+      liveIds: ["live"], launchProfilesSupported: true, ...overrides };
+    frame.srcdoc = source.replace("<head>", `<head><base href="${location.origin}/app/"><script>window.testInit = ${JSON.stringify(init).replaceAll("<", "\\u003c")};<\/script><script src="/tests/search-host.js"><\/script>`);
+    const loaded = new Promise((resolve) => frame.addEventListener("load", resolve, { once: true }));
+    document.body.append(frame);
+    await loaded;
+    await delay();
+    const app = frame.contentWindow, doc = frame.contentDocument;
+    const dialog = doc.getElementById("launch-profiles");
+    return { frame, app, doc, dialog,
+      field: (name) => dialog.querySelector(`[data-profile-${name}]`),
+      open: () => doc.getElementById("launch-profiles-btn").click(),
+      messages: (type) => app.hostMessages.filter((m) => m.type === type),
+      saved: () => { app.terminalvFlush(); return app.hostMessages.filter((m) => m.type === "persist-sessions").at(-1).sessions; }
+    };
+  }
+  async function check(name, run, overrides) {
+    document.body.dataset.testProgress = name;
+    const s = await setup(overrides);
+    try { await run(s); equal(s.app.hostErrors, []); equal(s.messages("write").length, 0); results.push({ name, ok: true }); }
+    catch (error) { results.push({ name, ok: false, error: error.stack }); }
+    finally { s.frame.remove(); }
+  }
+  function key(s, target, key, code, options = {}) {
+    target.dispatchEvent(new s.app.KeyboardEvent("keydown", { key, code, bubbles: true, cancelable: true, ...options }));
+  }
+
+  await check("new default tabs and EN/RU shortcut never inherit the startup command", async (s) => {
+    s.doc.getElementById("new-tab").click();
+    key(s, s.doc, "Е", "KeyT", { ctrlKey: true, shiftKey: true });
+    equal(s.messages("create").length, 2);
+    for (const message of s.messages("create")) {
+      equal(message.cwd, "C:\\Active");
+      equal(message.shell, undefined);
+      equal(message.startupCommand, undefined);
+    }
+  }, { sessions: [{ ...profile, id: "live", cwd: "C:\\Active", active: true }] });
+
+  await check("editing, typing shortcuts and cancelling never launch or persist a draft", async (s) => {
+    s.open();
+    equal(s.dialog.open, true);
+    equal(s.field("title").value, profile.title);
+    equal(s.field("command").value, profile.startupCommand.replaceAll("\r\n", "\n"));
+    s.field("title").value = "Не сохранять";
+    s.field("title").focus();
+    key(s, s.field("title"), "Е", "KeyT", { ctrlKey: true, shiftKey: true });
+    key(s, s.field("command"), "М", "KeyV", { ctrlKey: true, shiftKey: true });
+    equal(s.doc.getElementById("paste-confirmation").open, false);
+    s.dialog.dispatchEvent(new s.app.Event("cancel", { cancelable: true }));
+    equal(s.dialog.open, false);
+    equal(s.messages("persist-profiles").length, 0);
+    equal(s.messages("create").length, 0);
+    equal(s.doc.activeElement.classList.contains("xterm-helper-textarea"), true);
+    s.open();
+    equal(s.field("title").value, profile.title);
+  });
+
+  await check("save-only creates a reusable profile without running anything", async (s) => {
+    s.open();
+    s.field("new").click();
+    s.field("title").value = "Новый проект";
+    s.field("shell").value = "cmd";
+    s.field("command").value = "echo PROFILE";
+    s.field("save").click();
+    await delay();
+    equal(s.messages("persist-profiles").at(-1).profiles.length, 2);
+    equal(s.messages("create").length, 0);
+    equal(s.dialog.open, true);
+    equal(s.field("select").selectedOptions[0].textContent, "Новый проект");
+    equal(s.field("error").textContent, "Профиль сохранён.");
+  });
+
+  await check("launch waits for durable acknowledgement and ignores duplicate clicks and replies", async (s) => {
+    s.app.profileSaveMode = "manual";
+    s.open();
+    s.field("launch").click();
+    s.field("launch").click();
+    equal(s.messages("persist-profiles").length, 1);
+    equal(s.messages("create").length, 0);
+    equal(s.field("cancel").disabled, true);
+    const request = s.messages("persist-profiles")[0];
+    const reply = { type: "profiles-saved", requestId: request.requestId, profiles: request.profiles };
+    s.app.sendHost(reply);
+    s.app.sendHost(reply);
+    await delay();
+    equal(s.messages("create").length, 1);
+    const created = s.messages("create")[0];
+    equal(created.cwd, profile.cwd);
+    equal(created.shell, profile.shell);
+    equal(created.startupCommand, profile.startupCommand);
+    equal(created.id === profile.id, false);
+    const row = s.doc.querySelector(`.tab[data-id="${created.id}"]`);
+    equal(row.querySelector(".tab-title").textContent, profile.title);
+    equal(row.querySelector("img"), null);
+    equal(row.style.getPropertyValue("--session-color"), "#4ade80");
+    equal(row.querySelector(".tab-meta").textContent, "Windows PowerShell");
+    equal(s.saved().find((p) => p.id === created.id).startupCommand, profile.startupCommand);
+    equal(s.dialog.open, false);
+  });
+
+  await check("saving failures retain the draft and cannot launch; retry is explicit", async (s) => {
+    s.app.profileSaveMode = "error";
+    s.open();
+    s.field("title").value = "Сохранить позже";
+    s.field("launch").click();
+    await delay();
+    equal(s.messages("create").length, 0);
+    equal(s.dialog.open, true);
+    equal(s.field("title").value, "Сохранить позже");
+    equal(s.field("error").textContent.includes("Test database unavailable"), true);
+    s.app.profileSaveMode = null;
+    s.field("save").click();
+    await delay();
+    equal(s.messages("create").length, 0);
+    equal(s.field("error").textContent, "Профиль сохранён.");
+  });
+
+  await check("invalid paths and multiline cmd commands are not saved or launched", async (s) => {
+    s.open();
+    s.field("cwd").value = "C:relative";
+    s.field("launch").click();
+    equal(s.field("error").textContent.includes("полный путь"), true);
+    s.field("cwd").value = "";
+    s.field("shell").value = "cmd";
+    s.field("launch").click();
+    equal(s.field("error").textContent.includes("одну строку"), true);
+    equal(s.messages("persist-profiles").length, 0);
+    equal(s.messages("create").length, 0);
+  });
+
+  await check("empty profile cwd requests home, not the active project's folder", async (s) => {
+    s.open();
+    s.field("cwd").value = "";
+    s.field("launch").click();
+    await delay();
+    equal(s.messages("create").length, 1);
+    equal(s.messages("create")[0].cwd, undefined);
+    equal(s.messages("create")[0].startupCommand, profile.startupCommand);
+  });
+
+  await check("the profile editor remains usable at narrow sizes and with a light theme", async (s) => {
+    s.frame.style.width = "360px";
+    s.frame.style.height = "420px";
+    s.doc.getElementById("settings-btn").click();
+    [...s.doc.querySelectorAll(".theme-card")].find((button) => /light/i.test(button.textContent)).click();
+    s.doc.getElementById("settings-close").click();
+    s.open();
+    await delay();
+    const bounds = s.dialog.getBoundingClientRect();
+    equal(bounds.left >= 0 && bounds.right <= 360, true);
+    equal(bounds.top >= 0 && bounds.bottom <= 420, true);
+    equal(s.dialog.scrollWidth <= s.dialog.clientWidth + 1, true);
+    s.field("cancel").scrollIntoView({ block: "nearest" });
+    equal(s.field("cancel").getBoundingClientRect().bottom <= bounds.bottom, true);
+    s.field("cancel").click();
+    equal(s.dialog.open, false);
+  });
+
+  await check("deleting a profile requires confirmation and preserves session launch snapshots", async (s) => {
+    s.open();
+    s.field("launch").click();
+    await delay();
+    const created = s.messages("create")[0];
+    s.open();
+    s.field("delete").click();
+    equal(s.field("delete-confirm").hidden, false);
+    equal(s.field("delete-name").textContent, profile.title);
+    s.field("keep").click();
+    equal(s.messages("persist-profiles").length, 1);
+    s.field("delete").click();
+    s.field("confirm-delete").click();
+    await delay();
+    equal(s.messages("persist-profiles").at(-1).profiles, []);
+    equal(s.saved().find((p) => p.id === created.id).startupCommand, profile.startupCommand);
+    equal(s.messages("kill").length, 0);
+    equal(s.messages("create").length, 1);
+  });
+
+  const saved = { id: "snapshot", title: "Saved", shell: "powershell", startupCommand: "echo ORIGINAL", cwd: "C:\\Original", active: true };
+  await check("reattachment and revealing a hidden live profile never repeat its command", async (s) => {
+    equal(s.messages("create").length, 0);
+    equal(s.messages("attach").map((m) => m.id), ["snapshot", "hidden"]);
+    for (const message of s.messages("attach")) equal(message.startupCommand, undefined);
+    s.doc.getElementById("hidden-sessions").click();
+    s.doc.querySelector('.tab[data-id="hidden"]').click();
+    equal(s.messages("create").length, 0);
+    equal(s.saved().find((p) => p.id === "hidden").startupCommand, "echo ORIGINAL");
+  }, { sessions: [saved, { ...saved, id: "hidden", hidden: true, active: false }], liveIds: ["snapshot", "hidden"] });
+
+  await check("lost profile processes require an explicit restart using the saved snapshot, not the edited profile", async (s) => {
+    equal(s.messages("create").length, 0);
+    equal(s.messages("attach").length, 0);
+    const restart = s.doc.querySelector('.pane[data-id="snapshot"] .overlay button');
+    equal(restart.textContent.includes("стартовой командой"), true);
+    equal(restart.title, "echo ORIGINAL");
+    restart.click();
+    restart.click();
+    equal(s.messages("create").length, 1);
+    equal(s.messages("create")[0].startupCommand, "echo ORIGINAL");
+    equal(s.messages("create")[0].cwd, "C:\\Original");
+    equal(s.messages("create")[0].shell, "powershell");
+  }, { sessions: [saved], liveIds: [] });
+
+  await check("native launch errors remain visible and do not fall back to another shell or paste", async (s) => {
+    s.open();
+    s.field("launch").click();
+    await delay();
+    const created = s.messages("create")[0];
+    s.app.sendHost({ type: "error", id: created.id, message: "Фоновый процесс не поддерживает профили запуска." });
+    equal(s.doc.querySelector(`.pane[data-id="${created.id}"] .overlay span`).textContent.includes("не поддерживает"), true);
+    equal(s.messages("create").length, 1);
+    equal(s.messages("kill").length, 0);
+  });
+
+  await check("pending clipboard reads are cancelled when the profile editor opens", async (s) => {
+    let resolveClipboard;
+    Object.defineProperty(s.app.navigator, "clipboard", { configurable: true, value: {
+      readText: () => new Promise((resolve) => { resolveClipboard = resolve; })
+    } });
+    s.doc.querySelector(".pane.active .terminal-host").dispatchEvent(new s.app.MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+    s.open();
+    resolveClipboard("echo first\necho second");
+    await delay();
+    equal(s.dialog.open, true);
+    equal(s.doc.getElementById("paste-confirmation").open, false);
+    equal(s.messages("create").length, 0);
+  });
+
+  if (new URL(location.href).searchParams.has("preview")) {
+    const s = await setup({ profiles: [{ ...profile, title: "TerminalV — разработка", cwd: "C:\\Repos\\TerminalV", startupCommand: "muse" }] });
+    s.open();
+  }
+  document.body.dataset.testResult = btoa(unescape(encodeURIComponent(JSON.stringify(results))));
+</script>

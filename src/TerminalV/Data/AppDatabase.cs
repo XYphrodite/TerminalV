@@ -61,12 +61,34 @@ internal sealed class AppDatabase : IDisposable
         cmd.ExecuteNonQuery();
     }
 
+    public List<LaunchProfile> LoadProfiles()
+    {
+        using var cmd = _connection.CreateCommand();
+        cmd.CommandText = "SELECT value FROM settings WHERE key = 'profiles'";
+        var value = cmd.ExecuteScalar() as string;
+        return value is null ? [] : JsonSerializer.Deserialize<List<LaunchProfile>>(value, Json) ?? [];
+    }
+
+    public void SaveProfiles(IReadOnlyList<LaunchProfile> profiles)
+    {
+        if (profiles.Count > 100 || profiles.Select(p => p.Id).Distinct().Count() != profiles.Count)
+            throw new ArgumentException("Допустимо до 100 профилей с уникальными идентификаторами.");
+        foreach (var profile in profiles) profile.Validate();
+        using var cmd = _connection.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO settings(key, value) VALUES('profiles', $value)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            """;
+        cmd.Parameters.AddWithValue("$value", JsonSerializer.Serialize(profiles, Json));
+        cmd.ExecuteNonQuery();
+    }
+
     public List<SessionRecord> LoadSessions()
     {
         using var cmd = _connection.CreateCommand();
         cmd.CommandText = """
             SELECT id, title, custom_title, sort_order, is_active, buffer, cwd,
-                   group_name, color, is_pinned, is_hidden, is_muted
+                   group_name, color, is_pinned, is_hidden, is_muted, shell, startup_command
             FROM sessions
             ORDER BY sort_order, updated_at
             """;
@@ -87,7 +109,9 @@ internal sealed class AppDatabase : IDisposable
                 Color = reader.IsDBNull(8) ? null : reader.GetString(8),
                 Pinned = reader.GetInt32(9) != 0,
                 Hidden = reader.GetInt32(10) != 0,
-                Muted = reader.GetInt32(11) != 0
+                Muted = reader.GetInt32(11) != 0,
+                Shell = reader.IsDBNull(12) ? null : reader.GetString(12),
+                StartupCommand = reader.IsDBNull(13) ? null : reader.GetString(13)
             });
         }
 
@@ -111,9 +135,9 @@ internal sealed class AppDatabase : IDisposable
             insert.Transaction = tx;
             insert.CommandText = """
                 INSERT INTO sessions(id, title, custom_title, sort_order, is_active, buffer, cwd,
-                                     group_name, color, is_pinned, is_hidden, is_muted, created_at, updated_at)
+                                     group_name, color, is_pinned, is_hidden, is_muted, shell, startup_command, created_at, updated_at)
                 VALUES ($id, $title, $custom, $sort, $active, $buffer, $cwd,
-                        $group, $color, $pinned, $hidden, $muted, $now, $now)
+                        $group, $color, $pinned, $hidden, $muted, $shell, $command, $now, $now)
                 """;
             insert.Parameters.AddWithValue("$id", session.Id);
             insert.Parameters.AddWithValue("$title", session.Title);
@@ -127,6 +151,8 @@ internal sealed class AppDatabase : IDisposable
             insert.Parameters.AddWithValue("$pinned", session.Pinned ? 1 : 0);
             insert.Parameters.AddWithValue("$hidden", session.Hidden ? 1 : 0);
             insert.Parameters.AddWithValue("$muted", session.Muted ? 1 : 0);
+            insert.Parameters.AddWithValue("$shell", (object?)session.Shell ?? DBNull.Value);
+            insert.Parameters.AddWithValue("$command", (object?)session.StartupCommand ?? DBNull.Value);
             insert.Parameters.AddWithValue("$now", now);
             insert.ExecuteNonQuery();
         }
@@ -189,7 +215,7 @@ internal sealed class AppDatabase : IDisposable
         foreach (var (name, definition) in new[] {
             ("group_name", "TEXT"), ("color", "TEXT"),
             ("is_pinned", "INTEGER NOT NULL DEFAULT 0"), ("is_hidden", "INTEGER NOT NULL DEFAULT 0"),
-            ("is_muted", "INTEGER NOT NULL DEFAULT 0") })
+            ("is_muted", "INTEGER NOT NULL DEFAULT 0"), ("shell", "TEXT"), ("startup_command", "TEXT") })
         {
             if (existing.Contains(name)) continue;
             using var add = _connection.CreateCommand();

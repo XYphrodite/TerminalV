@@ -818,6 +818,32 @@ select {
   background: #00000077;
 }
 
+#launch-profiles-btn { width: 100%; margin-top: 6px; }
+#app.collapsed #launch-profiles-btn { font-size: 0; padding: 0; }
+#app.collapsed #launch-profiles-btn span { font-size: 16px; }
+#launch-profiles fieldset { min-width: 0; border: 0; margin: 0; padding: 0; }
+#launch-profiles .confirmation-content { padding: 20px; }
+#launch-profiles .field-label { margin: 10px 0 5px; }
+#launch-profiles input, #launch-profiles textarea {
+  width: 100%; min-width: 0; padding: 7px 9px;
+  border: 1px solid var(--sidebar-edge); border-radius: 6px;
+  background: var(--bg); color: var(--text); user-select: text;
+  font: 13px/1.4 var(--font-ui);
+}
+#launch-profiles textarea { resize: vertical; max-height: 200px; font-family: var(--font-mono); }
+#launch-profiles button { min-height: 32px; border-radius: 6px; padding: 5px 10px; cursor: pointer; border: 1px solid var(--sidebar-edge); }
+#launch-profiles button:disabled { opacity: .5; cursor: default; }
+.profile-picker, .profile-actions { display: flex; gap: 8px; }
+.profile-picker select { min-width: 0; }
+.profile-actions { flex-wrap: wrap; margin-top: 16px; }
+.profile-columns { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+.profile-delete-confirm { margin-top: 12px; padding: 10px; border: 1px solid var(--danger); border-radius: 6px; }
+.profile-delete-confirm button { margin-top: 8px; }
+#launch-profiles .profile-status { margin-top: 10px; font-size: 12px; overflow-wrap: anywhere; user-select: text; }
+#launch-profiles .profile-status:empty { display: none; }
+.profile-close { width: 100%; margin-top: 12px; }
+@media (max-width: 400px) { .profile-columns { grid-template-columns: minmax(0, 1fr); gap: 0; } }
+
 .confirmation-content {
   padding: 24px;
   min-height: 0;

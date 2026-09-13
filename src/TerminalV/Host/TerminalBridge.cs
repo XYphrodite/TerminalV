@@ -61,8 +61,10 @@ internal sealed class TerminalBridge : IDisposable
             updateSupported = _canUpdate,
             settings = _db.LoadSettings(),
             sessions = _db.LoadSessions(),
+            profiles = _db.LoadProfiles(),
             liveIds = LiveIds(),
             cwdTrackingSupported = _host.CwdTrackingSupported,
+            launchProfilesSupported = _host.LaunchProfilesSupported,
             fonts = SystemFonts()
         });
 
@@ -170,6 +172,17 @@ internal sealed class TerminalBridge : IDisposable
                 break;
             case "persist-sessions":
                 PersistSessions(message);
+                break;
+            case "persist-profiles":
+                try
+                {
+                    _db.SaveProfiles(message.Profiles ?? throw new ArgumentException("Нет списка профилей."));
+                    Post(new { type = "profiles-saved", requestId = message.RequestId, profiles = _db.LoadProfiles() });
+                }
+                catch (Exception ex) when (ex is ArgumentException or Microsoft.Data.Sqlite.SqliteException)
+                {
+                    Post(new { type = "profiles-saved", requestId = message.RequestId, error = ex.Message });
+                }
                 break;
             case "ready":
                 SendInit();
@@ -346,16 +359,19 @@ internal sealed class TerminalBridge : IDisposable
         try
         {
             var cwd = WorkingDirectory.Resolve(message.Cwd);
+            if (message.Shell is not null && cwd.Notice is not null)
+                throw new DirectoryNotFoundException("Папка профиля недоступна. Запуск отменён: " + message.Cwd);
             Post(new { type = "cwd", id = message.Id, cwd = cwd.Path, notice = cwd.Notice });
             if (_host.Ensure())
             {
                 _host.Create(message.Id, Math.Max(message.Cols, 1), Math.Max(message.Rows, 1),
-                    message.Cwd is null ? null : cwd.Path);
+                    message.Cwd is null ? null : cwd.Path, message.Shell, message.StartupCommand);
                 return;
             }
 
             KillLocal(message.Id);
-            var shell = ShellResolver.Resolve(message.Cwd is null ? null : cwd.Path);
+            var shell = ShellResolver.Resolve(message.Cwd is null && message.Shell is null ? null : cwd.Path, message.Shell,
+                message.Shell is null ? null : message.StartupCommand);
             ConPtySession.Start(
                 message.Id,
                 shell.CommandLine,

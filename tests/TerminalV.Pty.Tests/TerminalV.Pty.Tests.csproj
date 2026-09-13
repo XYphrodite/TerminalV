@@ -8,5 +8,7 @@
   <ItemGroup>
     <Compile Include="../../src/TerminalV/Pty/*.cs" Link="Pty/%(Filename)%(Extension)" />
     <Compile Include="../../src/TerminalV/Host/OutputReplayGuard.cs" Link="Host/OutputReplayGuard.cs" />
+    <Compile Include="../../src/TerminalV/Host/SessionClient.cs" Link="Host/SessionClient.cs" />
+    <Compile Include="../../src/TerminalV/Host/SessionHost.cs" Link="Host/SessionHost.cs" />
   </ItemGroup>
 </Project>

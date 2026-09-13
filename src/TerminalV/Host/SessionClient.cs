@@ -15,6 +15,8 @@ internal sealed class SessionClient : IDisposable
     };
 
     private readonly object _gate = new();
+    private readonly string _pipeName;
+    private readonly Action _startHost;
     private readonly OutputReplayGuard _replay = new();
     private NamedPipeClientStream? _pipe;
     private StreamWriter? _writer;
@@ -25,6 +27,14 @@ internal sealed class SessionClient : IDisposable
     public event Action<string, string, string?>? DirectoryChanged;
     public event Action<string, string>? Error;
     public bool? CwdTrackingSupported { get; private set; }
+    public bool? LaunchProfilesSupported { get; private set; }
+
+    // Tests use a private pipe and a no-op starter, never the user's live host.
+    public SessionClient(string pipeName = SessionHost.PipeName, Action? startHost = null)
+    {
+        _pipeName = pipeName;
+        _startHost = startHost ?? StartHost;
+    }
 
     public bool Ensure()
     {
@@ -33,8 +43,8 @@ internal sealed class SessionClient : IDisposable
             return true;
         }
 
-        StartHost();
-        var pipe = new NamedPipeClientStream(".", SessionHost.PipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
+        _startHost();
+        var pipe = new NamedPipeClientStream(".", _pipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
         var connected = false;
         for (var attempt = 0; attempt < 40; attempt++)
         {
@@ -61,6 +71,7 @@ internal sealed class SessionClient : IDisposable
 
         _pipe = pipe;
         _replay.Reset();
+        LaunchProfilesSupported = null;
         _writer = new StreamWriter(pipe, new UTF8Encoding(false), 4096, leaveOpen: true) { AutoFlush = true };
         _readCts = new CancellationTokenSource();
         _ = Task.Factory.StartNew(() => ReadLoop(_readCts.Token), TaskCreationOptions.LongRunning);
@@ -90,6 +101,8 @@ internal sealed class SessionClient : IDisposable
 
             CwdTrackingSupported = root.TryGetProperty("cwdTrackingSupported", out var supported) &&
                 supported.ValueKind == JsonValueKind.True;
+            LaunchProfilesSupported = root.TryGetProperty("launchProfilesSupported", out var profiles) &&
+                profiles.ValueKind == JsonValueKind.True;
 
             ready.Set();
         }
@@ -112,8 +125,18 @@ internal sealed class SessionClient : IDisposable
         return ids;
     }
 
-    public void Create(string id, int cols, int rows, string? cwd) =>
-        Send(new { type = "create", id, cols, rows, cwd });
+    public void Create(string id, int cols, int rows, string? cwd, string? shell = null, string? startupCommand = null)
+    {
+        if (shell is not null)
+        {
+            // Never let an older host silently ignore the selected shell or command.
+            LaunchProfilesSupported = null;
+            List();
+            if (LaunchProfilesSupported != true)
+                throw new InvalidOperationException("Фоновый процесс не поддерживает профили запуска. Сохраните работу и перезагрузите Windows для его обновления. Работающие сессии не прерывались.");
+        }
+        Send(new { type = shell is null ? "create" : "create-profile", id, cols, rows, cwd, shell, startupCommand });
+    }
 
     public void Attach(string id)
     {

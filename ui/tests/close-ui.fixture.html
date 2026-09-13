@@ -142,8 +142,18 @@
     });
   }
 
-  await check("restarting a target invalidates its old confirmation", async (s) => {
+  await check("a hidden restart button cannot replace a live session behind its confirmation", async (s) => {
     s.row("first").querySelector(".tab-close").click();
+    s.doc.querySelector('.pane[data-id="first"] .overlay button').click();
+    equal(s.dialog.open, true);
+    s.cancel.click();
+    equal(s.messages("create").length, 2);
+    equal(s.messages("kill").length, 0);
+  });
+
+  await check("restarting an exited target cannot reuse its old confirmation", async (s) => {
+    s.row("first").querySelector(".tab-close").click();
+    s.app.sendHost({ type: "exit", id: "first", code: 0 });
     s.doc.querySelector('.pane[data-id="first"] .overlay button').click();
     equal(s.dialog.open, false);
     s.confirm.click();

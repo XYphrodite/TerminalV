@@ -10,6 +10,10 @@ window.chrome.webview = {
   addEventListener(type, listener) { if (type === "message") receive = listener; },
   postMessage(message) {
     window.hostMessages.push(message);
+    if (message.type === "persist-profiles" && window.profileSaveMode !== "manual") {
+      queueMicrotask(() => window.sendHost({ type: "profiles-saved", requestId: message.requestId,
+        ...(window.profileSaveMode === "error" ? { error: "Test database unavailable" } : { profiles: message.profiles }) }));
+    }
     if (message.type === "ready") {
       queueMicrotask(() => window.sendHost({
         type: "init", version: "test", shellName: "Test PowerShell", buildNumber: 22621,

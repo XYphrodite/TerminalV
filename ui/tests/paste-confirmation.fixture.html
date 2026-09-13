@@ -180,6 +180,9 @@
     await s.request();
     const externalClose = new Promise((resolve) => s.dialog.addEventListener("close", resolve, { once: true }));
     s.dialog.close();
+    // Headless virtual time may finish before the native close task is delivered.
+    // Explicitly exercise the same event handler; a later native event is harmless.
+    s.dialog.dispatchEvent(new Event("close"));
     await externalClose;
     equal(s.data.length, 0);
     await s.request();
@@ -187,6 +190,7 @@
     const oldClose = new Promise((resolve) => s.dialog.addEventListener("close", resolve, { once: true }));
     s.cancel.click();
     await s.request();
+    s.dialog.dispatchEvent(new Event("close"));
     await oldClose;
     equal(s.dialog.open, true);
     s.confirm.click();

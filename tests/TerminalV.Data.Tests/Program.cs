@@ -45,6 +45,8 @@ try
         Equal(old.Group, null);
         Equal(old.Color, null);
         Equal(old.Muted, false);
+        Equal(old.Shell, null);
+        Equal(old.StartupCommand, null);
     });
 
     Check("hidden sessions and metadata survive disposal and reopen without becoming active", () =>
@@ -101,6 +103,49 @@ try
         Equal(db.LoadSessions()[0].Muted, true);
         db.SaveSessions([records[0]]);
         Equal(db.LoadSessions().Single().Id, "hidden");
+    });
+
+    Check("profiles survive reopening independently of appearance and session launch snapshots", () =>
+    {
+        using (var db = new AppDatabase(path))
+        {
+            Equal(db.LoadProfiles().Count, 0);
+            db.SaveSettings(new() { ThemeId = "profile-test" });
+            db.SaveProfiles([new() { Id = "project", Title = "Проект <&>", Shell = "powershell", Color = "green",
+                Cwd = @"C:\Папка O'Brien", StartupCommand = "Write-Output 'first'\r\nWrite-Output 'вторая'" }]);
+            db.SaveSessions([new() { Id = "snapshot", Shell = "powershell", StartupCommand = "original" }]);
+        }
+        using var reopened = new AppDatabase(path);
+        var profile = reopened.LoadProfiles().Single();
+        Equal(profile.Title, "Проект <&>");
+        Equal(profile.Cwd, @"C:\Папка O'Brien");
+        Equal(profile.StartupCommand, "Write-Output 'first'\r\nWrite-Output 'вторая'");
+        Equal(profile.Color, "green");
+        Equal(reopened.LoadSettings().ThemeId, "profile-test");
+        profile.Shell = "cmd";
+        profile.StartupCommand = "echo changed";
+        reopened.SaveProfiles([profile]);
+        Equal(reopened.LoadSessions().Single().StartupCommand, "original");
+        reopened.SaveProfiles([]);
+        Equal(reopened.LoadProfiles().Count, 0);
+        Equal(reopened.LoadSessions().Single().Shell, "powershell");
+    });
+
+    Check("invalid profile saves preserve all previously saved data", () =>
+    {
+        using var db = new AppDatabase(path);
+        db.SaveProfiles([new() { Id = "saved", Title = "Saved" }]);
+        foreach (var invalid in new List<LaunchProfile>[] {
+            [new() { Id = "same", Title = "A" }, new() { Id = "same", Title = "B" }],
+            [new() { Id = "a", Title = "" }], [new() { Id = "a", Title = "A", Shell = "unknown" }],
+            [new() { Id = "a", Title = "A", Shell = "cmd", StartupCommand = "a\nb" }],
+            [new() { Id = "a", Title = "A", StartupCommand = new string('x', 4097) }]
+        })
+        {
+            try { db.SaveProfiles(invalid); throw new Exception("Invalid profile was accepted"); }
+            catch (ArgumentException) { }
+            Equal(db.LoadProfiles().Single().Id, "saved");
+        }
     });
 
     Check("fresh database has the same schema and reopening migration is idempotent", () =>
