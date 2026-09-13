@@ -15,11 +15,12 @@ internal sealed class SessionClient : IDisposable
     };
 
     private readonly object _gate = new();
+    private readonly OutputReplayGuard _replay = new();
     private NamedPipeClientStream? _pipe;
     private StreamWriter? _writer;
     private CancellationTokenSource? _readCts;
 
-    public event Action<string, string>? Data;
+    public event Action<string, string, bool>? Data;
     public event Action<string, uint>? Exited;
     public event Action<string, string, string?>? DirectoryChanged;
     public event Action<string, string>? Error;
@@ -59,6 +60,7 @@ internal sealed class SessionClient : IDisposable
         }
 
         _pipe = pipe;
+        _replay.Reset();
         _writer = new StreamWriter(pipe, new UTF8Encoding(false), 4096, leaveOpen: true) { AutoFlush = true };
         _readCts = new CancellationTokenSource();
         _ = Task.Factory.StartNew(() => ReadLoop(_readCts.Token), TaskCreationOptions.LongRunning);
@@ -95,7 +97,11 @@ internal sealed class SessionClient : IDisposable
         _onPacket += Handler;
         try
         {
-            Send(new { type = "list" });
+            lock (_gate)
+            {
+                _replay.BeginList();
+                Send(new { type = "list" });
+            }
             ready.Wait(TimeSpan.FromSeconds(2));
         }
         finally
@@ -109,7 +115,15 @@ internal sealed class SessionClient : IDisposable
     public void Create(string id, int cols, int rows, string? cwd) =>
         Send(new { type = "create", id, cols, rows, cwd });
 
-    public void Attach(string id) => Send(new { type = "attach", id });
+    public void Attach(string id)
+    {
+        lock (_gate)
+        {
+            _replay.BeginList(id);
+            Send(new { type = "attach", id });
+            Send(new { type = "list" });
+        }
+    }
 
     public void Write(string id, string data) => Send(new { type = "write", id, data });
 
@@ -152,11 +166,12 @@ internal sealed class SessionClient : IDisposable
                         continue;
                     }
 
-                    _onPacket?.Invoke(type, root.Clone());
+                    if (type != "list" || _replay.CompleteList())
+                        _onPacket?.Invoke(type, root.Clone());
                     var id = root.TryGetProperty("id", out var idEl) ? idEl.GetString() : null;
                     if (type == "data" && id is not null && root.TryGetProperty("data", out var dataEl))
                     {
-                        Data?.Invoke(id, dataEl.GetString() ?? "");
+                        Data?.Invoke(id, dataEl.GetString() ?? "", _replay.IsReplaying(id));
                     }
                     else if (type == "exit" && id is not null)
                     {

@@ -42,7 +42,8 @@ async function runBrowserFixture(t, fixture) {
   });
   const profile = await mkdtemp(join(tmpdir(), "terminalv-copy-test-"));
   try {
-    const screenshot = fixture === "sessions-ui" ? process.env.TERMINALV_SESSIONS_SCREENSHOT :
+    const screenshot = fixture === "notifications-ui" ? process.env.TERMINALV_NOTIFICATIONS_SCREENSHOT :
+      fixture === "sessions-ui" ? process.env.TERMINALV_SESSIONS_SCREENSHOT :
       fixture === "close-ui" ? process.env.TERMINALV_CLOSE_SCREENSHOT :
       fixture === "search-ui" ? process.env.TERMINALV_SEARCH_SCREENSHOT :
       fixture === "paste-confirmation" && process.env.TERMINALV_TEST_SCREENSHOT;
@@ -91,3 +92,5 @@ test("search in the built TerminalV interface", (t) => runBrowserFixture(t, "sea
 test("close protection in the built TerminalV interface", (t) => runBrowserFixture(t, "close-ui"));
 test("working directory in the built TerminalV interface", (t) => runBrowserFixture(t, "cwd-ui"));
 test("session management in the built TerminalV interface", (t) => runBrowserFixture(t, "sessions-ui"));
+test("notification replay suppression in xterm.js", (t) => runBrowserFixture(t, "notification-output"));
+test("notifications in the built TerminalV interface", (t) => runBrowserFixture(t, "notifications-ui"));

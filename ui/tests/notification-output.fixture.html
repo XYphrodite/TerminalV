@@ -1,0 +1,66 @@
+<!doctype html>
+<meta charset="utf-8">
+<link rel="stylesheet" href="/node_modules/@xterm/xterm/css/xterm.css">
+<script src="/node_modules/@xterm/xterm/lib/xterm.js"></script>
+<script type="module">
+  import { createNotificationOutput } from "/src/notifications.js";
+  const results = [], errors = [];
+  const delay = () => new Promise((resolve) => setTimeout(resolve, 150));
+  window.addEventListener("error", (event) => errors.push(event.message));
+  function equal(actual, expected) {
+    if (actual !== expected) throw new Error(`Expected ${expected}, got ${actual}`);
+  }
+  async function check(name, run) {
+    const host = document.createElement("div");
+    host.style.cssText = "position:relative;width:600px;height:200px";
+    document.body.append(host);
+    const term = new Terminal({ cols: 60, rows: 8, allowProposedApi: true });
+    term.open(host);
+    let bells = 0;
+    const output = createNotificationOutput(term, () => bells++);
+    try {
+      await run({ term, output, bells: () => bells });
+      results.push({ name, ok: true });
+    } catch (error) { results.push({ name, ok: false, error: error.stack }); }
+    finally { output.dispose(); term.dispose(); host.remove(); }
+  }
+  await check("queued historical/live/historical chunks keep their own notification policy", async (s) => {
+    s.output.write("HISTORY\x07\x07", true);
+    s.output.write("LIVE\x07");
+    s.output.write("OLD\x07", true);
+    await delay();
+    equal(s.bells(), 1);
+    equal(s.term.buffer.active.getLine(0).translateToString(true), "HISTORYLIVEOLD");
+  });
+  await check("live data before and after replay is not accidentally silenced", async (s) => {
+    s.output.write("\x07");
+    s.output.write("\x07", true);
+    s.output.write("\x07");
+    await delay();
+    equal(s.bells(), 2);
+  });
+  await check("BEL terminators in OSC titles and cwd metadata are not terminal bell signals", async (s) => {
+    s.output.write("\x1b]0;title");
+    s.output.write("\x07\x1b]9;9;\"C:\\Project\"");
+    s.output.write("\x07\x1b[31mTEXT\x1b[0m");
+    await delay();
+    equal(s.bells(), 0);
+    equal(s.term.buffer.active.getLine(0).translateToString(true), "TEXT");
+  });
+  await check("reset silences queued output from the old process, then accepts fresh signals", async (s) => {
+    s.output.write("OLD\x07");
+    s.output.reset();
+    s.output.write("NEW\x07");
+    await delay();
+    equal(s.bells(), 1);
+    equal(s.term.buffer.active.getLine(0).translateToString(true), "NEW");
+  });
+  await check("closing a terminal with queued output cannot emit a late bell", async (s) => {
+    s.output.write("\x07");
+    s.output.dispose();
+    await delay();
+    equal(s.bells(), 0);
+  });
+  results.push({ name: "no unhandled parser errors", ok: errors.length === 0, error: errors.join("\n") });
+  document.body.dataset.testResult = btoa(unescape(encodeURIComponent(JSON.stringify(results))));
+</script>

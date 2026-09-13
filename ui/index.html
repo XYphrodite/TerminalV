@@ -59,6 +59,7 @@
       </main>
     </div>
 
+    <div id="notification-status" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
     <div id="settings" class="settings hidden" role="dialog" aria-label="Оформление">
       <div class="settings-panel">
         <div class="settings-head">
@@ -124,6 +125,8 @@
           <label class="field-label" for="session-color">Цветовая метка</label>
           <select id="session-color" data-session-color><option value="">Без метки</option></select>
           <label class="session-pin-field"><input type="checkbox" data-session-pinned /> Закрепить вверху группы</label>
+          <label class="session-pin-field"><input type="checkbox" data-session-muted /> Без звука для этой сессии</label>
+          <p class="notification-hint">Сигналы неактивной вкладки подсвечиваются даже без звука.</p>
         </div>
         <div class="confirmation-actions">
           <button type="submit" class="paste-confirm">Сохранить</button>

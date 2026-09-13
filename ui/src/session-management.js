@@ -11,7 +11,8 @@ export function sessionMetadata(record) {
     group: typeof record.group === "string" ? record.group.trim().slice(0, 80) : "",
     color: Object.hasOwn(SESSION_COLORS, record.color) ? record.color : "",
     pinned: record.pinned === true,
-    hidden: record.hidden === true
+    hidden: record.hidden === true,
+    muted: record.muted === true
   };
 }
 
@@ -38,6 +39,7 @@ export function createSessionOptions({ dialog, getSessions, onSave, onHide, rest
   const group = dialog.querySelector("[data-session-group]");
   const colors = dialog.querySelector("[data-session-color]");
   const pinned = dialog.querySelector("[data-session-pinned]");
+  const muted = dialog.querySelector("[data-session-muted]");
   const hide = dialog.querySelector("[data-session-hide]");
   const suggestions = dialog.querySelector("datalist");
   let pending = null;
@@ -52,7 +54,8 @@ export function createSessionOptions({ dialog, getSessions, onSave, onHide, rest
     pending = null;
     if (dialog.open) dialog.close();
     if (getSessions().includes(tab) && action !== "cancel") {
-      onSave(tab, sessionMetadata({ group: group.value, color: colors.value, pinned: pinned.checked, hidden: tab.hidden }), action);
+      onSave(tab, sessionMetadata({ group: group.value, color: colors.value, pinned: pinned.checked,
+        hidden: tab.hidden, muted: muted.checked }), action);
       if (action === "hide") onHide(tab);
     }
     restoreFocus();
@@ -74,6 +77,7 @@ export function createSessionOptions({ dialog, getSessions, onSave, onHide, rest
       group.value = tab.group || "";
       colors.value = tab.color || "";
       pinned.checked = Boolean(tab.pinned);
+      muted.checked = Boolean(tab.muted);
       hide.hidden = Boolean(tab.hidden);
       hide.textContent = tab.exited ? "Сохранить и скрыть" : "Скрыть, оставив работать";
       suggestions.replaceChildren(...[...new Set(getSessions().map((item) => item.group).filter(Boolean))]

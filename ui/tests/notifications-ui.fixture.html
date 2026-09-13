@@ -1,0 +1,157 @@
+<!doctype html>
+<meta charset="utf-8">
+<style>html, body { margin: 0; height: 100%; } iframe { width: 100%; height: 100%; border: 0; display: block; }</style>
+<script type="module">
+  const source = await (await fetch("/app/index.html")).text();
+  const results = [];
+  const delay = (ms = 100) => new Promise((resolve) => setTimeout(resolve, ms));
+  function equal(actual, expected) {
+    if (JSON.stringify(actual) !== JSON.stringify(expected)) throw new Error(`Expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
+  }
+  const records = [
+    { id: "active", title: "PowerShell", active: true },
+    { id: "background", title: "Сборка проекта", color: "green" },
+    { id: "hidden", title: "Фоновый процесс", hidden: true },
+    { id: "muted", title: "Без звука", muted: true }
+  ];
+  async function setup(sessions = records, liveIds = sessions.map((tab) => tab.id)) {
+    const frame = document.createElement("iframe");
+    const init = { sessions, liveIds, cwdTrackingSupported: true };
+    frame.srcdoc = source.replace("<head>", `<head><base href="${location.origin}/app/"><script>window.testInit = ${JSON.stringify(init).replaceAll("<", "\\u003c")};<\/script><script src="/tests/search-host.js"><\/script>`);
+    const loaded = new Promise((resolve) => frame.addEventListener("load", resolve, { once: true }));
+    document.body.append(frame);
+    await loaded;
+    await delay();
+    const app = frame.contentWindow, doc = frame.contentDocument;
+    return {
+      frame, app, doc,
+      row: (id) => doc.querySelector(`.tab[data-id="${id}"]`),
+      write: (id, data, replay = false) => app.sendHost({ type: "data", id, data, replay }),
+      messages: (type) => app.hostMessages.filter((m) => m.type === type),
+      saved: () => { app.terminalvFlush(); return app.hostMessages.filter((m) => m.type === "persist-sessions").at(-1).sessions; }
+    };
+  }
+  async function check(name, run, sessions, liveIds) {
+    document.body.dataset.testProgress = name;
+    const s = await setup(sessions, liveIds);
+    try {
+      await run(s);
+      equal(s.app.hostErrors, []);
+      equal(s.messages("write").length, 0);
+      results.push({ name, ok: true });
+    } catch (error) { results.push({ name, ok: false, error: error.stack }); }
+    finally { s.frame.remove(); }
+  }
+
+  await check("only inactive live sessions sound; repeated signals do not flood the bridge", async (s) => {
+    s.write("active", "\x07");
+    s.write("background", "\x07".repeat(100));
+    await delay();
+    equal(s.messages("bell").map((m) => m.id), ["background"]);
+    equal(s.row("active").classList.contains("has-attention"), false);
+    equal(s.row("background").classList.contains("has-attention"), true);
+    equal(s.row("background").querySelector(".tab-meta").textContent.startsWith("Сигнал"), true);
+    equal(s.row("background").style.getPropertyValue("--session-color"), "#4ade80");
+  });
+
+  await check("muting silences a session but keeps its visual signal until opening", async (s) => {
+    s.write("muted", "\x07");
+    await delay();
+    equal(s.messages("bell").length, 0);
+    equal(s.row("muted").classList.contains("has-attention"), true);
+    equal(s.row("muted").title.includes("без звука"), true);
+    s.row("muted").click();
+    equal(s.row("muted").classList.contains("has-attention"), false);
+    s.write("muted", "\x07");
+    await delay();
+    equal(s.messages("bell").length, 0);
+  });
+
+  await check("hidden signals are discoverable without revealing or restarting the session", async (s) => {
+    const toggle = s.doc.getElementById("hidden-sessions");
+    s.write("hidden", "\x07");
+    await delay();
+    equal(toggle.classList.contains("has-attention"), true);
+    equal(toggle.title.includes("Сигналов: 1"), true);
+    equal(s.messages("bell").map((m) => m.id), ["hidden"]);
+    equal(s.doc.querySelector(".pane.active").dataset.id, "active");
+    toggle.click();
+    equal(s.row("hidden").classList.contains("has-attention"), true);
+    s.row("hidden").click();
+    equal(s.row("hidden").classList.contains("has-attention"), false);
+    equal(s.messages("create").length, 0);
+  });
+
+  await check("mute selection cancels safely, persists and restores for the same session", async (s) => {
+    const options = s.doc.getElementById("session-options");
+    const mute = options.querySelector("[data-session-muted]");
+    s.row("background").querySelector(".tab-options").click();
+    mute.checked = true;
+    options.querySelector("[data-session-cancel]").click();
+    equal(s.saved().find((tab) => tab.id === "background").muted, false);
+    s.row("background").querySelector(".tab-options").click();
+    mute.checked = true;
+    options.querySelector('[type="submit"]').click();
+    const saved = s.saved();
+    equal(saved.find((tab) => tab.id === "background").muted, true);
+    const restored = await setup(saved);
+    try {
+      restored.write("background", "\x07");
+      await delay();
+      equal(restored.messages("bell").length, 0);
+      equal(restored.row("background").classList.contains("has-attention"), true);
+      equal(restored.messages("create").length, 0);
+    } finally { restored.frame.remove(); }
+  });
+
+  await check("history is silent, yet the next live bell sounds even when both writes are queued together", async (s) => {
+    s.write("background", "CACHED\x07", true);
+    s.write("hidden", "CACHED\x07", true);
+    await delay();
+    equal(s.messages("bell").length, 0);
+    equal(s.row("background").classList.contains("has-attention"), false);
+    s.write("background", "CACHED\x07", true);
+    s.write("background", "LIVE\x07");
+    await delay();
+    equal(s.messages("bell").map((m) => m.id), ["background"]);
+    equal(s.saved().find((tab) => tab.id === "background").buffer.includes("CACHED"), true);
+  });
+
+  await check("saved screen BELs cannot notify when no process remains", async (s) => {
+    equal(s.messages("bell").length, 0);
+    equal(s.row("saved").classList.contains("has-attention"), false);
+    equal(s.messages("create").length, 0);
+  }, [{ id: "saved", title: "Сохранённая сессия", hidden: true, buffer: "OLD\x07" }], []);
+
+  await check("signals preserve search focus; exit and unknown-session data do not notify", async (s) => {
+    s.doc.getElementById("search-btn").click();
+    const input = s.doc.querySelector("[data-search-input]");
+    input.focus();
+    s.write("background", "\x07");
+    await delay();
+    equal(s.doc.activeElement === input, true);
+    equal(s.messages("bell").length, 1);
+    s.app.sendHost({ type: "exit", id: "muted", code: 0 });
+    s.write("muted", "\x07");
+    s.write("unknown", "\x07");
+    await delay();
+    equal(s.row("muted").classList.contains("has-attention"), false);
+    equal(s.messages("bell").length, 1);
+  });
+
+  await check("OSC metadata and normal output are not mistaken for a notification", async (s) => {
+    s.write("background", "\x1b]0;new title\x07\x1b]9;9;\"C:\\Project\"\x07\r\nDone\r\n");
+    await delay();
+    equal(s.messages("bell").length, 0);
+    equal(s.row("background").classList.contains("has-attention"), false);
+  });
+
+  if (new URL(location.href).searchParams.has("preview")) {
+    const s = await setup();
+    s.write("background", "\x07");
+    s.write("hidden", "\x07");
+    s.write("muted", "\x07");
+    await delay();
+  }
+  document.body.dataset.testResult = btoa(unescape(encodeURIComponent(JSON.stringify(results))));
+</script>
