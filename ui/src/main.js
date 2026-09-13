@@ -36,7 +36,7 @@ let activeId = null;
 let shellName = "PowerShell";
 let buildNumber = 22621;
 let nextIndex = 1;
-let appVersion = "0.4.11";
+let appVersion = "0.4.12";
 let updateSupported = false;
 let persistTimer = 0;
 let fitTimer = 0;
@@ -553,6 +553,13 @@ function readClipboard() {
   );
 }
 
+function pasteText(tab, text) {
+  if (text) {
+    // Let xterm normalize line endings and apply bracketed paste mode.
+    tab.term.paste(text);
+  }
+}
+
 function isZoomEvent(event) {
   if (!(event.ctrlKey || event.metaKey) || event.altKey) {
     return false;
@@ -602,11 +609,7 @@ function attachCopyPaste(tab) {
         return false;
       }
       if ((key === "v" || event.code === "KeyV") && !event.shiftKey) {
-        readClipboard().then((text) => {
-          if (text) {
-            post({ type: "write", id: tab.id, data: text });
-          }
-        });
+        readClipboard().then((text) => pasteText(tab, text));
         return false;
       }
       if (event.shiftKey && key === "c") {
@@ -614,11 +617,7 @@ function attachCopyPaste(tab) {
         return false;
       }
       if (event.shiftKey && (key === "v" || event.code === "KeyV")) {
-        readClipboard().then((text) => {
-          if (text) {
-            post({ type: "write", id: tab.id, data: text });
-          }
-        });
+        readClipboard().then((text) => pasteText(tab, text));
         return false;
       }
     }
@@ -632,11 +631,7 @@ function attachCopyPaste(tab) {
       tab.term.clearSelection();
       return;
     }
-    readClipboard().then((text) => {
-      if (text) {
-        post({ type: "write", id: tab.id, data: text });
-      }
-    });
+    readClipboard().then((text) => pasteText(tab, text));
   });
 }
 
