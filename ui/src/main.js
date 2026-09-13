@@ -11,6 +11,7 @@ import { getPlainSelection } from "./selection.js";
 import { createPasteController } from "./paste-confirmation.js";
 import { createCloseConfirmation } from "./close-confirmation.js";
 import { createTerminalSearch, isSearchShortcut, SEARCH_HIGHLIGHT_LIMIT } from "./terminal-search.js";
+import { createSessionOptions, sessionMetadata, sessionGroups, SESSION_COLORS } from "./session-management.js";
 
 const tabsEl = document.getElementById("tabs");
 const panesEl = document.getElementById("panes");
@@ -36,6 +37,9 @@ const bgPick = document.getElementById("bg-pick");
 const bgClear = document.getElementById("bg-clear");
 const bgOpacityEl = document.getElementById("bg-opacity");
 const bgOpacityValue = document.getElementById("bg-opacity-value");
+const sessionFilter = document.getElementById("session-filter");
+const hiddenSessionsBtn = document.getElementById("hidden-sessions");
+let showHiddenSessions = false;
 
 const tabs = [];
 let activeId = null;
@@ -64,7 +68,7 @@ const settings = {
 const pasteController = createPasteController({
   dialog: document.getElementById("paste-confirmation"),
   readClipboard,
-  canPaste: (tab) => tabs.includes(tab) && tab.id === activeId && !tab.exited && !closeController.isOpen,
+  canPaste: (tab) => tabs.includes(tab) && tab.id === activeId && !tab.exited && !closeController.isOpen && !sessionOptions.isOpen,
   restoreFocus: () => currentTab()?.term.focus()
 });
 
@@ -88,9 +92,92 @@ const closeController = createCloseConfirmation({
   }
 });
 
+const sessionOptions = createSessionOptions({
+  dialog: document.getElementById("session-options"),
+  getSessions: () => tabs,
+  onSave: (tab, values, action) => {
+    Object.assign(tab, values);
+    if (action !== "hide") { renderTabs(); persistSessions(); }
+  },
+  onHide: hideTab,
+  restoreFocus: () => {
+    const tab = currentTab();
+    if (tab) tab.term.focus();
+    else (tabsEl.querySelector(".tab") || emptyNewBtn).focus();
+  }
+});
+
 function isModalOpen() {
-  return pasteController.isOpen || closeController.isOpen;
+  return pasteController.isOpen || closeController.isOpen || sessionOptions.isOpen;
 }
+
+function openTabs() {
+  return sessionGroups(tabs).flatMap((group) => group.tabs);
+}
+
+function showSessionOptions(tab) {
+  if (isModalOpen() || !settingsEl.classList.contains("hidden")) return;
+  pasteController.cancel(currentTab());
+  searchController.close({ focus: false });
+  sessionOptions.open(tab);
+}
+
+function revealTab(tab) {
+  if (isModalOpen()) return;
+  tab.hidden = false;
+  showHiddenSessions = false;
+  sessionFilter.value = "";
+  renderTabs();
+  activate(tab.id);
+  // A hidden terminal was not fitted to the window. Ask a live TUI to redraw
+  // only once it is visible, including when the target size happens to match.
+  window.setTimeout(() => { if (activeId === tab.id) pulseResize(tab); }, 100);
+  persistSessions();
+}
+
+function hideTab(tab) {
+  if (!tabs.includes(tab) || tab.hidden) return;
+  const ordered = openTabs();
+  const index = ordered.indexOf(tab);
+  closeController.cancel(tab);
+  pasteController.cancel(tab);
+  tab.hidden = true;
+  tab.renaming = false;
+  dropWebgl(tab);
+  if (tab.id === activeId) {
+    searchController.close({ focus: false });
+    tab.pane.classList.remove("active");
+    activeId = null;
+    const next = ordered[index + 1] || ordered[index - 1];
+    if (next) activate(next.id);
+  }
+  if (!openTabs().length) showHiddenSessions = true;
+  renderCwdNotice();
+  renderTabs();
+  // Persist all sessions, including hidden ones. No kill, create or PTY input.
+  persistSessions();
+}
+
+sessionFilter.addEventListener("input", renderTabs);
+sessionFilter.addEventListener("keydown", (event) => {
+  event.stopPropagation();
+  if (event.isComposing) return;
+  if (event.key === "Escape") {
+    event.preventDefault();
+    sessionFilter.value = "";
+    renderTabs();
+    currentTab()?.term.focus();
+  } else if (event.key === "Enter") {
+    event.preventDefault();
+    const first = sessionGroups(tabs, { hidden: showHiddenSessions, query: sessionFilter.value })[0]?.tabs[0];
+    if (first) revealTab(first);
+  }
+});
+hiddenSessionsBtn.addEventListener("click", () => {
+  if (isModalOpen()) return;
+  showHiddenSessions = !showHiddenSessions;
+  renderTabs();
+});
 
 function host() {
   return window.chrome?.webview ?? null;
@@ -197,6 +284,7 @@ function syncScrollLock(tab) {
 }
 
 function pulseResize(tab) {
+  if (tab.hidden || tab.exited || !tabs.includes(tab)) return;
   const cols = tab.term.cols;
   const rows = tab.term.rows;
   if (cols < 10 || rows < 4) {
@@ -204,6 +292,7 @@ function pulseResize(tab) {
   }
   post({ type: "resize", id: tab.id, cols: cols - 1, rows });
   window.setTimeout(() => {
+    if (tab.exited || !tabs.includes(tab)) return;
     post({ type: "resize", id: tab.id, cols, rows });
     tab.term.refresh(0, Math.max(0, tab.term.rows - 1));
   }, 40);
@@ -302,7 +391,11 @@ function persistSessions() {
     sortOrder: index,
     active: tab.id === activeId,
     buffer: serializeTab(tab),
-    cwd: tab.cwd || null
+    cwd: tab.cwd || null,
+    group: tab.group || null,
+    color: tab.color || null,
+    pinned: tab.pinned,
+    hidden: tab.hidden
   }));
   post({ type: "persist-sessions", sessions: payload });
 }
@@ -321,112 +414,165 @@ window.terminalvFlush = () => {
 
 function renderTabs() {
   tabsEl.replaceChildren();
-  for (const tab of tabs) {
-    const row = document.createElement("div");
-    row.className = `tab${tab.id === activeId ? " active" : ""}${tab.unread ? " unread" : ""}`;
-    row.draggable = !tab.renaming;
-    row.dataset.id = tab.id;
-    row.setAttribute("role", "tab");
-    row.setAttribute("aria-selected", String(tab.id === activeId));
-    row.title = tab.customTitle || tab.title;
+  const hiddenCount = tabs.filter((tab) => tab.hidden).length;
+  hiddenSessionsBtn.textContent = showHiddenSessions ? `Открытые · ${tabs.length - hiddenCount}` : `Скрытые · ${hiddenCount}`;
+  hiddenSessionsBtn.setAttribute("aria-pressed", String(showHiddenSessions));
+  hiddenSessionsBtn.title = showHiddenSessions ? "Показать открытые сессии" : "Показать скрытые сессии";
+  tabsEl.setAttribute("aria-label", showHiddenSessions ? "Скрытые сессии" : "Открытые сессии");
+  tabsEl.setAttribute("role", showHiddenSessions ? "group" : "tablist");
+  const groups = sessionGroups(tabs, { hidden: showHiddenSessions, query: sessionFilter.value });
+  const hasGroups = groups.some((group) => group.name);
+  for (const group of groups) {
+    if (hasGroups) {
+      const heading = document.createElement("div");
+      heading.className = "session-group";
+      heading.textContent = `${group.name || "Без группы"} · ${group.tabs.length}`;
+      heading.title = group.name || "Без группы";
+      tabsEl.append(heading);
+    }
+    for (const tab of group.tabs) {
+      const row = document.createElement("div");
+      row.className = `tab${tab.id === activeId ? " active" : ""}${tab.unread ? " unread" : ""}`;
+      row.draggable = !tab.renaming && !tab.hidden;
+      row.tabIndex = 0;
+      row.dataset.id = tab.id;
+      row.setAttribute("role", tab.hidden ? "button" : "tab");
+      if (!tab.hidden) row.setAttribute("aria-selected", String(tab.id === activeId));
+      row.title = tab.customTitle || tab.title;
+      row.classList.toggle("pinned", tab.pinned);
+      if (tab.color) row.style.setProperty("--session-color", SESSION_COLORS[tab.color].value);
 
-    const accent = document.createElement("span");
-    accent.className = "tab-accent";
+      const accent = document.createElement("span");
+      accent.className = "tab-accent";
 
-    const body = document.createElement("div");
-    body.className = "tab-body";
+      const body = document.createElement("div");
+      body.className = "tab-body";
 
-    if (tab.renaming) {
-      const input = document.createElement("input");
-      input.className = "tab-rename";
-      input.value = tab.customTitle || tab.title;
-      input.addEventListener("click", (event) => event.stopPropagation());
-      input.addEventListener("keydown", (event) => {
-        if (event.key === "Enter") {
-          finishRename(tab, input.value);
-        } else if (event.key === "Escape") {
-          tab.renaming = false;
-          renderTabs();
+      if (tab.renaming) {
+        const input = document.createElement("input");
+        input.className = "tab-rename";
+        input.value = tab.customTitle || tab.title;
+        input.addEventListener("click", (event) => event.stopPropagation());
+        input.addEventListener("keydown", (event) => {
+          if (event.key === "Enter") {
+            finishRename(tab, input.value);
+          } else if (event.key === "Escape") {
+            tab.renaming = false;
+            renderTabs();
+          }
+        });
+        input.addEventListener("blur", () => finishRename(tab, input.value));
+        body.append(input);
+        queueMicrotask(() => {
+          input.focus();
+          input.select();
+        });
+      } else {
+        const title = document.createElement("div");
+        title.className = "tab-title";
+        title.textContent = tab.customTitle || tab.title;
+        body.append(title);
+      }
+
+      const meta = document.createElement("div");
+      meta.className = "tab-meta";
+      meta.textContent = `${tab.pinned ? "★ · " : ""}${tab.exited ? "завершена" : shellName}`;
+      body.append(meta);
+
+      const options = document.createElement("button");
+      options.className = "tab-options";
+      options.type = "button";
+      options.textContent = "⋯";
+      options.title = "Группа, цвет, закрепление и скрытие";
+      options.setAttribute("aria-label", "Управление сессией");
+      options.addEventListener("click", (event) => { event.stopPropagation(); showSessionOptions(tab); });
+      options.addEventListener("dblclick", (event) => event.stopPropagation());
+
+      const close = document.createElement("button");
+      close.className = "tab-close";
+      close.type = "button";
+      close.title = tab.hidden ? "Вернуть сессию" : "Закрыть";
+      close.setAttribute("aria-label", close.title);
+      close.textContent = tab.hidden ? "↩" : "×";
+      close.addEventListener("click", (event) => {
+        event.stopPropagation();
+        if (tab.hidden) revealTab(tab);
+        else closeTab(tab.id);
+      });
+
+      close.addEventListener("dblclick", (event) => event.stopPropagation());
+      row.append(accent, body, options, close);
+      row.addEventListener("click", () => { if (tab.hidden) revealTab(tab); else activate(tab.id); });
+      row.addEventListener("contextmenu", (event) => { event.preventDefault(); showSessionOptions(tab); });
+      row.addEventListener("keydown", (event) => {
+        if (event.target !== row || event.isComposing) return;
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          if (tab.hidden) revealTab(tab); else activate(tab.id);
+        } else if (event.key === "F10" && event.shiftKey) {
+          event.preventDefault();
+          showSessionOptions(tab);
         }
       });
-      input.addEventListener("blur", () => finishRename(tab, input.value));
-      body.append(input);
-      queueMicrotask(() => {
-        input.focus();
-        input.select();
-      });
-    } else {
-      const title = document.createElement("div");
-      title.className = "tab-title";
-      title.textContent = tab.customTitle || tab.title;
-      body.append(title);
-    }
-
-    const meta = document.createElement("div");
-    meta.className = "tab-meta";
-    meta.textContent = tab.exited ? "завершена" : shellName;
-    body.append(meta);
-
-    const close = document.createElement("button");
-    close.className = "tab-close";
-    close.type = "button";
-    close.title = "Закрыть";
-    close.textContent = "×";
-    close.addEventListener("click", (event) => {
-      event.stopPropagation();
-      closeTab(tab.id);
-    });
-
-    row.append(accent, body, close);
-    row.addEventListener("click", () => activate(tab.id));
-    row.addEventListener("dblclick", (event) => {
-      event.preventDefault();
-      tab.renaming = true;
-      renderTabs();
-    });
-    row.addEventListener("auxclick", (event) => {
-      if (event.button === 1) {
+      row.addEventListener("dblclick", (event) => {
         event.preventDefault();
-        closeTab(tab.id);
-      }
-    });
-    row.addEventListener("dragstart", (event) => {
-      draggedTabId = tab.id;
-      row.classList.add("dragging");
-      event.dataTransfer.effectAllowed = "move";
-      event.dataTransfer.setData("text/plain", tab.id);
-    });
-    row.addEventListener("dragover", (event) => {
-      if (!draggedTabId || draggedTabId === tab.id) {
-        return;
-      }
-      event.preventDefault();
-      event.dataTransfer.dropEffect = "move";
-      clearTabDropIndicators();
-      row.classList.add(event.clientY < row.getBoundingClientRect().top + row.offsetHeight / 2
-        ? "drag-over-before"
-        : "drag-over-after");
-    });
-    row.addEventListener("dragleave", () => {
-      row.classList.remove("drag-over-before", "drag-over-after");
-    });
-    row.addEventListener("drop", (event) => {
-      event.preventDefault();
-      if (!draggedTabId || draggedTabId === tab.id) {
-        return;
-      }
-      const before = event.clientY < row.getBoundingClientRect().top + row.offsetHeight / 2;
-      moveTab(draggedTabId, tab.id, before);
-    });
-    row.addEventListener("dragend", () => {
-      draggedTabId = null;
-      clearTabDropIndicators();
-      row.classList.remove("dragging");
-    });
-    tabsEl.append(row);
+        if (tab.hidden || isModalOpen()) return;
+        tab.renaming = true;
+        renderTabs();
+      });
+      row.addEventListener("auxclick", (event) => {
+        if (event.button === 1 && !tab.hidden) {
+          event.preventDefault();
+          closeTab(tab.id);
+        }
+      });
+      row.addEventListener("dragstart", (event) => {
+        draggedTabId = tab.id;
+        row.classList.add("dragging");
+        event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.setData("text/plain", tab.id);
+      });
+      row.addEventListener("dragover", (event) => {
+        if (tab.hidden || !draggedTabId || draggedTabId === tab.id) {
+          return;
+        }
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "move";
+        clearTabDropIndicators();
+        row.classList.add(event.clientY < row.getBoundingClientRect().top + row.offsetHeight / 2
+          ? "drag-over-before"
+          : "drag-over-after");
+      });
+      row.addEventListener("dragleave", () => {
+        row.classList.remove("drag-over-before", "drag-over-after");
+      });
+      row.addEventListener("drop", (event) => {
+        event.preventDefault();
+        if (!draggedTabId || draggedTabId === tab.id) {
+          return;
+        }
+        const before = event.clientY < row.getBoundingClientRect().top + row.offsetHeight / 2;
+        moveTab(draggedTabId, tab.id, before);
+      });
+      row.addEventListener("dragend", () => {
+        draggedTabId = null;
+        clearTabDropIndicators();
+        row.classList.remove("dragging");
+      });
+      tabsEl.append(row);
+    }
   }
 
-  emptyEl.classList.toggle("hidden", tabs.length > 0);
+  if (!groups.length) {
+    const empty = document.createElement("div");
+    empty.className = "session-list-empty";
+    empty.textContent = sessionFilter.value.trim() ? "Сессии не найдены" : showHiddenSessions ? "Нет скрытых сессий" : "Нет открытых сессий";
+    tabsEl.append(empty);
+  }
+  emptyEl.classList.toggle("hidden", openTabs().length > 0);
+  emptyEl.querySelector(".empty-sub").textContent = hiddenCount
+    ? "Скрытые сессии доступны в списке слева. Верните нужную или создайте новую."
+    : "Вертикальные вкладки слева, PowerShell внутри.";
 }
 
 function clearTabDropIndicators() {
@@ -443,6 +589,11 @@ function moveTab(sourceId, targetId, before) {
   }
 
   const [source] = tabs.splice(sourceIndex, 1);
+  const target = tabs.find((tab) => tab.id === targetId);
+  // Dropping into another group also adopts its pinned lane, so visual and
+  // stored order agree. Metadata can always be changed in the session dialog.
+  source.group = target.group;
+  source.pinned = target.pinned;
   let insertIndex = tabs.findIndex((tab) => tab.id === targetId);
   if (!before) {
     insertIndex += 1;
@@ -491,11 +642,12 @@ function ensureWebgl(tab) {
 function patchTabRow(tab) {
   const row = tabsEl.querySelector(`[data-id="${CSS.escape(tab.id)}"]`);
   if (!row) {
-    renderTabs();
     return;
   }
 
   row.classList.toggle("active", tab.id === activeId);
+  if (!tab.hidden) row.setAttribute("aria-selected", String(tab.id === activeId));
+  row.title = tab.customTitle || tab.title;
   row.classList.toggle("unread", Boolean(tab.unread));
   const title = row.querySelector(".tab-title");
   if (title && !tab.renaming) {
@@ -503,17 +655,18 @@ function patchTabRow(tab) {
   }
   const meta = row.querySelector(".tab-meta");
   if (meta) {
-    meta.textContent = tab.exited ? "завершена" : shellName;
+    meta.textContent = `${tab.pinned ? "★ · " : ""}${tab.exited ? "завершена" : shellName}`;
   }
 }
 
 function activate(id) {
   const tab = tabs.find((item) => item.id === id);
-  if (!tab) {
+  if (!tab || tab.hidden) {
     return;
   }
 
   if (activeId !== id) {
+    sessionOptions.cancel();
     closeController.cancel();
     searchController.close({ focus: false });
     pasteController.cancel(currentTab());
@@ -553,6 +706,9 @@ function removeTab(tab) {
   }
 
   const closingActive = activeId === tab.id;
+  const ordered = openTabs();
+  const visibleIndex = ordered.indexOf(tab);
+  sessionOptions.cancel(tab);
   if (closingActive) searchController.close({ focus: false });
   tabs.splice(index, 1);
   pasteController.cancel(tab);
@@ -566,7 +722,7 @@ function removeTab(tab) {
   tab.pane.remove();
 
   if (closingActive) {
-    const next = tabs[index] || tabs[index - 1] || null;
+    const next = ordered[visibleIndex + 1] || ordered[visibleIndex - 1] || null;
     activeId = next?.id ?? null;
     renderCwdNotice();
     renderTabs();
@@ -721,6 +877,7 @@ function newTab(options = {}) {
   // Restored tabs explicitly carry their own cwd (possibly null). Only a fresh
   // tab inherits the active session, never a title or another restored tab.
   const cwd = Object.hasOwn(options, "cwd") ? options.cwd : currentTab()?.cwd;
+  const metadata = sessionMetadata({ ...options, group: Object.hasOwn(options, "group") ? options.group : currentTab()?.group });
   const id = options.id || uuid();
   const index = options.title ? nextIndex : nextIndex++;
   const pane = document.createElement("div");
@@ -768,6 +925,7 @@ function newTab(options = {}) {
   }
 
   const tab = {
+    ...metadata,
     id,
     title: options.title || `Сессия ${index}`,
     customTitle: options.customTitle || undefined,
@@ -798,7 +956,8 @@ function newTab(options = {}) {
       return;
     }
     tab.title = cleaned;
-    patchTabRow(tab);
+    if (sessionFilter.value) renderTabs();
+    else patchTabRow(tab);
     schedulePersist();
   });
   attachCopyPaste(tab);
@@ -851,7 +1010,7 @@ function newTab(options = {}) {
   observer.observe(hostEl);
 
   tabs.push(tab);
-  if (!options.skipActivate) {
+  if (!options.skipActivate && !tab.hidden) {
     ensureWebgl(tab);
   }
   const cols = term.cols || 80;
@@ -859,6 +1018,12 @@ function newTab(options = {}) {
   if (options.live) {
     post({ type: "attach", id });
     window.setTimeout(() => pulseResize(tab), 300);
+  } else if (tab.hidden) {
+    // The shell is gone (e.g. Windows restarted). Keep the saved screen, but
+    // never silently start a new process for a hidden session.
+    tab.exited = true;
+    tab.overlayText.textContent = "Сессия не запущена. Сохранённый вывод доступен; запуск — кнопкой ниже.";
+    tab.overlay.classList.add("visible");
   } else {
     const createMsg = { type: "create", id, cols, rows, cwd: cwd || undefined };
     if (!options.skipActivate) {
@@ -868,12 +1033,16 @@ function newTab(options = {}) {
     }
     post(createMsg);
   }
-  if (!options.skipActivate) {
+  if (!options.skipActivate && !tab.hidden) {
+    showHiddenSessions = false;
+    sessionFilter.value = "";
+    renderTabs();
     activate(id);
   }
 }
 
 function restart(tab) {
+  sessionOptions.cancel(tab);
   closeController.cancel(tab);
   if (tab.id === activeId) searchController.close({ focus: false });
   pasteController.cancel(tab);
@@ -1020,18 +1189,22 @@ function restoreSessions(records) {
       id: record.id,
       title: record.title,
       customTitle: record.customTitle,
+      ...sessionMetadata(record),
       buffer: isLive ? undefined : record.buffer,
       cwd: record.cwd,
       live: isLive,
       skipActivate: true
     });
-    if (record.active) {
+    if (record.active && !record.hidden) {
       active = record.id;
     }
   }
   nextIndex = tabs.length + 1;
   readyForPersist = true;
-  activate(active || tabs[0].id);
+  const firstOpen = openTabs()[0];
+  showHiddenSessions = !firstOpen;
+  renderTabs();
+  if (firstOpen) activate(active || firstOpen.id);
   persistSessions();
 }
 
@@ -1124,6 +1297,7 @@ function handleHost(message) {
   }
 
   if (message.type === "exit") {
+    sessionOptions.cancel(tab);
     tab.tuiHint = false;
     tab.exited = true;
     closeController.cancel(tab);
@@ -1136,6 +1310,7 @@ function handleHost(message) {
   }
 
   if (message.type === "error") {
+    sessionOptions.cancel(tab);
     tab.exited = true;
     closeController.cancel(tab);
     pasteController.cancel(tab);
@@ -1189,7 +1364,7 @@ bgOpacityEl.addEventListener("change", persistSettings);
 window.addEventListener(
   "keydown",
   (event) => {
-    if (isModalOpen()) {
+    if (isModalOpen() || event.target === sessionFilter) {
       return;
     }
     if (settingsEl.classList.contains("hidden")) {
@@ -1246,20 +1421,27 @@ window.addEventListener(
     }
     if (event.ctrlKey && event.key === "Tab") {
       event.preventDefault();
-      if (tabs.length < 2) {
+      const visible = openTabs();
+      if (visible.length < 2) {
         return;
       }
-      const index = tabs.findIndex((tab) => tab.id === activeId);
+      const index = visible.findIndex((tab) => tab.id === activeId);
       const next = event.shiftKey
-        ? tabs[(index - 1 + tabs.length) % tabs.length]
-        : tabs[(index + 1) % tabs.length];
+        ? visible[(index - 1 + visible.length) % visible.length]
+        : visible[(index + 1) % visible.length];
+      showHiddenSessions = false;
+      sessionFilter.value = "";
+      renderTabs();
       activate(next.id);
       return;
     }
     if (event.altKey && event.key >= "1" && event.key <= "9") {
       event.preventDefault();
-      const tab = tabs[Number(event.key) - 1];
+      const tab = openTabs()[Number(event.key) - 1];
       if (tab) {
+        showHiddenSessions = false;
+        sessionFilter.value = "";
+        renderTabs();
         activate(tab.id);
       }
     }
@@ -1270,7 +1452,7 @@ window.addEventListener(
 window.addEventListener(
   "wheel",
   (event) => {
-    if (isModalOpen() || searchController.contains(event.target)) {
+    if (isModalOpen() || searchController.contains(event.target) || event.target === sessionFilter) {
       return;
     }
     if (!(event.ctrlKey || event.metaKey)) {

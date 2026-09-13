@@ -172,6 +172,10 @@ internal sealed class SessionClient : IDisposable
                     {
                         Error?.Invoke(id, errorEl.GetString() ?? "");
                     }
+                    else if (type == "missing" && id is not null)
+                    {
+                        Error?.Invoke(id, "Сессия завершилась до подключения. Для нового запуска нажмите «Перезапустить».");
+                    }
                 }
             }
         }

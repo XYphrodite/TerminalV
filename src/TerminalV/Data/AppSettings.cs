@@ -20,4 +20,8 @@ internal sealed class SessionRecord
     public bool Active { get; set; }
     public string? Buffer { get; set; }
     public string? Cwd { get; set; }
+    public string? Group { get; set; }
+    public string? Color { get; set; }
+    public bool Pinned { get; set; }
+    public bool Hidden { get; set; }
 }

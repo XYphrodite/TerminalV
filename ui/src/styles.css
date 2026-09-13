@@ -96,6 +96,7 @@ body,
 
 .tabs {
   flex: 1;
+  min-height: 0;
   overflow: auto;
   padding: 8px 8px;
   display: flex;
@@ -140,9 +141,9 @@ body,
 .tab {
   position: relative;
   display: grid;
-  grid-template-columns: 4px 1fr auto;
+  grid-template-columns: 4px minmax(0, 1fr) auto auto;
   align-items: center;
-  gap: 10px;
+  gap: 6px;
   min-height: 48px;
   padding: 8px 8px 8px 0;
   border-radius: 8px;
@@ -186,15 +187,16 @@ body,
   width: 4px;
   height: 28px;
   border-radius: 0 4px 4px 0;
-  background: transparent;
+  background: var(--session-color, transparent);
 }
 
 .tab.active .tab-accent {
-  background: var(--accent);
+  background: var(--session-color, var(--accent));
 }
 
 .tab.unread:not(.active) .tab-accent {
-  background: var(--accent-dim);
+  background: var(--session-color, var(--accent-dim));
+  box-shadow: 0 0 0 1px var(--accent-dim);
 }
 
 .tab-body {
@@ -233,7 +235,8 @@ body,
   text-overflow: ellipsis;
 }
 
-.tab-close {
+.tab-close,
+.tab-options {
   width: 22px;
   height: 22px;
   border: 0;
@@ -247,7 +250,11 @@ body,
 }
 
 .tab:hover .tab-close,
-.tab.active .tab-close {
+.tab.active .tab-close,
+.tab:hover .tab-options,
+.tab.active .tab-options,
+.tab:focus-within .tab-options,
+.tab:focus-within .tab-close {
   opacity: 1;
 }
 
@@ -259,6 +266,10 @@ body,
 #app.collapsed .sessions-label,
 #app.collapsed .tab-body,
 #app.collapsed .tab-close,
+#app.collapsed .tab-options,
+#app.collapsed .session-group,
+#app.collapsed .session-tools,
+#app.collapsed .session-list-empty,
 #app.collapsed .new-tab-label,
 #app.collapsed .hint,
 #app.collapsed .version,
@@ -296,6 +307,43 @@ body,
   padding: 10px;
   border-top: 1px solid var(--sidebar-edge);
 }
+
+.session-tools {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 8px 0;
+}
+
+#session-filter,
+#session-group {
+  width: 100%;
+  min-width: 0;
+  height: 32px;
+  border: 1px solid var(--sidebar-edge);
+  border-radius: 6px;
+  padding: 4px 8px;
+  background: var(--bg);
+  color: var(--text);
+  font: 13px var(--font-ui);
+}
+
+.session-group {
+  flex-shrink: 0;
+  color: var(--muted);
+  font: 600 11px var(--font-ui);
+  padding: 8px 4px 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-list-empty { padding: 12px 4px; font-size: 12px; color: var(--muted); }
+.session-pin-field { display: flex; align-items: center; gap: 8px; margin-top: 16px; }
+.session-hide[hidden] { display: none; }
+.tab-options:hover { background: var(--tab-hover); color: var(--text); }
+.tab:focus-visible, .session-tools :focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.tab { flex-shrink: 0; }
 
 #new-tab,
 #empty-new {

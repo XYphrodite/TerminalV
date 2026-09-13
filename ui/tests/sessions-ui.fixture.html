@@ -1,0 +1,254 @@
+<!doctype html>
+<meta charset="utf-8">
+<style>html, body { margin: 0; height: 100%; } iframe { width: 100%; height: 100%; border: 0; display: block; }</style>
+<script type="module">
+  const source = await (await fetch("/app/index.html")).text();
+  const results = [];
+  const delay = (ms = 100) => new Promise((resolve) => setTimeout(resolve, ms));
+  window.addEventListener("error", (event) => document.body.dataset.testError = event.message);
+  window.addEventListener("unhandledrejection", (event) => document.body.dataset.testError = String(event.reason));
+  function equal(actual, expected) {
+    if (JSON.stringify(actual) !== JSON.stringify(expected)) throw new Error(`Expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
+  }
+  const defaults = [
+    { id: "first", title: "Muse — разработка", active: true, group: "TerminalV", cwd: "C:\\Project" },
+    { id: "second", title: "Сборка [dev]", group: "TerminalV", pinned: true, color: "blue" },
+    { id: "third", title: "Логи сервера", group: "Сервер" }
+  ];
+  async function setup(records = defaults, liveIds = records.map((record) => record.id)) {
+    const frame = document.createElement("iframe");
+    const init = { sessions: records, liveIds, cwdTrackingSupported: true };
+    frame.srcdoc = source.replace("<head>", `<head><base href="${location.origin}/app/"><script>window.testInit = ${JSON.stringify(init).replaceAll("<", "\\u003c")};<\/script><script src="/tests/search-host.js"><\/script>`);
+    const loaded = new Promise((resolve) => frame.addEventListener("load", resolve, { once: true }));
+    document.body.append(frame);
+    await loaded;
+    await delay();
+    const app = frame.contentWindow;
+    const doc = frame.contentDocument;
+    Object.defineProperty(app.navigator, "clipboard", {
+      configurable: true, value: { readText: async () => "", writeText: async () => {} }
+    });
+    const dialog = doc.getElementById("session-options");
+    const s = {
+      frame, app, doc, dialog,
+      filter: doc.getElementById("session-filter"),
+      toggle: doc.getElementById("hidden-sessions"),
+      group: dialog.querySelector("[data-session-group]"),
+      color: dialog.querySelector("[data-session-color]"),
+      pinned: dialog.querySelector("[data-session-pinned]"),
+      save: dialog.querySelector('[type="submit"]'),
+      cancel: dialog.querySelector("[data-session-cancel]"),
+      hide: dialog.querySelector("[data-session-hide]"),
+      row: (id) => doc.querySelector(`.tab[data-id="${id}"]`),
+      rows: () => [...doc.querySelectorAll(".tab")].map((row) => row.dataset.id),
+      pane: (id) => doc.querySelector(`.pane[data-id="${id}"]`),
+      activeId: () => doc.querySelector(".pane.active")?.dataset.id ?? null,
+      terminalInput: () => doc.querySelector(".pane.active .xterm-helper-textarea"),
+      messages: (type) => app.hostMessages.filter((message) => message.type === type),
+      records: () => { app.terminalvFlush(); return app.hostMessages.filter((m) => m.type === "persist-sessions").at(-1).sessions; },
+      key: (target, key, options = {}) => target.dispatchEvent(new app.KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...options }))
+    };
+    s.edit = (id) => s.row(id).querySelector(".tab-options").click();
+    s.query = (text) => { s.filter.focus(); s.filter.value = text; s.filter.dispatchEvent(new app.Event("input", { bubbles: true })); };
+    return s;
+  }
+  async function check(name, run, records, liveIds) {
+    document.body.dataset.testProgress = name;
+    const s = await setup(records, liveIds);
+    try {
+      await run(s);
+      equal(s.messages("write").length, 0);
+      equal(s.app.hostErrors, []);
+      results.push({ name, ok: true });
+    } catch (error) { results.push({ name, ok: false, error: error.stack }); }
+    finally { s.cancel.click(); s.frame.remove(); }
+  }
+
+  await check("groups, pins and colors restore in the sidebar without creating duplicate shells", (s) => {
+    equal(s.rows(), ["second", "first", "third"]);
+    equal([...s.doc.querySelectorAll(".session-group")].map((el) => el.textContent), ["TerminalV · 2", "Сервер · 1"]);
+    equal(s.row("second").style.getPropertyValue("--session-color"), "#60a5fa");
+    equal(s.row("second").classList.contains("pinned"), true);
+    equal(s.messages("attach").map((m) => m.id), ["first", "second", "third"]);
+    equal(s.messages("create").length, 0);
+    equal(s.activeId(), "first");
+  });
+
+  await check("editing is cancelable and saves group, color and pin atomically for the selected tab", (s) => {
+    s.edit("first");
+    equal(s.dialog.open, true);
+    s.group.value = "Не сохранять";
+    s.dialog.dispatchEvent(new s.app.Event("cancel", { cancelable: true }));
+    equal(s.records()[0].group, "TerminalV");
+    s.edit("first");
+    s.group.value = "  Новый проект  ";
+    s.color.value = "rose";
+    s.pinned.checked = true;
+    s.save.click();
+    equal(s.dialog.open, false);
+    const record = s.records().find((record) => record.id === "first");
+    equal([record.group, record.color, record.pinned], ["Новый проект", "rose", true]);
+    equal(s.records().find((record) => record.id === "third").group, "Сервер");
+  });
+
+  await check("hiding and revealing preserves the same terminal, screen and process identity", async (s) => {
+    s.app.sendHost({ type: "data", id: "first", data: "PRESERVED OUTPUT\r\n" });
+    await delay();
+    const pane = s.pane("first");
+    s.edit("first");
+    s.hide.click();
+    equal(s.activeId(), "third");
+    equal(s.row("first"), null);
+    equal(s.messages("kill").length, 0);
+    equal(s.messages("create").length, 0);
+    equal(s.records().find((record) => record.id === "first").hidden, true);
+    s.app.sendHost({ type: "data", id: "first", data: "HIDDEN OUTPUT\r\n" });
+    await delay();
+    s.toggle.click();
+    equal(s.rows(), ["first"]);
+    s.row("first").querySelector(".tab-close").click();
+    equal(s.activeId(), "first");
+    equal(s.pane("first") === pane, true);
+    equal(s.records().find((record) => record.id === "first").buffer.includes("HIDDEN OUTPUT"), true);
+    equal(s.messages("attach").length, 3);
+    equal(s.messages("create").length, 0);
+    equal(s.records().find((record) => record.id === "first").hidden, false);
+  });
+
+  await check("hiding inactive sessions and keyboard navigation skip hidden processes", (s) => {
+    s.edit("second"); s.hide.click();
+    equal(s.activeId(), "first");
+    s.key(s.terminalInput(), "Tab", { ctrlKey: true });
+    equal(s.activeId(), "third");
+    s.key(s.terminalInput(), "1", { altKey: true });
+    equal(s.activeId(), "first");
+    s.row("first").querySelector(".tab-close").click();
+    s.doc.querySelector("[data-close-confirm]").click();
+    equal(s.activeId(), "third");
+    equal(s.messages("kill").map((m) => m.id), ["first"]);
+    equal(s.records().some((record) => record.id === "second" && record.hidden), true);
+  });
+
+  await check("hiding every tab persists the full inventory and a new window reattaches without new shells", async (s) => {
+    for (const id of ["first", "second", "third"]) { s.edit(id); s.hide.click(); }
+    equal(s.activeId(), null);
+    equal(s.doc.getElementById("empty").classList.contains("hidden"), false);
+    const records = s.records();
+    equal(records.every((record) => record.hidden && !record.active), true);
+    equal(s.messages("create").length, 0);
+    const restored = await setup(records);
+    try {
+      equal(restored.activeId(), null);
+      equal(restored.messages("attach").length, 3);
+      equal(restored.messages("create").length, 0);
+      restored.row("first").click();
+      equal(restored.activeId(), "first");
+      equal(restored.messages("create").length, 0);
+    } finally { restored.frame.remove(); }
+  });
+
+  await check("missing hidden process keeps its screen and requires explicit restart", async (s) => {
+    equal(s.messages("create").length, 0);
+    equal(s.messages("attach").length, 0);
+    equal(s.activeId(), null);
+    s.row("saved").click();
+    equal(s.activeId(), "saved");
+    equal(s.messages("create").length, 0);
+    equal(s.pane("saved").querySelector(".overlay").classList.contains("visible"), true);
+    await delay();
+    equal(s.records()[0].buffer.includes("SAVED SCREEN"), true);
+    s.pane("saved").querySelector(".overlay button").click();
+    equal(s.messages("create").length, 1);
+    equal(s.messages("create")[0].cwd, "C:\\saved");
+  }, [{ id: "saved", title: "Старая сессия", hidden: true, active: true, cwd: "C:\\saved", buffer: "SAVED SCREEN" }], []);
+
+  await check("search uses Cyrillic and literal text; editor shortcuts cannot reach the terminal", (s) => {
+    s.query("сБОРКА [");
+    equal(s.rows(), ["second"]);
+    for (const [key, code] of [["Е", "KeyT"], ["Ц", "KeyW"], ["М", "KeyV"]])
+      s.key(s.filter, key, { code, ctrlKey: true, shiftKey: true });
+    equal(s.messages("create").length, 0);
+    equal(s.messages("kill").length, 0);
+    equal(s.messages("clipboard-read").length, 0);
+    s.key(s.filter, "Enter");
+    equal(s.activeId(), "second");
+    s.query("не найдено");
+    equal(s.rows(), []);
+    equal(s.doc.querySelector(".session-list-empty").textContent, "Сессии не найдены");
+    equal(s.activeId(), "second");
+    s.key(s.filter, "Escape");
+    equal(s.rows(), ["second", "first", "third"]);
+    equal(s.doc.activeElement === s.terminalInput(), true);
+  });
+
+  await check("dragging between groups persists the target group and visual order", (s) => {
+    const source = s.row("third");
+    const target = s.row("first");
+    const transfer = new s.app.DataTransfer();
+    source.dispatchEvent(new s.app.DragEvent("dragstart", { bubbles: true, dataTransfer: transfer }));
+    target.dispatchEvent(new s.app.DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: transfer, clientY: target.getBoundingClientRect().top }));
+    equal(s.rows(), ["second", "third", "first"]);
+    equal(s.records().find((record) => record.id === "third").group, "TerminalV");
+    s.doc.getElementById("new-tab").click();
+    equal(s.records().at(-1).group, "TerminalV");
+    equal(s.messages("create").at(-1).cwd, "C:\\Project");
+  });
+
+  await check("session options block pending paste, cannot retarget, and cancel when the process exits", async (s) => {
+    let resolveRead;
+    Object.defineProperty(s.app.navigator, "clipboard", {
+      configurable: true, value: { readText: () => new Promise((resolve) => { resolveRead = resolve; }) }
+    });
+    s.key(s.terminalInput(), "V", { code: "KeyV", ctrlKey: true });
+    equal(typeof resolveRead, "function");
+    s.edit("first");
+    s.edit("third");
+    equal(s.dialog.querySelector("[data-session-name]").textContent, "Muse — разработка");
+    resolveRead("first\nsecond");
+    await delay();
+    equal(s.doc.getElementById("paste-confirmation").open, false);
+    s.app.sendHost({ type: "exit", id: "first", code: 0 });
+    equal(s.dialog.open, false);
+    s.save.click();
+    equal(s.records().find((record) => record.id === "first").hidden, false);
+  });
+
+  await check("host exit/error while hidden never restarts or loses the session", (s) => {
+    s.edit("first"); s.hide.click();
+    s.app.sendHost({ type: "error", id: "first", message: "Сессия завершилась до подключения" });
+    s.toggle.click();
+    equal(s.row("first").querySelector(".tab-meta").textContent, "завершена");
+    s.row("first").click();
+    equal(s.messages("create").length, 0);
+    s.row("first").querySelector(".tab-close").click();
+    equal(s.messages("kill").length, 0);
+    equal(s.records().some((record) => record.id === "first"), false);
+  });
+
+  await check("untrusted titles/groups remain plain text and options fit a narrow light window", async (s) => {
+    s.frame.style.width = "440px";
+    s.doc.getElementById("settings-btn").click();
+    [...s.doc.querySelectorAll(".theme-card")].find((button) => /light/i.test(button.textContent)).click();
+    s.doc.getElementById("settings-close").click();
+    s.app.sendHost({ type: "data", id: "first", data: "\x1b]0;<img src=x onerror=alert(1)>\x07" });
+    await delay();
+    s.edit("first");
+    equal(s.dialog.querySelector("img"), null);
+    s.group.value = "<img src=x>" + "Я".repeat(60);
+    s.save.click();
+    equal(s.doc.querySelector(".session-group img"), null);
+    s.edit("first");
+    const rect = s.dialog.getBoundingClientRect();
+    for (const element of [s.group, s.color, s.save, s.hide]) {
+      const child = element.getBoundingClientRect();
+      equal(child.left >= rect.left && child.right <= rect.right, true);
+    }
+  });
+
+  if (new URL(location.href).searchParams.has("preview")) {
+    const s = await setup();
+    s.app.sendHost({ type: "data", id: "first", data: "PS C:\\Repos\\TerminalV> npm test\r\nВсе проверки пройдены.\r\n" });
+    s.edit("first");
+  }
+  document.body.dataset.testResult = btoa(unescape(encodeURIComponent(JSON.stringify(results))));
+</script>

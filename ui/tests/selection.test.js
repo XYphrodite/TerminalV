@@ -42,7 +42,8 @@ async function runBrowserFixture(t, fixture) {
   });
   const profile = await mkdtemp(join(tmpdir(), "terminalv-copy-test-"));
   try {
-    const screenshot = fixture === "close-ui" ? process.env.TERMINALV_CLOSE_SCREENSHOT :
+    const screenshot = fixture === "sessions-ui" ? process.env.TERMINALV_SESSIONS_SCREENSHOT :
+      fixture === "close-ui" ? process.env.TERMINALV_CLOSE_SCREENSHOT :
       fixture === "search-ui" ? process.env.TERMINALV_SEARCH_SCREENSHOT :
       fixture === "paste-confirmation" && process.env.TERMINALV_TEST_SCREENSHOT;
     const output = await new Promise((resolve, reject) => {
@@ -89,3 +90,4 @@ test("terminal search in xterm.js", (t) => runBrowserFixture(t, "terminal-search
 test("search in the built TerminalV interface", (t) => runBrowserFixture(t, "search-ui"));
 test("close protection in the built TerminalV interface", (t) => runBrowserFixture(t, "close-ui"));
 test("working directory in the built TerminalV interface", (t) => runBrowserFixture(t, "cwd-ui"));
+test("session management in the built TerminalV interface", (t) => runBrowserFixture(t, "sessions-ui"));
