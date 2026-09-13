@@ -1,0 +1,93 @@
+<!doctype html>
+<meta charset="utf-8">
+<link rel="stylesheet" href="/node_modules/@xterm/xterm/css/xterm.css">
+<script src="/node_modules/@xterm/xterm/lib/xterm.js"></script>
+<script type="module">
+  import { getPlainSelection } from "/src/selection.js";
+
+  const results = [];
+  function equal(actual, expected) {
+    if (actual !== expected) {
+      throw new Error(`Expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
+    }
+  }
+  async function check(name, run) {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const term = new Terminal({ cols: 100, rows: 10, windowsPty: { backend: "conpty", buildNumber: 22621 } });
+    term.open(host);
+    const write = (data) => new Promise((resolve) => term.write(data, resolve));
+    try {
+      await run(term, write);
+      results.push({ name, ok: true });
+    } catch (error) {
+      results.push({ name, ok: false, error: error.stack });
+    } finally {
+      term.dispose();
+      host.remove();
+    }
+  }
+
+  await check("padded wrapped commands: old code fails, screen-row copy preserves all three lines", async (term, write) => {
+    const commands = ["git tag v0.12.2", "git push origin HEAD:main", "git push origin v0.12.2"];
+    const prompt = "PS C:\\Users\\Gamer> ";
+    const rendered = commands.map((command) => command.padEnd(term.cols - prompt.length));
+    // ConPTY/console renderers can paint a full screen row including spaces,
+    // then wrap to the next row. xterm considers these one logical line.
+    await write(prompt + rendered[0] + " ".repeat(prompt.length) + rendered[1] + " ".repeat(prompt.length) + commands[2]);
+    equal(term.buffer.active.getLine(1).isWrapped, true);
+    term.select(prompt.length, 0, 2 * term.cols + commands[2].length);
+    const oldCopy = term.getSelection().replace(/\r\n?/g, "\n").split("\n").map((line) => line.trim()).join("\r\n");
+    equal(oldCopy.includes("\n"), false);
+    equal(oldCopy.includes(" ".repeat(30)), true);
+    equal(getPlainSelection(term), commands.join("\r\n"));
+  });
+
+  await check("hard newlines, Cyrillic and internal alignment survive", async (term, write) => {
+    await write("    muse resume --last  # последнюю   \r\n    echo второй   ");
+    term.select(0, 0, term.cols + 18);
+    equal(getPlainSelection(term), "muse resume --last  # последнюю\r\necho второй");
+  });
+
+  await check("partial selection excludes text before and after the selected range", async (term, write) => {
+    await write("prompt> first rest\r\n  second suffix");
+    term.select(8, 0, term.cols);
+    equal(getPlainSelection(term), "first rest\r\nsecond");
+  });
+
+  await check("blank rows retained; unselected end row at column zero excluded", async (term, write) => {
+    await write("first\r\n\r\nthird\r\nfourth");
+    term.select(0, 0, term.cols * 3);
+    equal(getPlainSelection(term), "first\r\n\r\nthird");
+  });
+
+  await check("wide and combined Unicode characters use buffer columns", async (term, write) => {
+    await write("  中文😀e\u0301  \r\n  текст");
+    term.select(2, 0, term.cols + 5);
+    equal(getPlainSelection(term), "中文😀e\u0301\r\nтекст");
+  });
+
+  await check("normal copy keeps indentation and joins real soft wraps", async (term, write) => {
+    const command = "    echo " + "a".repeat(115);
+    await write(command);
+    term.select(0, 0, command.length);
+    equal(term.getSelection(), command);
+    equal(getPlainSelection(term), command.slice(0, term.cols).trim() + "\r\n" + command.slice(term.cols));
+  });
+
+  await check("scrollback coordinates and alternate buffer", async (term, write) => {
+    await write(Array.from({ length: 18 }, (_, i) => `  row ${i}\r\n`).join(""));
+    term.select(0, 12, term.cols + 8);
+    equal(getPlainSelection(term), "row 12\r\nrow 13");
+    await write("\x1b[?1049h\x1b[H  alternate\r\n  buffer");
+    term.select(0, 0, term.cols + 8);
+    equal(getPlainSelection(term), "alternate\r\nbuffer");
+  });
+
+  await check("empty selection", async (term, write) => {
+    await write("do not copy");
+    equal(getPlainSelection(term), "");
+  });
+
+  document.body.setAttribute("data-test-result", btoa(unescape(encodeURIComponent(JSON.stringify(results)))));
+</script>
