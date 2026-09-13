@@ -235,7 +235,7 @@ dotnet run --project src/TerminalV
 ## Document Information
 
 **Last Updated**: 2026-09-11  
-**Version**: 0.4.10
+**Version**: 0.4.11
 **Status**: Active  
 **Repository**: `https://github.com/XYphrodite/TerminalV`  
 **Workspace**: `C:\Repos\TerminalV`

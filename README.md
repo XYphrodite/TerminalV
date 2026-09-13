@@ -67,7 +67,7 @@ dotnet run --project src/TerminalV
 .\src\TerminalV\bin\Debug\net10.0-windows\TerminalV.exe --smoke
 ```
 
-## Что умеет v0.4.10
+## Что умеет v0.4.11
 
 - Вертикальный список вкладок слева
 - PowerShell 7 (`pwsh`), иначе Windows PowerShell
