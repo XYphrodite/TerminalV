@@ -36,7 +36,7 @@ let activeId = null;
 let shellName = "PowerShell";
 let buildNumber = 22621;
 let nextIndex = 1;
-let appVersion = "0.4.15";
+let appVersion = "0.4.16";
 let updateSupported = false;
 let persistTimer = 0;
 let fitTimer = 0;
@@ -536,6 +536,14 @@ async function copyText(text) {
   }
 }
 
+function plainSelection(tab) {
+  return tab.term.getSelection()
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map((line) => line.trim())
+    .join("\r\n");
+}
+
 function readClipboard() {
   return navigator.clipboard.readText().catch(
     () =>
@@ -605,6 +613,10 @@ function attachCopyPaste(tab) {
     event.preventDefault();
     event.stopPropagation();
   }, true);
+  tab.host.addEventListener("copy", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+  }, true);
 
   tab.term.attachCustomKeyEventHandler((event) => {
     if (event.type !== "keydown") {
@@ -618,6 +630,10 @@ function attachCopyPaste(tab) {
     const key = event.key.toLowerCase();
     const isCopyKey = key === "c" || event.code === "KeyC";
     const isPasteKey = key === "v" || event.code === "KeyV";
+    if ((event.ctrlKey || event.metaKey) && event.altKey && isCopyKey) {
+      copyText(plainSelection(tab));
+      return false;
+    }
     if ((event.ctrlKey || event.metaKey) && !event.altKey) {
       if (isCopyKey && !event.shiftKey) {
         if (tab.term.hasSelection()) {
