@@ -9,7 +9,6 @@
   const template = new DOMParser().parseFromString(await (await fetch("/index.html")).text(), "text/html")
     .getElementById("paste-confirmation");
   const results = [];
-  const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
   function equal(actual, expected) {
     if (actual !== expected) {
       throw new Error(`Expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
@@ -179,14 +178,16 @@
   await check("external dialog close cancels; old close events do not cancel a new preview", async (s) => {
     s.text = "first\nsecond";
     await s.request();
+    const externalClose = new Promise((resolve) => s.dialog.addEventListener("close", resolve, { once: true }));
     s.dialog.close();
-    await tick();
+    await externalClose;
     equal(s.data.length, 0);
     await s.request();
     equal(s.dialog.open, true);
+    const oldClose = new Promise((resolve) => s.dialog.addEventListener("close", resolve, { once: true }));
     s.cancel.click();
     await s.request();
-    await tick();
+    await oldClose;
     equal(s.dialog.open, true);
     s.confirm.click();
     equal(s.data.length, 1);
