@@ -44,6 +44,7 @@ try
         Equal(old.Pinned, false);
         Equal(old.Group, null);
         Equal(old.Color, null);
+        Equal(old.Muted, false);
     });
 
     Check("hidden sessions and metadata survive disposal and reopen without becoming active", () =>
@@ -53,7 +54,7 @@ try
             db.SaveSessions([
                 new() { Id = "live", Title = "Muse", SortOrder = 1, Active = true, Cwd = @"C:\Проект" },
                 new() { Id = "hidden", Title = "Фоновая сессия", CustomTitle = "<img> & 'имя'", SortOrder = 0,
-                    Active = true, Hidden = true, Pinned = true, Color = "violet", Group = "Проект'; DROP TABLE sessions; --",
+                    Active = true, Hidden = true, Pinned = true, Muted = true, Color = "violet", Group = "Проект'; DROP TABLE sessions; --",
                     Buffer = "\u001b[?1049hСохранённый TUI", Cwd = @"D:\Моя папка" }
             ]);
         }
@@ -64,6 +65,7 @@ try
         Equal(hidden.Id, "hidden");
         Equal(hidden.Hidden, true);
         Equal(hidden.Pinned, true);
+        Equal(hidden.Muted, true);
         Equal(hidden.Active, false);
         Equal(hidden.Color, "violet");
         Equal(hidden.Group, "Проект'; DROP TABLE sessions; --");
@@ -96,6 +98,7 @@ try
         db.SaveSessions(records);
         Equal(db.LoadSessions()[0].Hidden, false);
         Equal(db.LoadSessions()[0].Pinned, true);
+        Equal(db.LoadSessions()[0].Muted, true);
         db.SaveSessions([records[0]]);
         Equal(db.LoadSessions().Single().Id, "hidden");
     });

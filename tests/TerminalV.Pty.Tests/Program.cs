@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
 using TerminalV.Pty;
+using TerminalV.Host;
 
 var passed = 0;
 void Check(string name, Action test)
@@ -70,6 +71,48 @@ Check("launch command enables profiles, integrates both PowerShell executables o
         Equal(decoded.Contains("-LiteralPath 'C:\\Test''s; Write-Error bad'"), true);
     }
     Equal(PowerShellIntegration.CommandLine(@"C:\Windows\cmd.exe"), "\"C:\\Windows\\cmd.exe\"");
+});
+
+Check("list barriers silence only the attaching sessions until their cached output is drained", () =>
+{
+    var guard = new OutputReplayGuard();
+    guard.BeginList(); // initial inventory query
+    guard.BeginList("a");
+    guard.BeginList("b");
+    Equal(guard.IsReplaying("a"), true);
+    Equal(guard.IsReplaying("b"), true);
+    Equal(guard.IsReplaying("other"), false);
+    Equal(guard.CompleteList(), true);
+    Equal(guard.IsReplaying("a"), true);
+    Equal(guard.CompleteList(), false);
+    Equal(guard.IsReplaying("a"), false);
+    Equal(guard.IsReplaying("b"), true);
+    Equal(guard.CompleteList(), false);
+    Equal(guard.IsReplaying("b"), false);
+});
+Check("repeated attaches and ordinary list requests keep their own ordered barriers", () =>
+{
+    var guard = new OutputReplayGuard();
+    guard.BeginList("same");
+    guard.BeginList();
+    guard.BeginList("same");
+    Equal(guard.CompleteList(), false);
+    Equal(guard.IsReplaying("same"), true);
+    Equal(guard.CompleteList(), true);
+    Equal(guard.IsReplaying("same"), true);
+    Equal(guard.CompleteList(), false);
+    Equal(guard.IsReplaying("same"), false);
+});
+Check("reconnecting clears pending replay state, including attaches with no output", () =>
+{
+    var guard = new OutputReplayGuard();
+    guard.BeginList("empty");
+    Equal(guard.CompleteList(), false);
+    Equal(guard.IsReplaying("empty"), false);
+    guard.BeginList("disconnected");
+    guard.Reset();
+    Equal(guard.IsReplaying("disconnected"), false);
+    Equal(guard.CompleteList(), true);
 });
 
 var testRoot = Directory.CreateTempSubdirectory("terminalv-cwd-test-").FullName;

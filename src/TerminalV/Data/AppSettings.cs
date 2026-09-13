@@ -24,4 +24,5 @@ internal sealed class SessionRecord
     public string? Color { get; set; }
     public bool Pinned { get; set; }
     public bool Hidden { get; set; }
+    public bool Muted { get; set; }
 }

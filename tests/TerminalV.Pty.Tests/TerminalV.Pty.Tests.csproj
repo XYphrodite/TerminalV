@@ -7,5 +7,6 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../../src/TerminalV/Pty/*.cs" Link="Pty/%(Filename)%(Extension)" />
+    <Compile Include="../../src/TerminalV/Host/OutputReplayGuard.cs" Link="Host/OutputReplayGuard.cs" />
   </ItemGroup>
 </Project>

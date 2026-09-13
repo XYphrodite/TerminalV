@@ -12,6 +12,7 @@ import { createPasteController } from "./paste-confirmation.js";
 import { createCloseConfirmation } from "./close-confirmation.js";
 import { createTerminalSearch, isSearchShortcut, SEARCH_HIGHLIGHT_LIMIT } from "./terminal-search.js";
 import { createSessionOptions, sessionMetadata, sessionGroups, SESSION_COLORS } from "./session-management.js";
+import { createNotifications, createNotificationOutput } from "./notifications.js";
 
 const tabsEl = document.getElementById("tabs");
 const panesEl = document.getElementById("panes");
@@ -39,6 +40,7 @@ const bgOpacityEl = document.getElementById("bg-opacity");
 const bgOpacityValue = document.getElementById("bg-opacity-value");
 const sessionFilter = document.getElementById("session-filter");
 const hiddenSessionsBtn = document.getElementById("hidden-sessions");
+const notificationStatus = document.getElementById("notification-status");
 let showHiddenSessions = false;
 
 const tabs = [];
@@ -89,6 +91,18 @@ const closeController = createCloseConfirmation({
     } else {
       currentTab()?.term.focus();
     }
+  }
+});
+
+const notifications = createNotifications({
+  isKnown: (tab) => tabs.includes(tab),
+  isActive: (tab) => tab.id === activeId && !tab.hidden,
+  sound: (tab) => post({ type: "bell", id: tab.id }),
+  changed: (tab) => {
+    patchTabRow(tab);
+    updateSessionSwitcher();
+    notificationStatus.textContent = tab.attention
+      ? `Сигнал от сессии «${(tab.customTitle || tab.title).slice(0, 160)}».` : "";
   }
 });
 
@@ -395,7 +409,8 @@ function persistSessions() {
     group: tab.group || null,
     color: tab.color || null,
     pinned: tab.pinned,
-    hidden: tab.hidden
+    hidden: tab.hidden,
+    muted: tab.muted
   }));
   post({ type: "persist-sessions", sessions: payload });
 }
@@ -412,12 +427,31 @@ window.terminalvFlush = () => {
   persistSettings();
 };
 
+function updateSessionSwitcher() {
+  const target = tabs.filter((tab) => Boolean(tab.hidden) !== showHiddenSessions);
+  const signals = target.filter((tab) => tab.attention).length;
+  hiddenSessionsBtn.textContent = `${showHiddenSessions ? "Открытые" : "Скрытые"} · ${target.length}${signals ? ` · ! ${signals}` : ""}`;
+  hiddenSessionsBtn.setAttribute("aria-pressed", String(showHiddenSessions));
+  hiddenSessionsBtn.title = `${showHiddenSessions ? "Показать открытые сессии" : "Показать скрытые сессии"}${signals ? `. Сигналов: ${signals}` : ""}`;
+  hiddenSessionsBtn.setAttribute("aria-label", hiddenSessionsBtn.title);
+  hiddenSessionsBtn.classList.toggle("has-attention", signals > 0);
+}
+
+function sessionMetaText(tab) {
+  return [tab.attention && "Сигнал", tab.muted && "Без звука", tab.pinned && "★", tab.exited ? "завершена" : shellName]
+    .filter(Boolean).join(" · ");
+}
+
+function applyNotificationRow(row, tab) {
+  row.classList.toggle("has-attention", Boolean(tab.attention));
+  row.title = `${tab.customTitle || tab.title}${tab.attention ? " — получен сигнал" : ""}${tab.muted ? " — без звука" : ""}`;
+  row.setAttribute("aria-label", row.title);
+}
+
 function renderTabs() {
   tabsEl.replaceChildren();
   const hiddenCount = tabs.filter((tab) => tab.hidden).length;
-  hiddenSessionsBtn.textContent = showHiddenSessions ? `Открытые · ${tabs.length - hiddenCount}` : `Скрытые · ${hiddenCount}`;
-  hiddenSessionsBtn.setAttribute("aria-pressed", String(showHiddenSessions));
-  hiddenSessionsBtn.title = showHiddenSessions ? "Показать открытые сессии" : "Показать скрытые сессии";
+  updateSessionSwitcher();
   tabsEl.setAttribute("aria-label", showHiddenSessions ? "Скрытые сессии" : "Открытые сессии");
   tabsEl.setAttribute("role", showHiddenSessions ? "group" : "tablist");
   const groups = sessionGroups(tabs, { hidden: showHiddenSessions, query: sessionFilter.value });
@@ -438,7 +472,7 @@ function renderTabs() {
       row.dataset.id = tab.id;
       row.setAttribute("role", tab.hidden ? "button" : "tab");
       if (!tab.hidden) row.setAttribute("aria-selected", String(tab.id === activeId));
-      row.title = tab.customTitle || tab.title;
+      applyNotificationRow(row, tab);
       row.classList.toggle("pinned", tab.pinned);
       if (tab.color) row.style.setProperty("--session-color", SESSION_COLORS[tab.color].value);
 
@@ -476,14 +510,14 @@ function renderTabs() {
 
       const meta = document.createElement("div");
       meta.className = "tab-meta";
-      meta.textContent = `${tab.pinned ? "★ · " : ""}${tab.exited ? "завершена" : shellName}`;
+      meta.textContent = sessionMetaText(tab);
       body.append(meta);
 
       const options = document.createElement("button");
       options.className = "tab-options";
       options.type = "button";
       options.textContent = "⋯";
-      options.title = "Группа, цвет, закрепление и скрытие";
+      options.title = "Группа, цвет, закрепление, звук и скрытие";
       options.setAttribute("aria-label", "Управление сессией");
       options.addEventListener("click", (event) => { event.stopPropagation(); showSessionOptions(tab); });
       options.addEventListener("dblclick", (event) => event.stopPropagation());
@@ -647,7 +681,7 @@ function patchTabRow(tab) {
 
   row.classList.toggle("active", tab.id === activeId);
   if (!tab.hidden) row.setAttribute("aria-selected", String(tab.id === activeId));
-  row.title = tab.customTitle || tab.title;
+  applyNotificationRow(row, tab);
   row.classList.toggle("unread", Boolean(tab.unread));
   const title = row.querySelector(".tab-title");
   if (title && !tab.renaming) {
@@ -655,7 +689,7 @@ function patchTabRow(tab) {
   }
   const meta = row.querySelector(".tab-meta");
   if (meta) {
-    meta.textContent = `${tab.pinned ? "★ · " : ""}${tab.exited ? "завершена" : shellName}`;
+    meta.textContent = sessionMetaText(tab);
   }
 }
 
@@ -672,6 +706,7 @@ function activate(id) {
     pasteController.cancel(currentTab());
   }
   activeId = id;
+  notifications.acknowledge(tab);
   renderCwdNotice();
   tab.unread = false;
   for (const item of tabs) {
@@ -711,9 +746,11 @@ function removeTab(tab) {
   sessionOptions.cancel(tab);
   if (closingActive) searchController.close({ focus: false });
   tabs.splice(index, 1);
+  notifications.acknowledge(tab);
   pasteController.cancel(tab);
   if (!tab.exited) post({ type: "kill", id: tab.id });
   dropWebgl(tab);
+  tab.output.dispose();
   try {
     tab.term.dispose();
   } catch {
@@ -920,10 +957,6 @@ function newTab(options = {}) {
   term.loadAddon(search);
   term.open(hostEl);
 
-  if (options.buffer) {
-    term.write(options.buffer);
-  }
-
   const tab = {
     ...metadata,
     id,
@@ -949,7 +982,8 @@ function newTab(options = {}) {
 
   overlayBtn.addEventListener("click", () => restart(tab));
   term.onData((data) => post({ type: "write", id, data }));
-  term.onBell(() => post({ type: "bell", id }));
+  tab.output = createNotificationOutput(term, () => notifications.bell(tab), () => syncScrollLock(tab));
+  if (options.buffer) tab.output.write(options.buffer, true);
   term.onTitleChange((title) => {
     const cleaned = title?.trim();
     if (!cleaned || tab.customTitle) {
@@ -1050,7 +1084,8 @@ function restart(tab) {
   tab.cwdNotice = "";
   renderCwdNotice();
   tab.overlay.classList.remove("visible");
-  tab.term.reset();
+  notifications.acknowledge(tab);
+  tab.output.reset();
   tab.fit.fit();
   post({ type: "create", id: tab.id, cols: tab.term.cols, rows: tab.term.rows, cwd: tab.cwd });
   tab.term.focus();
@@ -1287,7 +1322,7 @@ function handleHost(message) {
     } else if (/\x1b\[\?(?:1049|47|1047|1000|1002|1003)h/.test(chunk)) {
       tab.tuiHint = true;
     }
-    tab.term.write(chunk, () => syncScrollLock(tab));
+    tab.output.write(chunk, message.replay === true);
     schedulePersist();
     if (tab.id !== activeId && !tab.unread) {
       tab.unread = true;

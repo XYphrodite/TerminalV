@@ -66,7 +66,7 @@ internal sealed class AppDatabase : IDisposable
         using var cmd = _connection.CreateCommand();
         cmd.CommandText = """
             SELECT id, title, custom_title, sort_order, is_active, buffer, cwd,
-                   group_name, color, is_pinned, is_hidden
+                   group_name, color, is_pinned, is_hidden, is_muted
             FROM sessions
             ORDER BY sort_order, updated_at
             """;
@@ -86,7 +86,8 @@ internal sealed class AppDatabase : IDisposable
                 Group = reader.IsDBNull(7) ? null : reader.GetString(7),
                 Color = reader.IsDBNull(8) ? null : reader.GetString(8),
                 Pinned = reader.GetInt32(9) != 0,
-                Hidden = reader.GetInt32(10) != 0
+                Hidden = reader.GetInt32(10) != 0,
+                Muted = reader.GetInt32(11) != 0
             });
         }
 
@@ -110,9 +111,9 @@ internal sealed class AppDatabase : IDisposable
             insert.Transaction = tx;
             insert.CommandText = """
                 INSERT INTO sessions(id, title, custom_title, sort_order, is_active, buffer, cwd,
-                                     group_name, color, is_pinned, is_hidden, created_at, updated_at)
+                                     group_name, color, is_pinned, is_hidden, is_muted, created_at, updated_at)
                 VALUES ($id, $title, $custom, $sort, $active, $buffer, $cwd,
-                        $group, $color, $pinned, $hidden, $now, $now)
+                        $group, $color, $pinned, $hidden, $muted, $now, $now)
                 """;
             insert.Parameters.AddWithValue("$id", session.Id);
             insert.Parameters.AddWithValue("$title", session.Title);
@@ -125,6 +126,7 @@ internal sealed class AppDatabase : IDisposable
             insert.Parameters.AddWithValue("$color", (object?)session.Color ?? DBNull.Value);
             insert.Parameters.AddWithValue("$pinned", session.Pinned ? 1 : 0);
             insert.Parameters.AddWithValue("$hidden", session.Hidden ? 1 : 0);
+            insert.Parameters.AddWithValue("$muted", session.Muted ? 1 : 0);
             insert.Parameters.AddWithValue("$now", now);
             insert.ExecuteNonQuery();
         }
@@ -186,7 +188,8 @@ internal sealed class AppDatabase : IDisposable
         }
         foreach (var (name, definition) in new[] {
             ("group_name", "TEXT"), ("color", "TEXT"),
-            ("is_pinned", "INTEGER NOT NULL DEFAULT 0"), ("is_hidden", "INTEGER NOT NULL DEFAULT 0") })
+            ("is_pinned", "INTEGER NOT NULL DEFAULT 0"), ("is_hidden", "INTEGER NOT NULL DEFAULT 0"),
+            ("is_muted", "INTEGER NOT NULL DEFAULT 0") })
         {
             if (existing.Contains(name)) continue;
             using var add = _connection.CreateCommand();

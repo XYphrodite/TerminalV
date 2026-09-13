@@ -3,7 +3,7 @@ import test from "node:test";
 import { sessionMetadata, sessionGroups } from "../src/session-management.js";
 
 test("old records default to visible and ungrouped; invalid colors cannot inject styles", () => {
-  assert.deepEqual(sessionMetadata({}), { group: "", color: "", pinned: false, hidden: false });
+  assert.deepEqual(sessionMetadata({}), { group: "", color: "", pinned: false, hidden: false, muted: false });
   assert.equal(sessionMetadata({ color: "__proto__", group: "  Проект  " }).color, "");
   assert.equal(sessionMetadata({ color: "blue", group: "  Проект  " }).group, "Проект");
   assert.equal(sessionMetadata({ group: "Я".repeat(100) }).group.length, 80);

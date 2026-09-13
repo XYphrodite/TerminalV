@@ -33,6 +33,8 @@ internal sealed class TerminalBridge : IDisposable
     private readonly AppDatabase _db = new();
     private readonly SessionClient _host = new();
     private int _updateBusy;
+    private readonly Stopwatch _bellClock = Stopwatch.StartNew();
+    private long _lastBellMs = -2000;
     private bool _disposed;
 
     public TerminalBridge(Dispatcher dispatcher, CoreWebView2 webView)
@@ -42,7 +44,7 @@ internal sealed class TerminalBridge : IDisposable
         _shell = ShellResolver.Resolve();
         _buildNumber = Environment.OSVersion.Version.Build;
         _canUpdate = AppVersion.CanSelfUpdate(Environment.ProcessPath);
-        _host.Data += (id, data) => Post(new { type = "data", id, data });
+        _host.Data += (id, data, replay) => Post(new { type = "data", id, data, replay });
         _host.Exited += (id, code) => Post(new { type = "exit", id, code });
         _host.DirectoryChanged += (id, cwd, notice) => Post(new { type = "cwd", id, cwd, notice });
         _host.Error += (id, message) => Post(new { type = "error", id, message });
@@ -149,7 +151,13 @@ internal sealed class TerminalBridge : IDisposable
                 }
                 break;
             case "bell":
-                SystemSounds.Beep.Play();
+                // A final native guard; the UI applies per-session mute/focus policy.
+                var now = _bellClock.ElapsedMilliseconds;
+                if (now - _lastBellMs >= 2000)
+                {
+                    _lastBellMs = now;
+                    SystemSounds.Beep.Play();
+                }
                 break;
             case "update-check":
                 _ = CheckUpdatesAsync(silent: false);
