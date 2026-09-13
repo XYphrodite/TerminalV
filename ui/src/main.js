@@ -36,7 +36,7 @@ let activeId = null;
 let shellName = "PowerShell";
 let buildNumber = 22621;
 let nextIndex = 1;
-let appVersion = "0.4.10";
+let appVersion = "0.4.11";
 let updateSupported = false;
 let persistTimer = 0;
 let fitTimer = 0;
@@ -601,7 +601,7 @@ function attachCopyPaste(tab) {
         copyText(tab.term.getSelection());
         return false;
       }
-      if (key === "v" && !event.shiftKey) {
+      if ((key === "v" || event.code === "KeyV") && !event.shiftKey) {
         readClipboard().then((text) => {
           if (text) {
             post({ type: "write", id: tab.id, data: text });
@@ -613,7 +613,7 @@ function attachCopyPaste(tab) {
         copyText(tab.term.getSelection());
         return false;
       }
-      if (event.shiftKey && key === "v") {
+      if (event.shiftKey && (key === "v" || event.code === "KeyV")) {
         readClipboard().then((text) => {
           if (text) {
             post({ type: "write", id: tab.id, data: text });
