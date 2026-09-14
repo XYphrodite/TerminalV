@@ -1,11 +1,13 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    Draws TerminalV.ico (multi-size) matching the in-app V badge.
+    Draws the TerminalV V-and-cursor icon at native Windows icon sizes.
+    Optionally writes a preview on light and dark backgrounds.
 #>
 [CmdletBinding()]
 param(
-    [string] $OutPath
+    [string] $OutPath,
+    [string] $PreviewPath
 )
 
 Set-StrictMode -Version Latest
@@ -26,65 +28,110 @@ using System.Collections.Generic;
 
 public static class TerminalVIcon
 {
-    static readonly Color Bg = Color.FromArgb(11, 13, 16);
-    static readonly Color Blue = Color.FromArgb(61, 158, 255);
-    static readonly Color Ink = Color.FromArgb(7, 16, 24);
+    static readonly Color Bg = Color.FromArgb(22, 28, 38);
+    static readonly Color Blue = Color.FromArgb(85, 177, 255);
 
     public static void Write(string outPath, int[] sizes)
     {
         var pngs = new List<byte[]>();
         foreach (var size in sizes)
         {
-            using (var bmp = new Bitmap(size, size, PixelFormat.Format32bppArgb))
-            using (var g = Graphics.FromImage(bmp))
+            using (var bmp = Render(size))
             using (var ms = new MemoryStream())
             {
-                g.SmoothingMode = SmoothingMode.AntiAlias;
-                g.PixelOffsetMode = PixelOffsetMode.HighQuality;
-                g.InterpolationMode = InterpolationMode.HighQualityBicubic;
-                g.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
-                g.Clear(Color.Transparent);
-                Draw(g, size);
                 bmp.Save(ms, ImageFormat.Png);
                 pngs.Add(ms.ToArray());
             }
         }
 
-        Directory.CreateDirectory(Path.GetDirectoryName(outPath));
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outPath)));
         File.WriteAllBytes(outPath, PackIco(pngs, sizes));
+    }
+
+    static Bitmap Render(int size)
+    {
+        var bmp = new Bitmap(size, size, PixelFormat.Format32bppArgb);
+        using (var g = Graphics.FromImage(bmp))
+        {
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+            g.Clear(Color.Transparent);
+            Draw(g, size);
+        }
+        return bmp;
     }
 
     static void Draw(Graphics g, int size)
     {
-        var pad = Math.Max(1f, size * 0.06f);
-        var radius = Math.Max(2f, size * 0.22f);
+        var radius = size * 0.23f;
         using (var bg = new SolidBrush(Bg))
             FillRound(g, bg, 0, 0, size, size, radius);
 
-        var inner = pad * 1.6f;
-        var tile = size - inner * 2f;
-        var tileRadius = Math.Max(1.5f, tile * 0.22f);
-        using (var blue = new SolidBrush(Blue))
-            FillRound(g, blue, inner, inner, tile, tile, tileRadius);
-
-        DrawV(g, inner, inner, tile, size);
+        DrawMark(g, size);
     }
 
-    static void DrawV(Graphics g, float x, float y, float tile, int size)
+    static void DrawMark(Graphics g, int size)
     {
-        var w = tile;
-        var h = tile;
+        // A custom, font-independent V with a flat baseline. The complete V_
+        // mark is optically centered as a unit, not as two separate glyphs.
         var pts = new[]
         {
-            new PointF(x + w * 0.22f, y + h * 0.20f),
-            new PointF(x + w * 0.38f, y + h * 0.20f),
-            new PointF(x + w * 0.50f, y + h * 0.58f),
-            new PointF(x + w * 0.62f, y + h * 0.20f),
-            new PointF(x + w * 0.78f, y + h * 0.20f),
-            new PointF(x + w * 0.50f, y + h * 0.82f)
+            new PointF(size * 0.17f, size * 0.26f),
+            new PointF(size * 0.285f, size * 0.26f),
+            new PointF(size * 0.41f, size * 0.61f),
+            new PointF(size * 0.535f, size * 0.26f),
+            new PointF(size * 0.65f, size * 0.26f),
+            new PointF(size * 0.46f, size * 0.74f),
+            new PointF(size * 0.36f, size * 0.74f)
         };
-        using (var ink = new SolidBrush(Ink))
-            g.FillPolygon(ink, pts);
+        using (var blue = new SolidBrush(Blue))
+        {
+            g.FillPolygon(blue, pts);
+
+            // Snap the cursor to whole pixels, keeping it crisp at 16/20px.
+            var left = (float)Math.Round(size * 0.65f);
+            var right = (float)Math.Round(size * 0.85f);
+            var bottom = (float)Math.Round(size * 0.74f);
+            var height = (float)Math.Max(2, Math.Round(size * 0.10f));
+            g.SmoothingMode = SmoothingMode.None;
+            g.FillRectangle(blue, left, bottom - height, right - left, height);
+        }
+    }
+
+    public static void WritePreview(string outPath)
+    {
+        using (var bmp = new Bitmap(760, 400, PixelFormat.Format32bppArgb))
+        using (var g = Graphics.FromImage(bmp))
+        using (var titleFont = new Font("Segoe UI", 22, FontStyle.Bold, GraphicsUnit.Pixel))
+        using (var labelFont = new Font("Segoe UI", 13, FontStyle.Regular, GraphicsUnit.Pixel))
+        using (var light = new SolidBrush(Color.FromArgb(233, 238, 247)))
+        using (var muted = new SolidBrush(Color.FromArgb(157, 171, 190)))
+        using (var dark = new SolidBrush(Bg))
+        {
+            g.Clear(Color.FromArgb(11, 14, 20));
+            g.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
+            using (var icon = Render(256)) g.DrawImageUnscaled(icon, 40, 72);
+            g.DrawString("TerminalV", titleFont, light, 340, 44);
+            g.DrawString("V + cursor / native pixel sizes", labelFont, muted, 342, 79);
+
+            var sizes = new[] { 16, 20, 24, 32, 48 };
+            for (var row = 0; row < 2; row++)
+            {
+                var top = 124 + row * 122;
+                g.FillRectangle(row == 0 ? dark : light, 336, top, 388, 104);
+                for (var i = 0; i < sizes.Length; i++)
+                {
+                    var center = 374 + i * 77;
+                    using (var icon = Render(sizes[i]))
+                        g.DrawImageUnscaled(icon, center - sizes[i] / 2, top + 8 + (48 - sizes[i]) / 2);
+                    var label = sizes[i] + " px";
+                    var width = g.MeasureString(label, labelFont).Width;
+                    g.DrawString(label, labelFont, row == 0 ? light : dark, center - width / 2, top + 71);
+                }
+            }
+            Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outPath)));
+            bmp.Save(outPath, ImageFormat.Png);
+        }
     }
 
     static void FillRound(Graphics g, Brush brush, float x, float y, float w, float h, float r)
@@ -144,3 +191,7 @@ Add-Type -TypeDefinition $code -ReferencedAssemblies System.Drawing
 $sizes = @(16, 20, 24, 32, 40, 48, 64, 128, 256)
 [TerminalVIcon]::Write($OutPath, $sizes)
 Write-Host "Wrote $OutPath"
+if ($PreviewPath) {
+    [TerminalVIcon]::WritePreview($PreviewPath)
+    Write-Host "Wrote $PreviewPath"
+}
