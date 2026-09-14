@@ -1,0 +1,165 @@
+<!doctype html>
+<meta charset="utf-8">
+<style>html, body { margin: 0; height: 100%; } iframe { width: 100%; height: 100%; border: 0; display: block; }</style>
+<script type="module">
+  const source = await (await fetch("/app/index.html")).text();
+  const results = [];
+  const delay = (ms = 160) => new Promise((resolve) => setTimeout(resolve, ms));
+  const leaf = (sessionId) => ({ sessionId });
+  const sessions = [
+    { id: "dev", title: "TerminalV", active: true, cwd: "C:\\Repos\\TerminalV", group: "TerminalV", shell: "pwsh", color: "blue", pinned: true },
+    { id: "server", title: "Dev server", group: "TerminalV", color: "green", cwd: "C:\\Repos\\TerminalV\\ui", shell: "pwsh" },
+    { id: "tests", title: "Проверки", group: "TerminalV", cwd: "C:\\Repos\\TerminalV", shell: "powershell" },
+    { id: "tools", title: "Инструменты", group: "Личное", cwd: "C:\\Users\\Gamer", shell: "cmd" },
+    { id: "background", title: "Фоновая задача", hidden: true, shell: "pwsh" }
+  ];
+  const layouts = [{ axis: "columns", ratio: .62, first: leaf("dev"), second: {
+    axis: "rows", ratio: .51, first: leaf("server"), second: leaf("tests")
+  } }, leaf("tools")];
+  function equal(actual, expected) {
+    if (JSON.stringify(actual) !== JSON.stringify(expected)) throw new Error(`Expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
+  }
+  async function setup(overrides = {}) {
+    const frame = document.createElement("iframe");
+    const init = { version: "0.5.0", shellName: "PowerShell 7", sessions, layouts, liveIds: sessions.map((s) => s.id), ...overrides };
+    frame.srcdoc = source.replace("<head>", `<head><base href="${location.origin}/app/"><script>window.testInit = ${JSON.stringify(init).replaceAll("<", "\\u003c")};<\/script><script src="/tests/search-host.js"><\/script>`);
+    const loaded = new Promise((resolve) => frame.addEventListener("load", resolve, { once: true }));
+    document.body.append(frame);
+    await loaded;
+    await delay();
+    const app = frame.contentWindow, doc = frame.contentDocument;
+    return { frame, app, doc, button: (id) => doc.getElementById(id),
+      pane: (id) => [...doc.querySelectorAll(".pane")].find((p) => p.dataset.id === id),
+      row: (id) => [...doc.querySelectorAll(".tab")].find((p) => p.dataset.id === id),
+      key: (target, key, options = {}) => target.dispatchEvent(new app.KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...options })),
+      messages: (type) => app.hostMessages.filter((m) => m.type === type) };
+  }
+  async function check(name, run, overrides) {
+    const s = await setup(overrides);
+    try { await run(s); equal(s.app.hostErrors, []); results.push({ name, ok: true }); }
+    catch (error) { results.push({ name, ok: false, error: error.stack }); }
+    finally { s.frame.remove(); }
+  }
+
+  await check("chrome shows real session context and labelled local SVG controls", (s) => {
+    equal(s.button("workspace-title").textContent, "TerminalV");
+    equal(s.button("workspace-path").textContent, "C:\\Repos\\TerminalV");
+    equal(s.button("session-count").textContent, "4");
+    for (const id of ["search-btn", "settings-btn", "collapse-btn", "split-right", "split-down", "detach-pane", "new-tab", "launch-profiles-btn"]) {
+      equal(Boolean(s.button(id).querySelector("svg[aria-hidden=true]")), true);
+      equal(Boolean(s.button(id).getAttribute("aria-label")), true);
+    }
+    equal(s.doc.querySelectorAll(".pane.visible .pane-state").length, 3);
+    equal(s.messages("create").length, 0);
+  });
+  await check("header follows active title/cwd and never interprets host text as HTML", async (s) => {
+    s.app.sendHost({ type: "cwd", id: "server", cwd: "C:\\Other" });
+    equal(s.button("workspace-path").textContent, "C:\\Repos\\TerminalV");
+    s.row("server").click();
+    equal(s.button("workspace-title").textContent, "Dev server");
+    equal(s.button("workspace-path").textContent, "C:\\Other");
+    s.app.sendHost({ type: "data", id: "server", data: "\x1b]0;<img onerror=bad()>\x07" });
+    s.app.sendHost({ type: "cwd", id: "server", cwd: "C:\\<script> & 'папка'" });
+    await delay();
+    equal(s.button("workspace-title").textContent, "<img onerror=bad()>");
+    equal(s.button("workspace-path").textContent, "C:\\<script> & 'папка'");
+    equal(s.doc.querySelector(".workspace-context img, .workspace-context script"), null);
+    s.app.sendHost({ type: "exit", id: "server", code: 0 });
+    equal(s.button("pane-toolbar").classList.contains("session-exited"), true);
+    equal(s.pane("server").classList.contains("exited"), true);
+  });
+  await check("all ten theme previews persist selection and set native control color scheme", (s) => {
+    s.button("settings-btn").click();
+    equal(s.doc.querySelectorAll(".theme-card").length, 10);
+    const names = [...s.doc.querySelectorAll(".theme-card")].map((b) => b.getAttribute("aria-label"));
+    for (const name of names) {
+      const button = [...s.doc.querySelectorAll(".theme-card")].find((b) => b.getAttribute("aria-label") === name);
+      button.click();
+      equal(s.doc.querySelectorAll(".theme-card[aria-pressed=true]").length, 1);
+      equal(s.doc.querySelector(".theme-card.active").getAttribute("aria-label"), name);
+      equal(s.doc.documentElement.style.colorScheme, /Light|Paper/.test(name) ? "light" : "dark");
+      equal(s.doc.querySelectorAll(".theme-swatch .theme-code").length, 10);
+    }
+    equal(s.messages("persist-settings").length >= 10, true);
+    equal(s.messages("create").length, 0);
+    equal(s.messages("write").length, 0);
+  });
+  await check("appearance keeps focus inside, isolates shortcuts and restores terminal focus", (s) => {
+    s.button("settings-btn").click();
+    equal(s.button("app").inert, true);
+    equal(s.doc.activeElement, s.button("settings-close"));
+    s.key(s.doc.activeElement, "Tab", { shiftKey: true });
+    equal(s.doc.activeElement, s.button("bg-opacity"));
+    s.key(s.doc.activeElement, "Tab");
+    equal(s.doc.activeElement, s.button("settings-close"));
+    s.key(s.doc.activeElement, "Е", { code: "KeyT", ctrlKey: true, shiftKey: true });
+    equal(s.messages("create").length, 0);
+    s.key(s.doc.activeElement, "Escape");
+    equal(s.button("app").inert, false);
+    equal(s.doc.activeElement, s.pane("dev").querySelector("textarea"));
+    equal(s.messages("write").length, 0);
+  });
+  await check("collapsed single pane uses the released width without a blank left gutter", async (s) => {
+    const host = s.pane("dev").querySelector(".terminal-host");
+    const before = host.getBoundingClientRect().width;
+    s.button("collapse-btn").click();
+    await delay(300);
+    const box = host.getBoundingClientRect(), pane = s.pane("dev").getBoundingClientRect();
+    equal(box.width > before + 100, true);
+    equal(box.left - pane.left <= 18, true);
+    equal(s.button("collapse-btn").getAttribute("aria-expanded"), "false");
+    equal(s.row("dev").querySelector(".tab-symbol").getBoundingClientRect().width > 0, true);
+    equal(s.messages("write").length, 0);
+  }, { layouts: sessions.filter((s) => !s.hidden).map((s) => leaf(s.id)) });
+  await check("narrow light window keeps toolbar and settings within the viewport", async (s) => {
+    s.frame.style.width = "360px";
+    s.frame.style.height = "420px";
+    await delay(250);
+    for (const id of ["split-right", "split-down", "detach-pane"]) {
+      const box = s.button(id).getBoundingClientRect();
+      equal(box.left >= 180 && box.right <= 360, true);
+    }
+    s.button("settings-btn").click();
+    [...s.doc.querySelectorAll(".theme-card")].find((b) => b.getAttribute("aria-label") === "GitHub Light").click();
+    const panel = s.doc.querySelector(".settings-panel");
+    equal(panel.scrollWidth <= panel.clientWidth + 1, true);
+    s.button("bg-clear").scrollIntoView({ block: "nearest" });
+    equal(s.button("bg-clear").getBoundingClientRect().bottom <= 420, true);
+    s.key(s.doc.activeElement, "Escape");
+    equal(s.doc.documentElement.scrollWidth <= 360, true);
+  });
+  await check("restyled confirmation preserves text and cancel never sends terminal input", async (s) => {
+    Object.defineProperty(s.app.navigator, "clipboard", { configurable: true, value: { readText: async () => 'Write-Output "Первая строка"\nWrite-Output "<script>"' } });
+    s.key(s.pane("dev").querySelector("textarea"), "М", { code: "KeyV", ctrlKey: true, shiftKey: true });
+    await delay();
+    equal(s.button("paste-confirmation").open, true);
+    equal(s.doc.querySelector("[data-paste-preview]").textContent.includes("<script>"), true);
+    s.doc.querySelector("[data-paste-cancel]").click();
+    equal(s.messages("write").length, 0);
+    equal(s.button("paste-confirmation").open, false);
+  });
+  await check("empty workspace retains hidden sessions and offers a real create action", (s) => {
+    equal(s.button("empty").classList.contains("hidden"), false);
+    equal(s.messages("create").length, 0);
+    equal(s.button("pane-toolbar").hidden, true);
+    equal(s.button("session-count").textContent, "0");
+    s.button("empty-new").click();
+    equal(s.messages("create").length, 1);
+    equal(s.button("empty").classList.contains("hidden"), true);
+  }, { sessions: sessions.filter((s) => s.hidden), liveIds: ["background"], layouts: [] });
+
+  const preview = new URL(location.href).searchParams.get("preview");
+  if (preview !== null) {
+    const s = await setup({ settings: { themeId: preview === "light" ? "github-light" : "midnight" },
+      ...(preview === "empty" ? { sessions: sessions.filter((s) => s.hidden), layouts: [] } : {}) });
+    const send = (id, data) => s.app.sendHost({ type: "data", id, data });
+    send("dev", "\x1b[90mPowerShell 7  ·  TerminalV\x1b[0m\r\n\r\n\x1b[36mC:\\Repos\\TerminalV\x1b[0m \x1b[90m›\x1b[0m git status\r\nOn branch main\r\nYour branch is up to date with 'origin/main'.\r\n\r\nChanges not staged for commit:\r\n  \x1b[33mmodified:   ui/src/chrome.css\r\n  modified:   ui/src/main.js\x1b[0m\r\n\r\n\x1b[36mC:\\Repos\\TerminalV\x1b[0m \x1b[90m›\x1b[0m npm run build\r\n\r\n\x1b[32m✓\x1b[0m modules transformed\r\n\x1b[32m✓\x1b[0m built successfully\r\n\r\n\x1b[36mC:\\Repos\\TerminalV\x1b[0m \x1b[90m›\x1b[0m ");
+    send("server", "\x1b[90mC:\\Repos\\TerminalV\\ui\x1b[0m\r\n> npm run dev\r\n\r\n  \x1b[32mVITE\x1b[0m  ready in 184 ms\r\n\r\n  \x1b[36m➜\x1b[0m Local: http://localhost:5173/\r\n\r\n\x1b[90m09:42:18\x1b[0m  page reload\r\n\x1b[90m09:42:23\x1b[0m  hmr update /src/chrome.css\r\n");
+    send("tests", "> npm test\r\n\r\n\x1b[32m✓\x1b[0m keyboard & focus\r\n\x1b[32m✓\x1b[0m copy & multiline paste\r\n\x1b[32m✓\x1b[0m session restoration\r\n\x1b[32m✓\x1b[0m split pane layout\r\n\r\n\x1b[90mTests completed successfully.\x1b[0m\r\n");
+    await delay();
+    if (preview === "settings") s.button("settings-btn").click();
+    if (preview === "compact") s.button("collapse-btn").click();
+    await delay(300);
+  }
+  document.body.dataset.testResult = btoa(unescape(encodeURIComponent(JSON.stringify(results))));
+</script>
