@@ -222,13 +222,13 @@ dotnet run --project src/TerminalV
 - [x] `irm` установщик и self-contained релиз win-x64
 - [x] `--smoke` для проверки ConPTY
 - [x] Самообновление: проверка GitHub Releases при старте, SHA-256, замена exe, откат, перезапуск
+- [x] Иконка приложения: голубая V с курсором на графитовом фоне, 9 размеров ICO
 
 ### Planned 📋
 
 - [ ] Профили оболочек (cmd, WSL)
 - [ ] Split-панели
 - [ ] Настройки шрифта и темы
-- [ ] Иконка приложения
 
 ### Known Issues ⚠️
 
@@ -239,6 +239,8 @@ dotnet run --project src/TerminalV
 ---
 
 ## Document Information
+
+Иконка v0.5.4: `scripts/make-icon.ps1` рисует геометрическую голубую `V_` на графитовом фоне без зависимости от шрифта. Курсор выровнен по пикселям; `Assets/TerminalV.ico` содержит 32-битные кадры 16, 20, 24, 32, 40, 48, 64, 128 и 256 px. Один ресурс используется в EXE, WPF-окне и заголовке. Параметр `-PreviewPath` создаёт PNG с крупным знаком и реальными маленькими размерами на светлом/тёмном фоне; локальное превью — `artifacts/icon-preview.png`. Терминальные сессии и протокол host не менялись. Подробности выпуска — `docs/releases/v0.5.4.md`.
 
 Автор v0.5.3: `ui/index.html` показывает «Автор: XYphrodite» под названием и версией; фиксированный адрес — `https://github.com/XYphrodite`. UI отменяет обычную навигацию и отправляет только `open-author`, включая средний клик; `TerminalBridge` открывает константный HTTPS-адрес через `UseShellExecute`, не принимает URL/команду из сообщения, освобождает объект Process и сообщает об ошибке запуска браузера. Нижняя часть sidebar остаётся в маленьком окне благодаря `min-height: 0`. `appearance-ui.fixture.html` проверяет ссылку, отсутствие PTY-ввода/создания/завершения сессий, независимость кнопки обновления, светлую/тёмную темы, узкий и свёрнутый sidebar. Превью: `artifacts/author-credit-preview.png`. Для этой UI-функции не нужен перезапуск фонового host; после установки достаточно перезапуска окна.
 
@@ -252,8 +254,10 @@ dotnet run --project src/TerminalV
 
 Проверки релизного ZIP v0.5.3: 171 Node/браузерная, 31 PTY/транспортная (PowerShell 5.1/7, Codex PATH, cmd, Ubuntu), 11 SQLite и 21 пакет/CLI/изолированное обновление — всего 234, без пропусков. Архив `artifacts/release-v0.5.3/TerminalV-win-x64.zip` — 66 629 910 байт, SHA-256 `e9d5d3fe50e2500ac32030cb3de232474dfc6feb4146da32f3da05f40b9a3c0d`. Логи — `verification-720555eb70f740328d2f48c9bc3f3db6/` рядом с ZIP. UI-fixtures используют распакованный архив; внешний браузер, рабочий WPF/host и установленное приложение не запускались и не обновлялись. Release-сборка успешна; неблокирующие сообщения npm allow-scripts и Vite о размере JS сохранены. Подробности — `docs/releases/v0.5.3.md`.
 
+Проверки релизного ZIP v0.5.4: 171 Node/браузерная, 31 PTY/транспортная (PowerShell 5.1/7, Codex PATH, cmd, Ubuntu), 11 SQLite и 21 пакет/CLI/изолированное обновление — всего 234, без пропусков. Дополнительно WPF-декодер проверил 9 размеров ICO; новая иконка подтверждена в EXE из распакованного архива, ProductVersion — `0.5.4`. ZIP `artifacts/release-v0.5.4/TerminalV-win-x64.zip` — 66 623 737 байт, SHA-256 `a5f225239b054ec2c7e54bec0cf0a9c8621ea055a37ae23a423ec3e25df8c966`; логи — `verification-5d5219c12be64ddbb5bbfa58090f887c/` рядом с ZIP. UI-fixtures используют распакованный архив, установленное приложение/host и пользовательская база не затрагивались; ручная проверка WPF-окна и панели задач в отдельной Windows-среде не проводилась. Подробности — `docs/releases/v0.5.4.md`.
+
 **Last Updated**: 2026-09-14
-**Version**: 0.5.3
+**Version**: 0.5.4
 **Status**: Active  
 **Repository**: `https://github.com/XYphrodite/TerminalV`  
 **Workspace**: `C:\Repos\TerminalV`
