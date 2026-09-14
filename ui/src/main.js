@@ -16,6 +16,7 @@ import { createTerminalSearch, isSearchShortcut, SEARCH_HIGHLIGHT_LIMIT } from "
 import { createSessionOptions, sessionMetadata, sessionGroups, SESSION_COLORS } from "./session-management.js";
 import { createNotifications, createNotificationOutput } from "./notifications.js";
 import { createLaunchProfiles, PROFILE_SHELLS } from "./launch-profiles.js";
+import { createLaunchMenu } from "./launch-menu.js";
 import { normalizeLayouts, layoutFor, leafIds, splitSession, detachSession, layoutGeometry,
   neighborPane, paneShortcut, MAX_PANES, MIN_PANE_WIDTH, MIN_PANE_HEIGHT } from "./pane-layout.js";
 import { createPaneView } from "./pane-view.js";
@@ -79,7 +80,7 @@ const settings = {
 const pasteController = createPasteController({
   dialog: document.getElementById("paste-confirmation"),
   readClipboard,
-  canPaste: (tab) => tabs.includes(tab) && tab.id === activeId && !tab.exited && !closeController.isOpen && !sessionOptions.isOpen && !launchProfiles.isOpen,
+  canPaste: (tab) => tabs.includes(tab) && tab.id === activeId && !tab.exited && !closeController.isOpen && !sessionOptions.isOpen && !launchProfiles.isOpen && !launchMenu.isOpen,
   restoreFocus: () => currentTab()?.term.focus()
 });
 
@@ -133,6 +134,7 @@ const sessionOptions = createSessionOptions({
 const launchProfiles = createLaunchProfiles({
   dialog: document.getElementById("launch-profiles"), post,
   onLaunch: (options) => newTab(options),
+  onChanged: () => launchMenu.refreshProfiles(),
   restoreFocus: () => {
     const tab = currentTab();
     if (tab) tab.term.focus();
@@ -140,8 +142,14 @@ const launchProfiles = createLaunchProfiles({
   }
 });
 
+const launchMenu = createLaunchMenu({
+  dialog: document.getElementById("launch-menu"), trigger: document.getElementById("launch-profiles-btn"), post,
+  getProfiles: () => launchProfiles.profiles,
+  onLaunch: options => newTab(options), onEdit: id => launchProfiles.open(id)
+});
+
 function isModalOpen() {
-  return pasteController.isOpen || closeController.isOpen || sessionOptions.isOpen || launchProfiles.isOpen;
+  return pasteController.isOpen || closeController.isOpen || sessionOptions.isOpen || launchProfiles.isOpen || launchMenu.isOpen;
 }
 
 const paneToolbar = document.getElementById("pane-toolbar");
@@ -515,6 +523,7 @@ function persistSessions() {
     hidden: tab.hidden,
     muted: tab.muted,
     shell: tab.shell || null,
+    wslDistribution: tab.wslDistribution || null,
     startupCommand: tab.startupCommand || null
   }));
   post({ type: "persist-sessions", sessions: payload, layouts });
@@ -546,7 +555,7 @@ function updateSessionSwitcher() {
 
 function sessionMetaText(tab) {
   return [tab.attention && "Сигнал", tab.muted && "Без звука", tab.pinned && "★",
-    tab.exited ? "завершена" : tab.shell && tab.shell !== "auto" ? PROFILE_SHELLS[tab.shell] || tab.shell : shellName]
+    tab.exited ? "завершена" : tab.shell === "wsl" ? `${tab.wslDistribution} · WSL` : tab.shell && tab.shell !== "auto" ? PROFILE_SHELLS[tab.shell] || tab.shell : shellName]
     .filter(Boolean).join(" · ");
 }
 
@@ -1036,7 +1045,7 @@ function attachCopyPaste(tab) {
 function newTab(options = {}) {
   // Restored tabs explicitly carry their own cwd (possibly null). Only a fresh
   // tab inherits the active session, never a title or another restored tab.
-  const cwd = Object.hasOwn(options, "cwd") ? options.cwd : currentTab()?.cwd;
+  const cwd = options.shell === "wsl" ? null : Object.hasOwn(options, "cwd") ? options.cwd : currentTab()?.shell === "wsl" ? null : currentTab()?.cwd;
   const metadata = sessionMetadata({ ...options, group: Object.hasOwn(options, "group") ? options.group : currentTab()?.group });
   const id = options.id || uuid();
   const index = options.title ? nextIndex : nextIndex++;
@@ -1108,6 +1117,7 @@ function newTab(options = {}) {
     customTitle: options.customTitle || undefined,
     cwd: cwd || undefined,
     shell: options.shell || undefined,
+    wslDistribution: options.wslDistribution || undefined,
     startupCommand: options.startupCommand || undefined,
     buffer: options.buffer || "",
     renaming: false,
@@ -1221,7 +1231,7 @@ function newTab(options = {}) {
     tab.overlay.classList.add("visible");
   } else {
     const createMsg = { type: "create", id, cols, rows, cwd: cwd || undefined,
-      shell: tab.shell, startupCommand: tab.startupCommand };
+      shell: tab.shell, startupCommand: tab.startupCommand, wslDistribution: tab.wslDistribution };
     if (!options.skipActivate) {
       fit.fit();
       createMsg.cols = term.cols;
@@ -1251,7 +1261,7 @@ function restart(tab) {
   tab.output.reset();
   tab.fit.fit();
   post({ type: "create", id: tab.id, cols: tab.term.cols, rows: tab.term.rows, cwd: tab.cwd,
-    shell: tab.shell, startupCommand: tab.startupCommand });
+    shell: tab.shell, startupCommand: tab.startupCommand, wslDistribution: tab.wslDistribution });
   tab.term.focus();
   renderTabs();
 }
@@ -1412,6 +1422,7 @@ function restoreSessions(records, savedLayouts) {
       buffer: isLive ? undefined : record.buffer,
       cwd: record.cwd,
       shell: record.shell,
+      wslDistribution: record.wslDistribution,
       startupCommand: record.startupCommand,
       restored: true,
       live: isLive,
@@ -1476,6 +1487,11 @@ function handleHost(message) {
     return;
   }
 
+  if (message.type === "launch-targets") {
+    launchMenu.receive(message);
+    return;
+  }
+
   if (message.type === "update") {
     handleUpdate(message);
     return;
@@ -1503,6 +1519,7 @@ function handleHost(message) {
   }
 
   if (message.type === "cwd") {
+    if (tab.shell === "wsl") return; // Windows cwd metadata is not a Linux working directory.
     if (typeof message.cwd === "string" && message.cwd.length > 0) tab.cwd = message.cwd;
     if (message.notice) tab.cwdNotice = message.notice;
     renderCwdNotice();
@@ -1556,7 +1573,7 @@ document.getElementById("launch-profiles-btn").addEventListener("click", () => {
   if (isModalOpen() || !settingsEl.classList.contains("hidden")) return;
   pasteController.cancel(currentTab());
   searchController.close({ focus: false });
-  launchProfiles.open();
+  launchMenu.open();
 });
 emptyNewBtn.addEventListener("click", () => newTab());
 updateApply.addEventListener("click", () => post({ type: "update-apply" }));

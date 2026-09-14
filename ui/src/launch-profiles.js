@@ -31,12 +31,12 @@ export function profileSession(profile) {
     cwd: profile.cwd, color: profile.color, startupCommand: profile.startupCommand };
 }
 
-export function createLaunchProfiles({ dialog, post, onLaunch, restoreFocus }) {
+export function createLaunchProfiles({ dialog, post, onLaunch, restoreFocus, onChanged = () => {} }) {
   const find = (name) => dialog.querySelector(`[data-profile-${name}]`);
-  const select = find("select"), form = dialog.querySelector("form"), fields = dialog.querySelector("fieldset");
+  const form = dialog.querySelector("form"), fields = dialog.querySelector("fieldset");
   const title = find("title"), shell = find("shell"), cwd = find("cwd"), color = find("color"), command = find("command");
   const error = find("error"), remove = find("delete"), confirmation = find("delete-confirm");
-  const cancel = find("cancel"), add = find("new");
+  const cancel = find("cancel");
   let profiles = [], draftId = null, pending = null, loadedCommand = "", displayedCommand = "";
   for (const [id, name] of Object.entries(PROFILE_SHELLS)) shell.add(new Option(name, id));
   for (const [id, value] of Object.entries(SESSION_COLORS)) color.add(new Option(value.name, id));
@@ -44,7 +44,8 @@ export function createLaunchProfiles({ dialog, post, onLaunch, restoreFocus }) {
   function fill(id) {
     const record = profiles.find((item) => item.id === id);
     draftId = record?.id || crypto.randomUUID();
-    select.value = record?.id || "";
+    dialog.querySelector("h2").textContent = record ? "Изменить профиль" : "Создать профиль";
+    find("launch").hidden = Boolean(record);
     title.value = record?.title || "";
     shell.value = record?.shell || "auto";
     cwd.value = record?.cwd || "";
@@ -57,12 +58,11 @@ export function createLaunchProfiles({ dialog, post, onLaunch, restoreFocus }) {
     error.textContent = "";
   }
   function render(id) {
-    select.replaceChildren(new Option("Новый профиль…", ""), ...profiles.map((p) => new Option(p.title, p.id)));
     fill(id);
   }
   function busy(value) {
     fields.disabled = value;
-    select.disabled = add.disabled = cancel.disabled = value;
+    cancel.disabled = value;
     dialog.setAttribute("aria-busy", String(value));
   }
   function close() {
@@ -71,7 +71,7 @@ export function createLaunchProfiles({ dialog, post, onLaunch, restoreFocus }) {
     restoreFocus();
   }
   function save(next, action, id) {
-    if (pending) return;
+    if (pending || !dialog.open) return;
     busy(true);
     error.textContent = "Сохранение…";
     const requestId = crypto.randomUUID();
@@ -94,11 +94,10 @@ export function createLaunchProfiles({ dialog, post, onLaunch, restoreFocus }) {
       const next = profiles.some((p) => p.id === profile.id)
         ? profiles.map((p) => p.id === profile.id ? profile : p) : [...profiles, profile];
       if (next.length > 100) throw new Error("Допустимо до 100 профилей.");
-      save(next, event.submitter?.dataset.profileLaunch !== undefined ? "launch" : "save", profile.id);
+      const launch = event.submitter?.dataset.profileLaunch !== undefined && !profiles.some(p => p.id === profile.id);
+      save(next, launch ? "launch" : "save", profile.id);
     } catch (failure) { error.textContent = failure.message; }
   });
-  select.addEventListener("change", () => fill(select.value));
-  add.addEventListener("click", () => { fill(null); title.focus(); });
   remove.addEventListener("click", () => {
     confirmation.hidden = false;
     find("delete-name").textContent = profiles.find((p) => p.id === draftId)?.title || "";
@@ -112,12 +111,13 @@ export function createLaunchProfiles({ dialog, post, onLaunch, restoreFocus }) {
 
   return {
     get isOpen() { return dialog.open; },
-    setProfiles(records) { if (!pending) { profiles = (records || []).map((p) => ({ ...p })); render(profiles[0]?.id); } },
-    open() {
+    get profiles() { return profiles.map(p => ({ ...p })); },
+    setProfiles(records) { if (!pending) { profiles = (records || []).map((p) => ({ ...p })); onChanged(); } },
+    open(id = null) {
       if (dialog.open) return;
-      render(profiles.some((p) => p.id === draftId) ? draftId : profiles[0]?.id);
+      render(id);
       dialog.showModal();
-      (profiles.length ? select : title).focus();
+      title.focus();
     },
     receive(message) {
       if (!pending || pending.requestId !== message.requestId) return;
@@ -127,6 +127,7 @@ export function createLaunchProfiles({ dialog, post, onLaunch, restoreFocus }) {
       busy(false);
       if (message.error) { error.textContent = `Не удалось сохранить: ${message.error}`; return; }
       profiles = message.profiles.map((p) => ({ ...p }));
+      onChanged();
       render(id);
       if (action === "launch") {
         const profile = profiles.find((p) => p.id === id);

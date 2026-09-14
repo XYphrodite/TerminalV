@@ -168,6 +168,107 @@ Check("profile transport sends one explicit create and reattachment never resend
     Equal(server.Requests.Any(r => r.GetProperty("type").GetString() is "write" or "kill"), false);
 });
 
+Check("WSL discovery parses UTF-16 decoded names, deduplicates and rejects control/option names", () =>
+{
+    var names = WslSupport.ParseDistributions("\uFEFFUbuntu\r\nDebian\r\nubuntu\r\nМой-Linux\r\n--exec\r\nbad\0name\r\nC:\\bad\r\ndocker-desktop\r\nrancher-desktop-data\r\n");
+    Equal(string.Join('|', names), "Ubuntu|Debian|Мой-Linux");
+    Equal(WslSupport.ParseDistributions("\r\n  ").Length, 0);
+});
+Check("WSL launch keeps the distribution a literal argument and starts in Linux home", () =>
+{
+    Equal(WslSupport.CommandLine(@"C:\Windows\System32\wsl.exe", "Ubuntu.Dev_24-04"),
+        "\"C:\\Windows\\System32\\wsl.exe\" --distribution Ubuntu.Dev_24-04 --cd ~");
+    foreach (var name in new string?[] { null, "", " ", "Ubuntu Dev", "Ubuntu&bad", "Ubuntu;bad", "--exec", "Ubuntu\" --exec bad", "bad\nname", "bad\\name", new('x', 257) })
+    {
+        try { WslSupport.CommandLine("wsl.exe", name); throw new Exception("Invalid distribution accepted"); }
+        catch (ArgumentException) { }
+    }
+    foreach (var action in new Action[] {
+        () => ShellResolver.Resolve(shell: "powershell", wslDistribution: "Ubuntu"),
+        () => ShellResolver.Resolve(shell: "wsl", wslDistribution: "Ubuntu", startupCommand: "unexpected"),
+        () => ShellResolver.Resolve(@"C:\Windows", "wsl", wslDistribution: "Ubuntu") })
+    {
+        try { action(); throw new Exception("Invalid WSL options accepted"); }
+        catch (ArgumentException) { }
+    }
+});
+Check("profile-capable legacy host cannot ignore a WSL distribution or replace it with Windows shell", () =>
+{
+    using var server = new IsolatedHost(supportsProfiles: true);
+    using var client = new SessionClient(server.PipeName, () => { });
+    Equal(client.Ensure(), true);
+    try { client.Create("wsl", 80, 24, null, "wsl", wslDistribution: "Ubuntu"); throw new Exception("Legacy WSL launch accepted"); }
+    catch (InvalidOperationException ex) { Equal(ex.Message.Contains("WSL"), true); }
+    Equal(server.Requests.Any(r => r.GetProperty("type").GetString() != "list"), false);
+});
+Check("WSL transport preserves distribution across explicit create and never relaunches on attach", () =>
+{
+    using var server = new IsolatedHost(supportsProfiles: true, supportsWsl: true);
+    using var client = new SessionClient(server.PipeName, () => { });
+    Equal(client.Ensure(), true);
+    client.Create("linux", 100, 30, null, "wsl", wslDistribution: "Ubuntu-Dev");
+    client.Attach("linux");
+    client.List();
+    var create = server.Requests.Single(r => r.GetProperty("type").GetString() == "create-profile");
+    Equal(create.GetProperty("wslDistribution").GetString(), "Ubuntu-Dev");
+    Equal(create.GetProperty("shell").GetString(), "wsl");
+    Equal(create.GetProperty("cwd").ValueKind, System.Text.Json.JsonValueKind.Null);
+    Equal(server.Requests.Any(r => r.GetProperty("type").GetString() is "write" or "kill"), false);
+    Equal(server.Requests.Single(r => r.GetProperty("type").GetString() == "attach").TryGetProperty("wslDistribution", out _), false);
+});
+
+// Opt-in to a known installed distribution. No Linux profile, file writes or distro shutdown.
+var wslDistribution = Environment.GetEnvironmentVariable("TERMINALV_TEST_WSL_DISTRIBUTION");
+if (!string.IsNullOrWhiteSpace(wslDistribution))
+{
+    Check("installed WSL distribution is discovered without launching a Linux shell", () =>
+    {
+        var catalog = LaunchCatalog.DiscoverAsync(CancellationToken.None).GetAwaiter().GetResult();
+        Equal(catalog.Targets.Any(t => t.Shell == "wsl" && t.WslDistribution == wslDistribution), true);
+        Equal(catalog.Targets.Any(t => t.Shell == "powershell"), true);
+        Equal(catalog.Targets.Any(t => t.Shell == "cmd"), true);
+    });
+    Check("WSL ConPTY accepts input, outputs Unicode and starts in Linux home without loading shell profiles", () =>
+    {
+        using var standardHandles = new GuiStandardHandles();
+        using var ready = new ManualResetEventSlim();
+        var output = new StringBuilder();
+        // --exec /bin/sh -c replaces the default interactive shell only in this test.
+        var script = "printf 'TERMINALV_WSL_READY\\n'; read -r reply; test \"$reply\" = PING && printf 'TERMINALV_WSL_INPUT_OK\\n'; " +
+            "test \"$PWD\" = \"$HOME\" && printf 'TERMINALV_WSL_HOME_OK\\n'; printf 'Проверка_кириллицы\\n'; exit 0";
+        var command = ShellResolver.Resolve(shell: "wsl", wslDistribution: wslDistribution).CommandLine +
+            " --exec /bin/sh -c \"" + script.Replace("\"", "\\\"") + "\"";
+        using var pty = ConPtySession.Start("wsl-test", command,
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), 120, 30, session =>
+            {
+                session.Output += chunk =>
+                {
+                    lock (output)
+                    {
+                        output.Append(chunk);
+                        if (output.ToString().Contains("TERMINALV_WSL_READY")) ready.Set();
+                    }
+                    if (chunk.Contains("\u001b[6n")) session.Write("\u001b[1;1R");
+                };
+            });
+        using var child = Process.GetProcessById(pty.ProcessId);
+        if (!ready.Wait(TimeSpan.FromSeconds(20)))
+        {
+            lock (output) throw new Exception("WSL did not become ready; exited=" + child.HasExited +
+                "; output=" + System.Text.Json.JsonSerializer.Serialize(output.ToString()));
+        }
+        pty.Write("PING\r");
+        Equal(SpinWait.SpinUntil(() => { lock (output) return output.ToString().Contains("Проверка_кириллицы"); }, 10000), true);
+        lock (output)
+        {
+            Equal(output.ToString().Contains("TERMINALV_WSL_INPUT_OK"), true);
+            Equal(output.ToString().Contains("TERMINALV_WSL_HOME_OK"), true);
+        }
+        Equal(child.WaitForExit(5000), true);
+    });
+}
+else Console.WriteLine("SKIP installed WSL integration (set TERMINALV_TEST_WSL_DISTRIBUTION to opt in)");
+
 var testRoot = Directory.CreateTempSubdirectory("terminalv-cwd-test-").FullName;
 try
 {

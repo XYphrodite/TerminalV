@@ -28,6 +28,7 @@ internal sealed class SessionClient : IDisposable
     public event Action<string, string>? Error;
     public bool? CwdTrackingSupported { get; private set; }
     public bool? LaunchProfilesSupported { get; private set; }
+    public bool? WslLaunchSupported { get; private set; }
 
     // Tests use a private pipe and a no-op starter, never the user's live host.
     public SessionClient(string pipeName = SessionHost.PipeName, Action? startHost = null)
@@ -72,6 +73,7 @@ internal sealed class SessionClient : IDisposable
         _pipe = pipe;
         _replay.Reset();
         LaunchProfilesSupported = null;
+        WslLaunchSupported = null;
         _writer = new StreamWriter(pipe, new UTF8Encoding(false), 4096, leaveOpen: true) { AutoFlush = true };
         _readCts = new CancellationTokenSource();
         _ = Task.Factory.StartNew(() => ReadLoop(_readCts.Token), TaskCreationOptions.LongRunning);
@@ -103,6 +105,7 @@ internal sealed class SessionClient : IDisposable
                 supported.ValueKind == JsonValueKind.True;
             LaunchProfilesSupported = root.TryGetProperty("launchProfilesSupported", out var profiles) &&
                 profiles.ValueKind == JsonValueKind.True;
+            WslLaunchSupported = root.TryGetProperty("wslLaunchSupported", out var wsl) && wsl.ValueKind == JsonValueKind.True;
 
             ready.Set();
         }
@@ -125,17 +128,20 @@ internal sealed class SessionClient : IDisposable
         return ids;
     }
 
-    public void Create(string id, int cols, int rows, string? cwd, string? shell = null, string? startupCommand = null)
+    public void Create(string id, int cols, int rows, string? cwd, string? shell = null, string? startupCommand = null, string? wslDistribution = null)
     {
         if (shell is not null)
         {
             // Never let an older host silently ignore the selected shell or command.
             LaunchProfilesSupported = null;
+            WslLaunchSupported = null;
             List();
+            if (shell == "wsl" && WslLaunchSupported != true)
+                throw new InvalidOperationException("Фоновый процесс не поддерживает запуск WSL. Сохраните работу и перезагрузите Windows для его обновления. Работающие сессии не прерывались.");
             if (LaunchProfilesSupported != true)
                 throw new InvalidOperationException("Фоновый процесс не поддерживает профили запуска. Сохраните работу и перезагрузите Windows для его обновления. Работающие сессии не прерывались.");
         }
-        Send(new { type = shell is null ? "create" : "create-profile", id, cols, rows, cwd, shell, startupCommand });
+        Send(new { type = shell is null ? "create" : "create-profile", id, cols, rows, cwd, shell, startupCommand, wslDistribution });
     }
 
     public void Attach(string id)

@@ -47,6 +47,7 @@ try
         Equal(old.Muted, false);
         Equal(old.Shell, null);
         Equal(old.StartupCommand, null);
+        Equal(old.WslDistribution, null);
     });
 
     Check("hidden sessions and metadata survive disposal and reopen without becoming active", () =>
@@ -199,6 +200,26 @@ try
         var pair = PaneLayout.Normalize([new() { Axis = "columns", Ratio = 10,
             First = new() { SessionId = "0" }, Second = new() { SessionId = "1" } }], sessions);
         Equal(pair[0].Ratio, .9);
+    });
+
+    Check("WSL distribution survives reopening without changing profiles or other session metadata", () =>
+    {
+        var wslPath = Path.Combine(root, "wsl.db");
+        using (var db = new AppDatabase(wslPath))
+        {
+            db.SaveProfiles([new() { Id = "saved", Title = "Windows profile", Shell = "powershell" }]);
+            db.SaveSessions([new() { Id = "linux", Title = "Ubuntu", Shell = "wsl", WslDistribution = "Ubuntu Dev's", Buffer = "Linux screen", Hidden = true }]);
+        }
+        using var reopened = new AppDatabase(wslPath);
+        var session = reopened.LoadSessions().Single();
+        Equal(session.Shell, "wsl");
+        Equal(session.WslDistribution, "Ubuntu Dev's");
+        Equal(session.Buffer, "Linux screen");
+        Equal(session.Cwd, null);
+        Equal(session.Hidden, true);
+        Equal(reopened.LoadProfiles().Single().Shell, "powershell");
+        reopened.SaveSessions([session]);
+        Equal(reopened.LoadSessions().Single().WslDistribution, "Ubuntu Dev's");
     });
 
     Check("fresh database has the same schema and reopening migration is idempotent", () =>

@@ -27,7 +27,7 @@
             <span class="new-tab-label">Новая вкладка</span>
             <kbd class="new-tab-shortcut" aria-hidden="true">Ctrl ⇧ T</kbd>
           </button>
-          <button id="launch-profiles-btn" type="button" class="ghost" title="Профили запуска" aria-label="Профили запуска"><span data-icon="profiles"></span><span class="profile-button-label">Профили запуска</span><span class="profile-button-chevron" data-icon="chevron"></span></button>
+          <button id="launch-profiles-btn" type="button" class="ghost" title="Профили и оболочки" aria-label="Профили и оболочки" aria-haspopup="dialog" aria-expanded="false" aria-controls="launch-menu"><span data-icon="profiles"></span><span class="profile-button-label">Профили и оболочки</span><span class="profile-button-chevron" data-icon="chevron"></span></button>
           <div id="update-bar" class="update-bar hidden">
             <div id="update-text" class="update-text"></div>
             <button id="update-apply" type="button">Обновить</button>
@@ -149,14 +149,22 @@
         </div>
       </form>
     </dialog>
+    <dialog id="launch-menu" class="launch-menu" aria-labelledby="launch-menu-title">
+      <div class="launch-menu-head"><h2 id="launch-menu-title">Новая сессия</h2><button type="button" class="icon-btn" data-launch-close aria-label="Закрыть меню" title="Закрыть (Esc)" data-icon="close"></button></div>
+      <div class="launch-section-label">Сохранённые профили</div>
+      <div data-launch-profiles></div>
+      <div class="launch-section-label">Оболочки</div>
+      <div data-launch-targets></div>
+      <p class="launch-status" data-launch-status role="status" aria-live="polite"></p>
+      <div class="launch-menu-foot">
+        <button type="button" data-launch-new data-launch-key="new"><span data-icon="plus"></span>Создать профиль</button>
+        <button type="button" class="icon-btn" data-launch-refresh data-launch-key="refresh" aria-label="Обновить список оболочек и WSL" title="Обновить список оболочек и WSL" data-icon="restore"></button>
+      </div>
+    </dialog>
     <dialog id="launch-profiles" class="confirmation-dialog" aria-labelledby="launch-profiles-title">
       <form>
         <div class="confirmation-content">
-          <h2 id="launch-profiles-title">Профили запуска</h2>
-          <div class="profile-picker">
-            <select data-profile-select aria-label="Сохранённый профиль"></select>
-            <button type="button" class="ghost" data-profile-new>Новый</button>
-          </div>
+          <h2 id="launch-profiles-title">Создать профиль</h2>
           <fieldset>
             <legend class="sr-only">Параметры запуска</legend>
             <label class="field-label" for="profile-title">Название вкладки</label>
@@ -172,7 +180,7 @@
             <p class="notification-hint">Команда выполняется при явном запуске или перезапуске сессии, но не при подключении к работающей. Вводите только команды, которым доверяете. Для cmd — одна строка.</p>
             <div class="profile-actions">
               <button type="submit" class="ghost" data-profile-save>Сохранить</button>
-              <button type="submit" class="paste-confirm" data-profile-launch>Сохранить и запустить</button>
+              <button type="submit" class="paste-confirm" data-profile-launch>Создать и запустить</button>
               <button type="button" class="ghost" data-profile-delete>Удалить…</button>
             </div>
             <div class="profile-delete-confirm" data-profile-delete-confirm hidden>

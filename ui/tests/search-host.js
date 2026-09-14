@@ -10,6 +10,15 @@ window.chrome.webview = {
   addEventListener(type, listener) { if (type === "message") receive = listener; },
   postMessage(message) {
     window.hostMessages.push(message);
+    if (message.type === "list-launch-targets" && window.catalogMode !== "manual") {
+      queueMicrotask(() => window.sendHost({ type: "launch-targets", requestId: message.requestId,
+        targets: window.testLaunchTargets || [
+          { id: "powershell", title: "Windows PowerShell", shell: "powershell" },
+          { id: "pwsh", title: "PowerShell 7", shell: "pwsh" },
+          { id: "cmd", title: "Командная строка", shell: "cmd" },
+          { id: "wsl:Ubuntu", title: "Ubuntu", shell: "wsl", wslDistribution: "Ubuntu" }
+        ], ...(window.catalogMode === "error" ? { error: "Test WSL unavailable" } : {}) }));
+    }
     if (message.type === "persist-profiles" && window.profileSaveMode !== "manual") {
       queueMicrotask(() => window.sendHost({ type: "profiles-saved", requestId: message.requestId,
         ...(window.profileSaveMode === "error" ? { error: "Test database unavailable" } : { profiles: message.profiles }) }));
