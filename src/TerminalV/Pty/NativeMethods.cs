@@ -117,7 +117,7 @@ internal static class NativeMethods
         IntPtr lpThreadAttributes,
         bool bInheritHandles,
         uint dwCreationFlags,
-        IntPtr lpEnvironment,
+        SessionEnvironment lpEnvironment,
         string? lpCurrentDirectory,
         ref StartupInfoEx lpStartupInfo,
         out ProcessInformation lpProcessInformation);

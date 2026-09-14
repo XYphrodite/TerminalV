@@ -29,6 +29,7 @@ internal sealed class SessionClient : IDisposable
     public bool? CwdTrackingSupported { get; private set; }
     public bool? LaunchProfilesSupported { get; private set; }
     public bool? WslLaunchSupported { get; private set; }
+    public bool? EnvironmentRefreshSupported { get; private set; }
 
     // Tests use a private pipe and a no-op starter, never the user's live host.
     public SessionClient(string pipeName = SessionHost.PipeName, Action? startHost = null)
@@ -74,6 +75,7 @@ internal sealed class SessionClient : IDisposable
         _replay.Reset();
         LaunchProfilesSupported = null;
         WslLaunchSupported = null;
+        EnvironmentRefreshSupported = null;
         _writer = new StreamWriter(pipe, new UTF8Encoding(false), 4096, leaveOpen: true) { AutoFlush = true };
         _readCts = new CancellationTokenSource();
         _ = Task.Factory.StartNew(() => ReadLoop(_readCts.Token), TaskCreationOptions.LongRunning);
@@ -106,6 +108,8 @@ internal sealed class SessionClient : IDisposable
             LaunchProfilesSupported = root.TryGetProperty("launchProfilesSupported", out var profiles) &&
                 profiles.ValueKind == JsonValueKind.True;
             WslLaunchSupported = root.TryGetProperty("wslLaunchSupported", out var wsl) && wsl.ValueKind == JsonValueKind.True;
+            EnvironmentRefreshSupported = root.TryGetProperty("environmentRefreshSupported", out var environment) &&
+                environment.ValueKind == JsonValueKind.True;
 
             ready.Set();
         }

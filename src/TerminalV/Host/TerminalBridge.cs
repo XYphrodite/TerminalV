@@ -67,6 +67,7 @@ internal sealed class TerminalBridge : IDisposable
             liveIds = LiveIds(),
             cwdTrackingSupported = _host.CwdTrackingSupported,
             launchProfilesSupported = _host.LaunchProfilesSupported,
+            environmentRefreshSupported = _host.EnvironmentRefreshSupported,
             fonts = SystemFonts()
         });
 

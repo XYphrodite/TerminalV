@@ -100,7 +100,8 @@ internal static class SessionHost
                         ids = Sessions.Keys.ToArray(),
                         cwdTrackingSupported = true,
                         launchProfilesSupported = true,
-                        wslLaunchSupported = true
+                        wslLaunchSupported = true,
+                        environmentRefreshSupported = true
                     });
                     break;
                 case "create":

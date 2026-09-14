@@ -11,7 +11,7 @@ internal sealed class IsolatedHost : IDisposable
     private readonly NamedPipeServerStream _pipe;
     private readonly Task _serve;
 
-    public IsolatedHost(bool supportsProfiles, bool supportsWsl = false)
+    public IsolatedHost(bool supportsProfiles, bool supportsWsl = false, bool supportsEnvironmentRefresh = false)
     {
         _pipe = new NamedPipeServerStream(PipeName, PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
         _serve = Task.Run(async () =>
@@ -31,7 +31,8 @@ internal sealed class IsolatedHost : IDisposable
                         case "list":
                             await writer.WriteLineAsync(System.Text.Json.JsonSerializer.Serialize(new {
                                 type = "list", ids = Array.Empty<string>(), launchProfilesSupported = supportsProfiles,
-                                wslLaunchSupported = supportsWsl }));
+                                wslLaunchSupported = supportsWsl,
+                                environmentRefreshSupported = supportsEnvironmentRefresh }));
                             break;
                         case "attach":
                             await writer.WriteLineAsync(JsonSerializer.Serialize(new {

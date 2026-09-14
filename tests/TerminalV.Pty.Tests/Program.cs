@@ -21,6 +21,8 @@ string Marker(string path, string end = "\a") => $"\u001b]9;9;\"{path}\"{end}";
 string Quote(string path) => "'" + path.Replace("'", "''") + "'";
 string Encode(string script) => Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
 
+EnvironmentTests.Run(Check);
+
 Check("OSC metadata survives every possible chunk boundary and both terminators", () =>
 {
     foreach (var end in new[] { "\a", "\u001b\\", "\u009c" })

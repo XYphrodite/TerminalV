@@ -1471,7 +1471,9 @@ function handleHost(message) {
     window.__liveIds = message.liveIds || [];
     legacyHostNotice = message.cwdTrackingSupported === false
       ? "Фоновый процесс TerminalV старой версии: текущая папка пока не отслеживается. После завершения нужных задач перезагрузите Windows. Работающие сессии не прерываются."
-      : "";
+      : message.environmentRefreshSupported === false
+        ? "Фоновый процесс TerminalV старой версии: PATH для новых вкладок пока не обновляется. Сохраните работу и перезагрузите Windows, чтобы включить исправление. Работающие сессии не прерываются."
+        : "";
     syncSettingsForm();
     if (tabs.length === 0) {
       restoreSessions(message.sessions, message.layouts);

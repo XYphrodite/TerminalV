@@ -325,14 +325,15 @@ internal sealed class ConPtySession : IDisposable
     {
         var cwd = Directory.Exists(workingDirectory) ? workingDirectory : null;
         var mutableCommand = new System.Text.StringBuilder(commandLine);
+        using var environment = SessionEnvironment.Create();
         var success = NativeMethods.CreateProcess(
             null,
             mutableCommand,
             IntPtr.Zero,
             IntPtr.Zero,
             false,
-            NativeMethods.ExtendedStartupInfoPresent,
-            IntPtr.Zero,
+            NativeMethods.ExtendedStartupInfoPresent | NativeMethods.CreateUnicodeEnvironment,
+            environment,
             cwd,
             ref startupInfo,
             out var processInfo);
