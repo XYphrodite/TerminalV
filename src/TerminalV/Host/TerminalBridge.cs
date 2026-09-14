@@ -164,6 +164,22 @@ internal sealed class TerminalBridge : IDisposable
                     SystemSounds.Beep.Play();
                 }
                 break;
+            case "open-author":
+                _dispatcher.BeginInvoke(() =>
+                {
+                    // A fixed HTTPS destination, not an arbitrary URL/command from the WebView.
+                    const string authorUrl = "https://github.com/XYphrodite";
+                    try
+                    {
+                        using var browser = Process.Start(new ProcessStartInfo(authorUrl) { UseShellExecute = true });
+                    }
+                    catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
+                    {
+                        MessageBox.Show("Не удалось открыть браузер. Профиль автора: " + authorUrl,
+                            "TerminalV", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    }
+                });
+                break;
             case "update-check":
                 _ = CheckUpdatesAsync(silent: false);
                 break;
