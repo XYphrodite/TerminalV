@@ -9,73 +9,80 @@
     <div id="app">
       <aside id="sidebar">
         <div class="sidebar-head">
-          <span class="sessions-label">Сессии</span>
+          <div class="sessions-heading"><span class="sessions-label">Сессии</span><span id="session-count" class="count-badge">0</span></div>
           <div class="sidebar-head-actions">
-            <button id="search-btn" type="button" class="icon-btn" title="Поиск по выводу (Ctrl+Shift+F)" aria-label="Поиск по выводу">⌕</button>
-            <button id="settings-btn" type="button" class="icon-btn" title="Оформление (Ctrl+,)">⚙</button>
-            <button id="collapse-btn" type="button" class="icon-btn" title="Свернуть список (Ctrl+B)">‹</button>
+            <button id="search-btn" type="button" class="icon-btn" title="Поиск по выводу (Ctrl+Shift+F)" aria-label="Поиск по выводу" data-icon="search"></button>
+            <button id="settings-btn" type="button" class="icon-btn" title="Оформление (Ctrl+,)" aria-label="Оформление" data-icon="settings"></button>
+            <button id="collapse-btn" type="button" class="icon-btn" title="Свернуть список (Ctrl+B)" aria-label="Свернуть список сессий" aria-expanded="true" data-icon="sidebar"></button>
           </div>
         </div>
         <div class="session-tools">
-          <input id="session-filter" type="search" placeholder="Найти сессию…" aria-label="Поиск сессии по названию или группе" autocomplete="off" spellcheck="false" />
-          <button id="hidden-sessions" type="button" class="ghost" aria-pressed="false" title="Показать скрытые сессии">Скрытые · 0</button>
+          <div class="session-filter-wrap"><span data-icon="search"></span><input id="session-filter" type="search" placeholder="Найти сессию…" aria-label="Поиск сессии по названию или группе" autocomplete="off" spellcheck="false" /></div>
+          <button id="hidden-sessions" type="button" class="ghost" aria-pressed="false" title="Показать скрытые сессии"><span data-icon="hidden"></span><span data-hidden-label>Скрытые · 0</span></button>
         </div>
         <div id="tabs" class="tabs" role="tablist" aria-label="Сессии"></div>
         <div class="sidebar-foot">
-          <button id="new-tab" type="button">
-            <span class="plus">+</span>
+          <button id="new-tab" type="button" title="Новая вкладка (Ctrl+Shift+T)" aria-label="Новая вкладка">
+            <span class="plus" data-icon="plus"></span>
             <span class="new-tab-label">Новая вкладка</span>
+            <kbd class="new-tab-shortcut" aria-hidden="true">Ctrl ⇧ T</kbd>
           </button>
-          <div class="hint">Ctrl+Shift+T</div>
-          <button id="launch-profiles-btn" type="button" class="ghost" title="Профили запуска" aria-label="Профили запуска">Профили<span aria-hidden="true"> ▾</span></button>
+          <button id="launch-profiles-btn" type="button" class="ghost" title="Профили запуска" aria-label="Профили запуска"><span data-icon="profiles"></span><span class="profile-button-label">Профили запуска</span><span class="profile-button-chevron" data-icon="chevron"></span></button>
           <div id="update-bar" class="update-bar hidden">
             <div id="update-text" class="update-text"></div>
             <button id="update-apply" type="button">Обновить</button>
           </div>
-          <button id="app-version" type="button" class="version" title="Проверить обновления">v0.5.0</button>
+          <div class="sidebar-signature"><span class="wordmark">Terminal<span>V</span></span><button id="app-version" type="button" class="version" title="Проверить обновления">v0.5.0</button></div>
         </div>
       </aside>
       <main id="main">
         <div id="pane-toolbar" class="pane-toolbar" role="group" aria-label="Разделение экрана" hidden>
-          <span id="pane-count">Панели · 1</span>
-          <button id="split-right" type="button" class="ghost" title="Разделить справа (Alt+Shift+=)">▥ Справа</button>
-          <button id="split-down" type="button" class="ghost" title="Разделить снизу (Alt+Shift+-)">▤ Снизу</button>
-          <button id="detach-pane" type="button" class="ghost" title="Показать активную панель отдельно, не завершая сессию">Отделить</button>
+          <div class="workspace-context"><span class="workspace-icon" data-icon="terminal"></span><div class="workspace-labels"><div id="workspace-title">Терминал</div><div id="workspace-path" dir="auto"></div></div></div>
+          <div class="pane-actions">
+            <span id="pane-count" class="count-badge">Панели · 1</span>
+            <button id="split-right" type="button" class="ghost" title="Разделить справа (Alt+Shift+=)" aria-label="Разделить справа"><span data-icon="right"></span><span class="action-label">Справа</span></button>
+            <button id="split-down" type="button" class="ghost" title="Разделить снизу (Alt+Shift+-)" aria-label="Разделить снизу"><span data-icon="down"></span><span class="action-label">Снизу</span></button>
+            <button id="detach-pane" type="button" class="ghost" title="Показать активную панель отдельно, не завершая сессию" aria-label="Отделить панель"><span data-icon="detach"></span></button>
+          </div>
         </div>
         <section id="terminal-search" class="terminal-search" role="search" aria-label="Поиск по выводу текущей вкладки" hidden>
           <input type="text" data-search-input aria-label="Найти в текущей вкладке" placeholder="Найти в текущей вкладке" autocomplete="off" spellcheck="false" />
           <span class="search-count" data-search-count role="status" aria-live="polite" aria-atomic="true"></span>
           <div class="search-actions">
             <button type="button" data-search-case aria-label="Учитывать регистр" aria-pressed="false" title="Учитывать регистр">Aa</button>
-            <button type="button" data-search-previous aria-label="Предыдущее совпадение" title="Предыдущее совпадение (Shift+Enter)" disabled>↑</button>
-            <button type="button" data-search-next aria-label="Следующее совпадение" title="Следующее совпадение (Enter)" disabled>↓</button>
-            <button type="button" data-search-close aria-label="Закрыть поиск" title="Закрыть поиск (Esc)">×</button>
+            <button type="button" data-search-previous aria-label="Предыдущее совпадение" title="Предыдущее совпадение (Shift+Enter)" data-icon="up" disabled></button>
+            <button type="button" data-search-next aria-label="Следующее совпадение" title="Следующее совпадение (Enter)" data-icon="arrowDown" disabled></button>
+            <button type="button" data-search-close aria-label="Закрыть поиск" title="Закрыть поиск (Esc)" data-icon="close"></button>
           </div>
         </section>
         <div id="cwd-notice" class="cwd-notice" role="status" hidden>
           <span></span>
-          <button type="button" aria-label="Закрыть уведомление о папке" title="Закрыть уведомление">×</button>
+          <button type="button" class="icon-btn" aria-label="Закрыть уведомление о папке" title="Закрыть уведомление" data-icon="close"></button>
         </div>
         <div id="panes"></div>
         <div id="empty" class="empty hidden">
-          <div class="empty-mark">V</div>
-          <div class="empty-title">Нет открытых сессий</div>
-          <div class="empty-sub">Вертикальные вкладки слева, PowerShell внутри.</div>
-          <button type="button" id="empty-new">Запустить оболочку</button>
+          <div class="empty-mark" data-icon="terminal"></div>
+          <div class="empty-eyebrow">ВАШЕ РАБОЧЕЕ ПРОСТРАНСТВО</div>
+          <div class="empty-title">Начнём с терминала</div>
+          <div class="empty-sub">Откройте новую сессию или вернитесь к скрытой в списке слева.</div>
+          <button type="button" id="empty-new"><span data-icon="plus"></span>Запустить оболочку</button>
+          <div class="empty-shortcuts"><span><kbd>Ctrl ⇧ T</kbd> новая сессия</span><span><kbd>Ctrl ⇧ F</kbd> поиск по выводу</span></div>
         </div>
       </main>
     </div>
 
     <div id="notification-status" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
-    <div id="settings" class="settings hidden" role="dialog" aria-label="Оформление">
+    <div id="settings" class="settings hidden" role="dialog" aria-modal="true" aria-labelledby="settings-title">
       <div class="settings-panel">
         <div class="settings-head">
-          <span>Оформление</span>
-          <button id="settings-close" type="button" class="icon-btn" title="Закрыть">×</button>
+          <div><div class="settings-eyebrow">ПОД ВАШ СТИЛЬ</div><h2 id="settings-title">Оформление</h2></div>
+          <button id="settings-close" type="button" class="icon-btn" title="Закрыть (Esc)" aria-label="Закрыть оформление" data-icon="close"></button>
         </div>
 
         <label class="field-label">Тема</label>
         <div id="theme-grid" class="theme-grid"></div>
+
+        <div class="settings-section-label">Типографика</div>
 
         <label class="field-label" for="font-family">Шрифт терминала</label>
         <select id="font-family"></select>
@@ -88,9 +95,9 @@
           <span id="zoom-value">100%</span>
         </div>
 
-        <label class="field-label">Фон сессий</label>
+        <div class="settings-section-label">Фон сессий</div>
         <div class="bg-row">
-          <button id="bg-pick" type="button">Выбрать фото</button>
+          <button id="bg-pick" type="button"><span data-icon="image"></span>Выбрать фото</button>
           <button id="bg-clear" type="button" class="ghost">Убрать</button>
         </div>
         <label class="field-label" for="bg-opacity">Прозрачность фото <span id="bg-opacity-value">25%</span></label>

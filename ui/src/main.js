@@ -6,6 +6,8 @@ import { SerializeAddon } from "@xterm/addon-serialize";
 import { SearchAddon } from "@xterm/addon-search";
 import "@xterm/xterm/css/xterm.css";
 import "./styles.css";
+import "./chrome.css";
+import { icon, mountIcons } from "./icons.js";
 import { THEMES, getTheme } from "./themes.js";
 import { getPlainSelection } from "./selection.js";
 import { createPasteController } from "./paste-confirmation.js";
@@ -17,6 +19,8 @@ import { createLaunchProfiles, PROFILE_SHELLS } from "./launch-profiles.js";
 import { normalizeLayouts, layoutFor, leafIds, splitSession, detachSession, layoutGeometry,
   neighborPane, paneShortcut, MAX_PANES, MIN_PANE_WIDTH, MIN_PANE_HEIGHT } from "./pane-layout.js";
 import { createPaneView } from "./pane-view.js";
+
+mountIcons(document);
 
 const tabsEl = document.getElementById("tabs");
 const panesEl = document.getElementById("panes");
@@ -170,11 +174,23 @@ function updatePaneToolbar() {
   const count = visibleTabs().length;
   paneToolbar.hidden = !count;
   document.getElementById("pane-count").textContent = `Панели · ${count}`;
+  updateWorkspaceContext();
   splitRightBtn.disabled = !canSplit("columns");
   splitDownBtn.disabled = !canSplit("rows");
   detachPaneBtn.disabled = count < 2;
   splitRightBtn.title = splitRightBtn.disabled ? `Недостаточно места или достигнут предел ${MAX_PANES} панелей` : "Разделить справа (Alt+Shift+=)";
   splitDownBtn.title = splitDownBtn.disabled ? `Недостаточно места или достигнут предел ${MAX_PANES} панелей` : "Разделить снизу (Alt+Shift+-)";
+}
+
+function updateWorkspaceContext() {
+  const tab = currentTab();
+  const title = document.getElementById("workspace-title");
+  const path = document.getElementById("workspace-path");
+  title.textContent = tab ? tab.customTitle || tab.title : "Терминал";
+  title.title = title.textContent;
+  path.textContent = tab?.cwd || (tab ? sessionMetaText(tab) : "");
+  path.title = path.textContent;
+  paneToolbar.classList.toggle("session-exited", Boolean(tab?.exited));
 }
 
 function renderPaneLayout() {
@@ -318,11 +334,14 @@ function applyChrome() {
   root.style.setProperty("--scrollbar-hover", chrome.scrollbarHover);
   root.style.setProperty("--overlay", chrome.overlay);
   root.style.setProperty("--font-mono", settings.fontFamily);
+  root.style.colorScheme = theme.kind;
+  root.dataset.themeKind = theme.kind;
   appEl.classList.toggle("collapsed", settings.sidebarCollapsed);
-  collapseBtn.textContent = settings.sidebarCollapsed ? "›" : "‹";
+  collapseBtn.setAttribute("aria-expanded", String(!settings.sidebarCollapsed));
   collapseBtn.title = settings.sidebarCollapsed
     ? "Показать сессии (Ctrl+B)"
     : "Свернуть список (Ctrl+B)";
+  collapseBtn.setAttribute("aria-label", collapseBtn.title);
   document.body.style.background = chrome.bg;
 }
 
@@ -516,7 +535,9 @@ window.terminalvFlush = () => {
 function updateSessionSwitcher() {
   const target = tabs.filter((tab) => Boolean(tab.hidden) !== showHiddenSessions);
   const signals = target.filter((tab) => tab.attention).length;
-  hiddenSessionsBtn.textContent = `${showHiddenSessions ? "Открытые" : "Скрытые"} · ${target.length}${signals ? ` · ! ${signals}` : ""}`;
+  hiddenSessionsBtn.querySelector("[data-hidden-label]").textContent = `${showHiddenSessions ? "Открытые" : "Скрытые"} · ${target.length}${signals ? ` · ! ${signals}` : ""}`;
+  document.getElementById("session-count").textContent = String(tabs.filter((tab) => !tab.hidden).length);
+  updateWorkspaceContext();
   hiddenSessionsBtn.setAttribute("aria-pressed", String(showHiddenSessions));
   hiddenSessionsBtn.title = `${showHiddenSessions ? "Показать открытые сессии" : "Показать скрытые сессии"}${signals ? `. Сигналов: ${signals}` : ""}`;
   hiddenSessionsBtn.setAttribute("aria-label", hiddenSessionsBtn.title);
@@ -531,6 +552,8 @@ function sessionMetaText(tab) {
 
 function applyNotificationRow(row, tab) {
   row.classList.toggle("has-attention", Boolean(tab.attention));
+  row.classList.toggle("exited", Boolean(tab.exited));
+  tab.pane.classList.toggle("exited", Boolean(tab.exited));
   row.title = `${tab.customTitle || tab.title}${tab.attention ? " — получен сигнал" : ""}${tab.muted ? " — без звука" : ""}`;
   row.setAttribute("aria-label", row.title);
 }
@@ -566,6 +589,10 @@ function renderTabs() {
 
       const accent = document.createElement("span");
       accent.className = "tab-accent";
+      accent.setAttribute("aria-hidden", "true");
+      const symbol = document.createElement("span");
+      symbol.className = "tab-symbol";
+      symbol.append(icon("terminal"));
 
       const body = document.createElement("div");
       body.className = "tab-body";
@@ -604,7 +631,7 @@ function renderTabs() {
       const options = document.createElement("button");
       options.className = "tab-options";
       options.type = "button";
-      options.textContent = "⋯";
+      options.append(icon("more"));
       options.title = "Группа, цвет, закрепление, звук и скрытие";
       options.setAttribute("aria-label", "Управление сессией");
       options.addEventListener("click", (event) => { event.stopPropagation(); showSessionOptions(tab); });
@@ -615,7 +642,7 @@ function renderTabs() {
       close.type = "button";
       close.title = tab.hidden ? "Вернуть сессию" : "Закрыть";
       close.setAttribute("aria-label", close.title);
-      close.textContent = tab.hidden ? "↩" : "×";
+      close.append(icon(tab.hidden ? "restore" : "close"));
       close.addEventListener("click", (event) => {
         event.stopPropagation();
         if (tab.hidden) revealTab(tab);
@@ -623,7 +650,7 @@ function renderTabs() {
       });
 
       close.addEventListener("dblclick", (event) => event.stopPropagation());
-      row.append(accent, body, options, close);
+      row.append(accent, symbol, body, options, close);
       row.addEventListener("click", () => { if (tab.hidden) revealTab(tab); else activate(tab.id); });
       row.addEventListener("contextmenu", (event) => { event.preventDefault(); showSessionOptions(tab); });
       row.addEventListener("keydown", (event) => {
@@ -694,7 +721,7 @@ function renderTabs() {
   emptyEl.classList.toggle("hidden", openTabs().length > 0);
   emptyEl.querySelector(".empty-sub").textContent = hiddenCount
     ? "Скрытые сессии доступны в списке слева. Верните нужную или создайте новую."
-    : "Вертикальные вкладки слева, PowerShell внутри.";
+    : "Команды, проекты и инструменты — каждый в своей сессии.";
 }
 
 function clearTabDropIndicators() {
@@ -762,6 +789,8 @@ function ensureWebgl(tab) {
 }
 
 function patchTabRow(tab) {
+  tab.pane.classList.toggle("exited", Boolean(tab.exited));
+  if (tab.id === activeId) updateWorkspaceContext();
   if (tab.paneTitle) {
     tab.paneTitle.textContent = tab.customTitle || tab.title;
     tab.paneTitle.title = tab.customTitle || tab.title;
@@ -1022,11 +1051,14 @@ function newTab(options = {}) {
   const paneClose = document.createElement("button");
   paneClose.type = "button";
   paneClose.className = "pane-close";
-  paneClose.textContent = "×";
+  paneClose.append(icon("close"));
   paneClose.title = "Закрыть эту панель";
   paneClose.setAttribute("aria-label", "Закрыть эту панель");
   paneClose.addEventListener("click", (event) => { event.stopPropagation(); closeTab(id); });
-  paneHead.append(paneTitle, paneClose);
+  const paneState = document.createElement("span");
+  paneState.className = "pane-state";
+  paneState.setAttribute("aria-hidden", "true");
+  paneHead.append(paneState, paneTitle, paneClose);
   pane.append(paneHead);
 
   const hostEl = document.createElement("div");
@@ -1292,11 +1324,23 @@ function renderThemeGrid() {
     const button = document.createElement("button");
     button.type = "button";
     button.className = `theme-card${theme.id === settings.themeId ? " active" : ""}`;
+    button.setAttribute("aria-pressed", String(theme.id === settings.themeId));
+    button.setAttribute("aria-label", theme.name);
     const swatch = document.createElement("span");
     swatch.className = "theme-swatch";
-    swatch.style.background = theme.swatch;
+    swatch.setAttribute("aria-hidden", "true");
+    swatch.style.setProperty("--preview-bg", theme.term.background);
+    swatch.style.setProperty("--preview-side", theme.chrome.sidebar);
+    swatch.style.setProperty("--preview-text", theme.term.foreground);
+    swatch.style.setProperty("--preview-accent", theme.chrome.accent);
+    const preview = document.createElement("span");
+    preview.className = "theme-code";
+    preview.textContent = ">_";
+    swatch.append(preview);
     const label = document.createElement("span");
+    label.className = "theme-name";
     label.textContent = theme.name;
+    label.append(icon("check"));
     button.append(swatch, label);
     button.addEventListener("click", () => {
       settings.themeId = theme.id;
@@ -1304,6 +1348,7 @@ function renderThemeGrid() {
       applyToTerminals();
       persistSettings();
       renderThemeGrid();
+      themeGrid.querySelector(".theme-card.active")?.focus({ preventScroll: true });
     });
     themeGrid.append(button);
   }
@@ -1324,12 +1369,18 @@ function syncSettingsForm() {
 }
 
 function openSettings() {
+  if (isModalOpen()) return;
+  pasteController.cancel(currentTab());
   searchController.close({ focus: false });
   settingsEl.classList.remove("hidden");
+  appEl.inert = true;
+  settingsClose.focus({ preventScroll: true });
 }
 
 function closeSettings() {
   settingsEl.classList.add("hidden");
+  appEl.inert = false;
+  if (currentTab()) currentTab().term.focus(); else settingsBtn.focus({ preventScroll: true });
 }
 
 function toggleSidebar() {
@@ -1455,6 +1506,7 @@ function handleHost(message) {
     if (typeof message.cwd === "string" && message.cwd.length > 0) tab.cwd = message.cwd;
     if (message.notice) tab.cwdNotice = message.notice;
     renderCwdNotice();
+    if (tab.id === activeId) updateWorkspaceContext();
     schedulePersist();
     return;
   }
@@ -1549,6 +1601,20 @@ bgOpacityEl.addEventListener("change", persistSettings);
 window.addEventListener(
   "keydown",
   (event) => {
+    if (!settingsEl.classList.contains("hidden")) {
+      if (event.isComposing) return;
+      if (event.key === "Escape" || ((event.ctrlKey || event.metaKey) && event.key === ",")) {
+        event.preventDefault();
+        closeSettings();
+      } else if (event.key === "Tab") {
+        const controls = [...settingsEl.querySelectorAll("button:not(:disabled), input:not(:disabled), select:not(:disabled)")]
+          .filter((control) => control.getClientRects().length);
+        const first = controls[0], last = controls.at(-1);
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+      }
+      return;
+    }
     if (isModalOpen() || event.target === sessionFilter) {
       return;
     }

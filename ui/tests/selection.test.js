@@ -45,7 +45,8 @@ async function runBrowserFixture(t, fixture) {
   });
   const profile = await mkdtemp(join(tmpdir(), "terminalv-copy-test-"));
   try {
-    const screenshot = fixture === "panes-ui" ? process.env.TERMINALV_PANES_SCREENSHOT :
+    const screenshot = fixture === "appearance-ui" ? process.env.TERMINALV_DESIGN_SCREENSHOT :
+      fixture === "panes-ui" ? process.env.TERMINALV_PANES_SCREENSHOT :
       fixture === "profiles-ui" ? process.env.TERMINALV_PROFILES_SCREENSHOT :
       fixture === "notifications-ui" ? process.env.TERMINALV_NOTIFICATIONS_SCREENSHOT :
       fixture === "sessions-ui" ? process.env.TERMINALV_SESSIONS_SCREENSHOT :
@@ -57,8 +58,8 @@ async function runBrowserFixture(t, fixture) {
         "--headless", "--disable-gpu", "--no-first-run", "--no-default-browser-check",
         "--disable-extensions", "--disable-background-networking", "--disable-component-update",
         `--user-data-dir=${profile}`, "--dump-dom", "--virtual-time-budget=10000",
-        ...(screenshot ? [`--screenshot=${screenshot}`, "--window-size=800,600"] : []),
-        `http://127.0.0.1:${server.address().port}/tests/${fixture}.fixture.html${screenshot ? "?preview" : ""}`
+        ...(screenshot ? [`--screenshot=${screenshot}`, fixture === "appearance-ui" ? "--window-size=1280,800" : "--window-size=800,600"] : []),
+        `http://127.0.0.1:${server.address().port}/tests/${fixture}.fixture.html${screenshot ? `?preview=${encodeURIComponent(process.env.TERMINALV_DESIGN_VIEW || "")}` : ""}`
       ], { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
       let stdout = "";
       let stderr = "";
@@ -101,3 +102,4 @@ test("notification replay suppression in xterm.js", (t) => runBrowserFixture(t, 
 test("notifications in the built TerminalV interface", (t) => runBrowserFixture(t, "notifications-ui"));
 test("launch profiles in the built TerminalV interface", (t) => runBrowserFixture(t, "profiles-ui"));
 test("split panes in the built TerminalV interface", (t) => runBrowserFixture(t, "panes-ui"));
+test("appearance in the built TerminalV interface", (t) => runBrowserFixture(t, "appearance-ui"));
