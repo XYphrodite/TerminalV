@@ -118,5 +118,17 @@
     equal(notice.hidden, true);
     equal(app.hostErrors.length, 0);
   });
+  await check("old environment host warns about PATH without replacing or writing to live shells", () => {
+    const count = created().length;
+    app.sendHost({ type: "init", cwdTrackingSupported: true, environmentRefreshSupported: false });
+    equal(notice.hidden, false);
+    equal(notice.textContent.includes("PATH"), true);
+    equal(notice.textContent.includes("Сохраните работу"), true);
+    equal(created().length, count);
+    equal(app.hostMessages.filter((m) => ["kill", "write"].includes(m.type)).length, 0);
+    app.sendHost({ type: "init", cwdTrackingSupported: true, environmentRefreshSupported: true });
+    equal(notice.hidden, true);
+    equal(app.hostErrors.length, 0);
+  });
   document.body.dataset.testResult = btoa(unescape(encodeURIComponent(JSON.stringify(results))));
 </script>
