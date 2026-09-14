@@ -21,7 +21,7 @@
   }
   async function setup(overrides = {}) {
     const frame = document.createElement("iframe");
-    const init = { version: "0.5.2", shellName: "PowerShell 7", sessions, layouts, liveIds: sessions.map((s) => s.id), ...overrides };
+    const init = { version: "0.5.3", shellName: "PowerShell 7", sessions, layouts, liveIds: sessions.map((s) => s.id), ...overrides };
     frame.srcdoc = source.replace("<head>", `<head><base href="${location.origin}/app/"><script>window.testInit = ${JSON.stringify(init).replaceAll("<", "\\u003c")};<\/script><script src="/tests/search-host.js"><\/script>`);
     const loaded = new Promise((resolve) => frame.addEventListener("load", resolve, { once: true }));
     document.body.append(frame);
