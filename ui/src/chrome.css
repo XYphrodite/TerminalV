@@ -22,7 +22,7 @@ kbd { font: 10px var(--font-ui); letter-spacing: .02em; white-space: nowrap; }
 /* Navigation */
 #app { grid-template-columns: 256px minmax(0, 1fr); }
 #app.collapsed { grid-template-columns: 56px minmax(0, 1fr); }
-#sidebar { border-color: var(--border-soft); }
+#sidebar { border-color: var(--border-soft); min-height: 0; }
 .sidebar-head { height: 58px; min-height: 58px; padding: 0 12px 0 18px; border: 0; }
 .sessions-heading { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .sessions-label { font-size: 13px; color: var(--text); letter-spacing: .01em; text-transform: none; }
@@ -73,6 +73,10 @@ kbd { font: 10px var(--font-ui); letter-spacing: .02em; white-space: nowrap; }
 .sidebar-signature { display: flex; align-items: center; justify-content: space-between; margin-top: 17px; padding: 0 3px 1px; }
 .wordmark { font-size: 11px; color: var(--label); font-weight: 600; letter-spacing: .015em; }
 .wordmark > span { color: var(--accent); }
+.author-credit { margin-top: 5px; padding: 0 3px; color: var(--label); font-size: 11px; line-height: 1.5; }
+.author-credit a { color: var(--label); text-decoration: underline; text-decoration-color: var(--border-soft); text-underline-offset: 3px; border-radius: 2px; }
+.author-credit a:hover { color: var(--accent); text-decoration-color: currentColor; }
+.author-credit a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; color: var(--accent); }
 .version { margin: 0; width: auto; color: var(--label); font: 10px var(--font-ui); }
 .update-bar { background: var(--accent-wash); border-color: var(--accent-dim); padding: 10px; }
 .update-bar.error { background: color-mix(in srgb, var(--danger) 8%, var(--sidebar)); border-color: var(--danger); }
@@ -80,6 +84,7 @@ kbd { font: 10px var(--font-ui); letter-spacing: .02em; white-space: nowrap; }
 
 #app.collapsed .sessions-heading,
 #app.collapsed .sidebar-signature,
+#app.collapsed .author-credit,
 #app.collapsed .new-tab-shortcut,
 #app.collapsed .profile-button-label,
 #app.collapsed .profile-button-chevron { display: none; }

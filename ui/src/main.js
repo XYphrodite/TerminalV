@@ -1580,6 +1580,13 @@ document.getElementById("launch-profiles-btn").addEventListener("click", () => {
 emptyNewBtn.addEventListener("click", () => newTab());
 updateApply.addEventListener("click", () => post({ type: "update-apply" }));
 versionBtn.addEventListener("click", () => post({ type: "update-check" }));
+const authorLink = document.getElementById("author-link");
+const openAuthor = (event) => {
+  event.preventDefault(); // Never navigate the terminal WebView or open an embedded popup.
+  if (!isModalOpen() && settingsEl.classList.contains("hidden")) post({ type: "open-author" });
+};
+authorLink.addEventListener("click", openAuthor);
+authorLink.addEventListener("auxclick", (event) => { if (event.button === 1) openAuthor(event); });
 settingsBtn.addEventListener("click", openSettings);
 searchBtn.addEventListener("click", () => {
   if (!isModalOpen() && settingsEl.classList.contains("hidden")) {
