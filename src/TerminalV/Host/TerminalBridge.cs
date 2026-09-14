@@ -11,6 +11,7 @@ using Microsoft.Web.WebView2.Core;
 using Microsoft.Win32;
 using TerminalV.Data;
 using TerminalV.Pty;
+using TerminalV.Shell;
 using TerminalV.Update;
 
 namespace TerminalV.Host;
@@ -34,6 +35,8 @@ internal sealed class TerminalBridge : IDisposable
     private readonly SessionClient _host = new();
     private int _updateBusy;
     private int _catalogBusy;
+    private int _shortcutsBusy;
+    private readonly ShortcutService _shortcuts = new(Environment.ProcessPath);
     private readonly Stopwatch _bellClock = Stopwatch.StartNew();
     private long _lastBellMs = -2000;
     private bool _disposed;
@@ -60,6 +63,7 @@ internal sealed class TerminalBridge : IDisposable
             buildNumber = _buildNumber,
             version = AppVersion.Informational,
             updateSupported = _canUpdate,
+            shortcutsSupported = _shortcuts.Supported,
             settings = _db.LoadSettings(),
             sessions = _db.LoadSessions(),
             layouts = _db.LoadLayouts(),
@@ -206,6 +210,9 @@ internal sealed class TerminalBridge : IDisposable
             case "list-launch-targets":
                 _ = SendLaunchTargetsAsync(message.RequestId);
                 break;
+            case "create-shortcuts":
+                _ = CreateShortcutsAsync(message);
+                break;
             case "ready":
                 SendInit();
                 break;
@@ -234,6 +241,25 @@ internal sealed class TerminalBridge : IDisposable
                 session.Dispose();
             }
         }
+    }
+
+    private async Task CreateShortcutsAsync(IncomingMessage message)
+    {
+        if (Interlocked.Exchange(ref _shortcutsBusy, 1) == 1)
+        {
+            Post(new { type = "shortcuts-created", requestId = message.RequestId, error = "Ярлыки уже создаются. Дождитесь завершения." });
+            return;
+        }
+        try
+        {
+            var results = await _shortcuts.CreateAsync(message.StartMenu, message.Desktop).ConfigureAwait(false);
+            Post(new { type = "shortcuts-created", requestId = message.RequestId, results });
+        }
+        catch (Exception error)
+        {
+            Post(new { type = "shortcuts-created", requestId = message.RequestId, error = error.Message });
+        }
+        finally { Interlocked.Exchange(ref _shortcutsBusy, 0); }
     }
 
     private async Task CheckUpdatesAsync(bool silent)

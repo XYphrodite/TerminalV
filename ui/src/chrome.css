@@ -158,6 +158,15 @@ kbd { font: 10px var(--font-ui); letter-spacing: .02em; white-space: nowrap; }
 .settings-head h2 { margin: 5px 0 0; font-size: 22px; font-weight: 600; letter-spacing: -.02em; }
 .settings-eyebrow { color: var(--label); font-size: 9px; letter-spacing: .12em; }
 .settings-section-label { margin: 24px 0 12px; padding-top: 20px; border-top: 1px solid var(--border-soft); font-size: 13px; font-weight: 600; }
+.shortcut-hint, .shortcut-status { color: var(--label); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.shortcut-option { display: flex; align-items: center; gap: 8px; margin: 12px 0; font-size: 13px; }
+.shortcut-option input { accent-color: var(--accent); }
+#create-shortcuts { margin-top: 4px; min-height: 35px; height: auto; padding: 8px 12px; }
+#create-shortcuts:disabled { opacity: .5; cursor: default; }
+#shortcut-settings :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.shortcut-status { white-space: pre-wrap; margin: 12px 0 0; }
+.shortcut-status:empty { display: none; }
+.shortcut-status.has-error { color: var(--text); }
 .field-label { margin: 16px 0 8px; color: var(--label); font-size: 11px; }
 .field-label > span { float: right; font-variant-numeric: tabular-nums; color: var(--text); }
 .theme-grid { gap: 9px; }

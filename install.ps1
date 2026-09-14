@@ -16,6 +16,15 @@
 
 .EXAMPLE
     & ([scriptblock]::Create((irm https://raw.githubusercontent.com/XYphrodite/TerminalV/main/install.ps1))) -InstallDir 'D:\TerminalV'
+
+.EXAMPLE
+    & ([scriptblock]::Create((irm https://raw.githubusercontent.com/XYphrodite/TerminalV/main/install.ps1))) -DesktopShortcut
+
+.PARAMETER DesktopShortcut
+    Also create a shortcut on the current user's desktop. Off by default.
+
+.PARAMETER NoShortcut
+    Do not create any shortcuts, including when DesktopShortcut is specified.
 #>
 #Requires -Version 5.1
 [CmdletBinding()]
@@ -26,7 +35,9 @@ param(
 
     [switch] $NoPath,
 
-    [switch] $NoShortcut
+    [switch] $NoShortcut,
+
+    [switch] $DesktopShortcut
 )
 
 $ErrorActionPreference = 'Stop'
@@ -46,6 +57,94 @@ try {
 function Write-Step {
     param([string] $Message)
     Write-Host "==> $Message" -ForegroundColor Cyan
+}
+
+function Send-ShortcutNotification {
+    param([string] $Path, [bool] $Created)
+    if (-not ('TerminalV.InstallerShell' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+namespace TerminalV {
+    public static class InstallerShell {
+        [DllImport("shell32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
+        public static extern void SHChangeNotify(int eventId, uint flags, string item1, IntPtr item2);
+    }
+}
+'@
+    }
+    $eventId = if ($Created) { 0x2 } else { 0x2000 }
+    [TerminalV.InstallerShell]::SHChangeNotify($eventId, 0x2005, $Path, [IntPtr]::Zero)
+}
+
+function New-TerminalVShortcut {
+    param([string] $Executable, [string] $Folder)
+    if ([string]::IsNullOrWhiteSpace($Folder) -or -not [IO.Path]::IsPathRooted($Folder)) {
+        throw 'Windows did not return a shortcut folder.'
+    }
+    $Executable = [IO.Path]::GetFullPath($Executable)
+    if (-not [IO.File]::Exists($Executable)) { throw 'TerminalV executable not found.' }
+    [IO.Directory]::CreateDirectory($Folder) | Out-Null
+    $path = Join-Path $Folder 'TerminalV.lnk'
+    $existed = Test-Path -LiteralPath $path
+    if ($existed -and ([IO.File]::GetAttributes($path) -band ([IO.FileAttributes]::ReparsePoint -bor [IO.FileAttributes]::Directory))) {
+        throw 'TerminalV.lnk is a directory or symbolic link.'
+    }
+    $temporary = Join-Path $Folder ('.TerminalV-' + [guid]::NewGuid().ToString('N') + '.lnk')
+    $wshell = $null
+    $lnk = $null
+    try {
+        $wshell = New-Object -ComObject WScript.Shell
+        if ($existed) { [IO.File]::Copy($path, $temporary) }
+        $lnk = $wshell.CreateShortcut($temporary)
+        if ($existed) {
+            if ($lnk.TargetPath -ine $Executable -or -not [string]::IsNullOrEmpty($lnk.Arguments)) {
+                throw 'TerminalV.lnk targets another copy or has custom arguments. Rename it and retry.'
+            }
+        } else {
+            $lnk.TargetPath = $Executable
+            $lnk.WorkingDirectory = [IO.Path]::GetDirectoryName($Executable)
+            $lnk.Description = 'Terminal with vertical tabs'
+            $lnk.WindowStyle = 1
+        }
+        $lnk.IconLocation = "$Executable,0"
+        $lnk.Save()
+        if (-not [IO.File]::Exists($temporary)) { throw 'Windows did not save the shortcut.' }
+        [Runtime.InteropServices.Marshal]::FinalReleaseComObject($lnk) | Out-Null
+        $lnk = $null
+        # PS 5.1 coerces $null to an empty string for string parameters.
+        if ($existed) { [IO.File]::Replace($temporary, $path, [NullString]::Value) }
+        else { [IO.File]::Move($temporary, $path) }
+        try { Send-ShortcutNotification -Path $path -Created (-not $existed) }
+        catch { Write-Verbose "Shortcut saved, but Shell notification failed: $_" }
+        return $path
+    } finally {
+        if ($null -ne $lnk) { [Runtime.InteropServices.Marshal]::FinalReleaseComObject($lnk) | Out-Null }
+        if ($null -ne $wshell) { [Runtime.InteropServices.Marshal]::FinalReleaseComObject($wshell) | Out-Null }
+        # Only this function's unique temporary file, never a folder or the user's link.
+        if ([IO.File]::Exists($temporary)) { [IO.File]::Delete($temporary) }
+    }
+}
+
+function Install-TerminalVShortcuts {
+    [CmdletBinding()]
+    param(
+        [string] $Executable,
+        [switch] $NoShortcut,
+        [switch] $DesktopShortcut,
+        [scriptblock] $FolderPath = { param($Name) [Environment]::GetFolderPath([Environment+SpecialFolder]::$Name) }
+    )
+    if ($NoShortcut) { return }
+    $destinations = @('Programs')
+    if ($DesktopShortcut) { $destinations += 'DesktopDirectory' }
+    foreach ($destination in $destinations) {
+        try {
+            $path = New-TerminalVShortcut -Executable $Executable -Folder (& $FolderPath $destination)
+            Write-Step "Shortcut: $path"
+        } catch {
+            Write-Warning "Could not create $destination shortcut: $($_.Exception.Message). You can retry in TerminalV Settings."
+        }
+    }
 }
 
 function Get-ResponseUri {
@@ -222,18 +321,7 @@ try {
         }
     }
 
-    if (-not $NoShortcut) {
-        $programs = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs'
-        $lnkPath = Join-Path $programs 'TerminalV.lnk'
-        $wshell = New-Object -ComObject WScript.Shell
-        $lnk = $wshell.CreateShortcut($lnkPath)
-        $lnk.TargetPath = $exe
-        $lnk.WorkingDirectory = [IO.Path]::GetDirectoryName($exe)
-        $lnk.IconLocation = "$exe,0"
-        $lnk.Description = 'Terminal with vertical tabs'
-        $lnk.Save()
-        Write-Step "Start Menu shortcut: $lnkPath"
-    }
+    Install-TerminalVShortcuts -Executable $exe -NoShortcut:$NoShortcut -DesktopShortcut:$DesktopShortcut
 
     Write-Host ''
     Write-Host "TerminalV $tag installed: $exe" -ForegroundColor Green

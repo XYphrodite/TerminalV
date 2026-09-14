@@ -1,0 +1,137 @@
+<!doctype html>
+<meta charset="utf-8">
+<style>html, body { margin: 0; height: 100%; } iframe { width: 100%; height: 100%; border: 0; display: block; }</style>
+<script type="module">
+  const source = await (await fetch("/app/index.html")).text();
+  const results = [];
+  const delay = (ms = 120) => new Promise(resolve => setTimeout(resolve, ms));
+  function equal(actual, expected) {
+    if (JSON.stringify(actual) !== JSON.stringify(expected)) throw new Error(`Expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
+  }
+  async function setup(overrides = {}) {
+    const frame = document.createElement("iframe");
+    const init = { shortcutsSupported: true, sessions: [{ id: "first", title: "PowerShell", active: true }], liveIds: ["first"], ...overrides };
+    frame.srcdoc = source.replace("<head>", `<head><base href="${location.origin}/app/"><script>window.testInit = ${JSON.stringify(init).replaceAll("<", "\\u003c")};<\/script><script src="/tests/search-host.js"><\/script>`);
+    const loaded = new Promise(resolve => frame.addEventListener("load", resolve, { once: true }));
+    document.body.append(frame);
+    await loaded;
+    await delay();
+    const app = frame.contentWindow, doc = frame.contentDocument;
+    const button = id => doc.getElementById(id);
+    button("settings-btn").click();
+    return { frame, app, doc, button,
+      messages: type => app.hostMessages.filter(message => message.type === type),
+      key: (key, options = {}) => doc.activeElement.dispatchEvent(new app.KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...options })) };
+  }
+  async function check(name, run, overrides) {
+    const s = await setup(overrides);
+    try {
+      await run(s);
+      equal(s.app.hostErrors, []);
+      for (const type of ["write", "kill", "create"]) equal(s.messages(type), []);
+      results.push({ name, ok: true });
+    } catch (error) { results.push({ name, ok: false, error: error.stack }); }
+    finally { s.frame.remove(); }
+  }
+  const requests = s => s.messages("create-shortcuts");
+  const reply = (s, request, results, error) => s.app.sendHost({ type: "shortcuts-created", requestId: request.requestId, results, error });
+  const menuResult = { destination: "startMenu", path: "C:\\Пуск\\TerminalV.lnk" };
+
+  await check("defaults are Start Menu only, opening settings does not create anything", s => {
+    equal(s.button("shortcut-start-menu").checked, true);
+    equal(s.button("shortcut-desktop").checked, false);
+    equal(s.button("create-shortcuts").disabled, false);
+    equal(requests(s), []);
+    s.button("settings-close").click();
+    s.button("settings-btn").click();
+    equal(requests(s), []);
+    s.button("create-shortcuts").click();
+    equal(requests(s).map(({ type, startMenu, desktop }) => ({ type, startMenu, desktop })), [{ type: "create-shortcuts", startMenu: true, desktop: false }]);
+    equal(Object.keys(requests(s)[0]).sort(), ["desktop", "requestId", "startMenu", "type"]);
+  });
+  await check("no selection disables the action; desktop is an explicit independent choice", s => {
+    s.button("shortcut-start-menu").click();
+    equal(s.button("create-shortcuts").disabled, true);
+    s.button("create-shortcuts").click();
+    equal(requests(s), []);
+    s.button("shortcut-desktop").click();
+    s.button("create-shortcuts").click();
+    equal(requests(s)[0].startMenu, false);
+    equal(requests(s)[0].desktop, true);
+  });
+  await check("duplicate clicks and stale replies cannot create duplicates or clear a pending request", s => {
+    s.button("shortcut-desktop").click();
+    s.button("create-shortcuts").click();
+    s.button("create-shortcuts").click();
+    equal(requests(s).length, 1);
+    equal(s.button("shortcut-start-menu").disabled && s.button("shortcut-desktop").disabled, true);
+    reply(s, { requestId: "stale" }, [menuResult]);
+    equal(s.button("create-shortcuts").disabled, true);
+    s.button("settings-close").click();
+    reply(s, requests(s)[0], [menuResult, { destination: "desktop", path: "C:\\OneDrive\\Desktop\\TerminalV.lnk" }]);
+    equal(s.button("settings").classList.contains("hidden"), true);
+    s.button("settings-btn").click();
+    equal(s.button("shortcuts-status").textContent.includes("Рабочий стол: ярлык готов."), true);
+    equal(s.button("create-shortcuts").disabled, false);
+    equal(requests(s).length, 1);
+  });
+  await check("partial success, error text and retry are handled without interpreting HTML", s => {
+    s.button("shortcut-desktop").click();
+    s.button("create-shortcuts").click();
+    reply(s, requests(s)[0], [menuResult, { destination: "desktop", error: "<img src=x onerror=bad()> Нет доступа" }]);
+    equal(s.button("shortcuts-status").textContent.includes("Меню «Пуск»: ярлык готов."), true);
+    equal(s.button("shortcuts-status").textContent.includes("<img"), true);
+    equal(s.button("shortcuts-status").querySelector("img"), null);
+    equal(s.button("shortcuts-status").classList.contains("has-error"), true);
+    s.button("create-shortcuts").click();
+    equal(requests(s).length, 2);
+    equal(requests(s)[0].requestId === requests(s)[1].requestId, false);
+    reply(s, requests(s)[0], [], "Old reply");
+    equal(s.button("create-shortcuts").disabled, true);
+    reply(s, requests(s)[1], [], "Windows Script Host недоступен");
+    equal(s.button("shortcuts-status").textContent.includes("Windows Script Host недоступен"), true);
+    equal(s.button("create-shortcuts").disabled, false);
+  });
+  await check("missing native results are not presented as success", s => {
+    s.button("create-shortcuts").click();
+    reply(s, requests(s)[0], []);
+    equal(s.button("shortcuts-status").classList.contains("has-error"), true);
+    equal(s.button("shortcuts-status").textContent.includes("не подтвердила"), true);
+  });
+  await check("older/unsupported host cannot request filesystem operations", s => {
+    equal(s.button("create-shortcuts").disabled, true);
+    equal(s.button("shortcut-start-menu").disabled, true);
+    equal(s.button("shortcut-desktop").disabled, true);
+    s.button("create-shortcuts").click();
+    equal(requests(s), []);
+  }, { shortcutsSupported: false });
+  await check("keyboard focus stays in settings and status is announced", s => {
+    equal(s.doc.activeElement.id, "settings-close");
+    s.key("Tab", { shiftKey: true });
+    equal(s.doc.activeElement.id, "create-shortcuts");
+    s.key("Tab");
+    equal(s.doc.activeElement.id, "settings-close");
+    equal(s.button("shortcuts-status").getAttribute("role"), "status");
+    equal(s.button("shortcuts-status").getAttribute("aria-live"), "polite");
+    s.key("Escape");
+    equal(s.button("settings").classList.contains("hidden"), true);
+    equal(s.button("app").inert, false);
+  });
+  await check("shortcut controls fit a narrow light window and remain reachable by scrolling", async s => {
+    s.frame.style.width = "360px";
+    s.frame.style.height = "420px";
+    await delay(250);
+    s.button("create-shortcuts").scrollIntoView({ block: "nearest" });
+    const box = s.button("create-shortcuts").getBoundingClientRect();
+    equal(box.left >= 0 && box.right <= 360 && box.top >= 0 && box.bottom <= 420, true);
+    const panel = s.doc.querySelector(".settings-panel");
+    equal(panel.scrollWidth <= panel.clientWidth + 1, true);
+  }, { settings: { themeId: "github-light" } });
+
+  if (new URL(location.href).searchParams.has("preview")) {
+    const s = await setup();
+    s.button("create-shortcuts").scrollIntoView({ block: "nearest" });
+    await delay();
+  }
+  document.body.dataset.testResult = btoa(unescape(encodeURIComponent(JSON.stringify(results))));
+</script>

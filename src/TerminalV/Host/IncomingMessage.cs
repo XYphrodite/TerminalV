@@ -8,6 +8,8 @@ internal sealed class IncomingMessage
     public string? Id { get; set; }
     public string? Data { get; set; }
     public string? RequestId { get; set; }
+    public bool StartMenu { get; set; }
+    public bool Desktop { get; set; }
     public int Cols { get; set; }
     public int Rows { get; set; }
     public List<SessionRecord>? Sessions { get; set; }

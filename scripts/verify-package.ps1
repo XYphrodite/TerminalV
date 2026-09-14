@@ -39,6 +39,14 @@ try {
         Tee-Object -FilePath (Join-Path $verification 'data.log')
     if ($LASTEXITCODE -ne 0) { throw 'SQLite checks failed' }
 
+    dotnet run --project tests/TerminalV.Shell.Tests -c Release --no-build 2>&1 |
+        Tee-Object -FilePath (Join-Path $verification 'shortcuts.log')
+    if ($LASTEXITCODE -ne 0) { throw 'Shortcut checks failed' }
+
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/installer-shortcuts.tests.ps1 2>&1 |
+        Tee-Object -FilePath (Join-Path $verification 'installer-shortcuts.log')
+    if ($LASTEXITCODE -ne 0) { throw 'Installer shortcut checks failed' }
+
     $previousAppRoot = [Environment]::GetEnvironmentVariable('TERMINALV_TEST_APP_ROOT', 'Process')
     try {
         $env:TERMINALV_TEST_APP_ROOT = Join-Path $payload 'wwwroot'

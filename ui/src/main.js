@@ -20,6 +20,7 @@ import { createLaunchMenu } from "./launch-menu.js";
 import { normalizeLayouts, layoutFor, leafIds, splitSession, detachSession, layoutGeometry,
   neighborPane, paneShortcut, MAX_PANES, MIN_PANE_WIDTH, MIN_PANE_HEIGHT } from "./pane-layout.js";
 import { createPaneView } from "./pane-view.js";
+import { createShortcuts } from "./shortcuts.js";
 
 mountIcons(document);
 
@@ -47,6 +48,7 @@ const bgPick = document.getElementById("bg-pick");
 const bgClear = document.getElementById("bg-clear");
 const bgOpacityEl = document.getElementById("bg-opacity");
 const bgOpacityValue = document.getElementById("bg-opacity-value");
+const shortcuts = createShortcuts({ root: document.getElementById("shortcut-settings"), post });
 const sessionFilter = document.getElementById("session-filter");
 const hiddenSessionsBtn = document.getElementById("hidden-sessions");
 const notificationStatus = document.getElementById("notification-status");
@@ -1449,6 +1451,7 @@ function handleHost(message) {
   }
 
   if (message.type === "init") {
+    shortcuts.setSupported(message.shortcutsSupported);
     launchProfiles.setProfiles(message.profiles);
     if (message.shellName) {
       shellName = message.shellName;
@@ -1481,6 +1484,11 @@ function handleHost(message) {
       renderTabs();
     }
     renderCwdNotice();
+    return;
+  }
+
+  if (message.type === "shortcuts-created") {
+    shortcuts.receive(message);
     return;
   }
 

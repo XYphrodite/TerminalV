@@ -7,5 +7,6 @@
     <Project Path="tests/TerminalV.Data.Tests/TerminalV.Data.Tests.csproj" />
     <Project Path="tests/TerminalV.Package.Tests/TerminalV.Package.Tests.csproj" />
     <Project Path="tests/TerminalV.Pty.Tests/TerminalV.Pty.Tests.csproj" />
+    <Project Path="tests/TerminalV.Shell.Tests/TerminalV.Shell.Tests.csproj" />
   </Folder>
 </Solution>

@@ -18,9 +18,19 @@ irm https://raw.githubusercontent.com/XYphrodite/TerminalV/main/install.ps1 | ie
 & ([scriptblock]::Create((irm https://raw.githubusercontent.com/XYphrodite/TerminalV/main/install.ps1))) -InstallDir 'D:\TerminalV' -Version v0.1.0
 ```
 
-Параметры: `-InstallDir`, `-Version` (по умолчанию latest), `-NoPath`, `-NoShortcut`.
+Ярлык в меню «Пуск» создаётся по умолчанию. Рабочий стол — только по желанию, с параметром `-DesktopShortcut`:
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/XYphrodite/TerminalV/main/install.ps1))) -DesktopShortcut
+```
+
+Параметры: `-InstallDir`, `-Version` (по умолчанию latest), `-NoPath`, `-DesktopShortcut`, `-NoShortcut` (не создавать никаких ярлыков, даже с `-DesktopShortcut`; существующие не удаляются).
 
 Ручная установка: zip `TerminalV-win-x64.zip` со [страницы релизов](https://github.com/XYphrodite/TerminalV/releases). Сборка self-contained, отдельно ставить .NET не нужно. Нужен [WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/) — на Windows 11 он уже есть вместе с Edge.
+
+После распаковки ZIP запустите `TerminalV.exe` → **Настройки** (шестерёнка или `Ctrl+,`) → **Ярлыки приложения**. Выберите «Меню „Пуск“» и/или «Рабочий стол», затем нажмите **Создать ярлыки**. Нужные папки определяются через Windows, включая перенесённый рабочий стол OneDrive. Ярлыки ведут к текущей копии приложения и используют иконку из её EXE; права администратора не нужны.
+
+Повторное создание обновляет иконку без дубликатов и сохраняет пользовательские настройки существующего ярлыка. Если `TerminalV.lnk` указывает на другую копию или содержит аргументы, он не перезаписывается: интерфейс покажет причину. Перед переносом ZIP-папки уберите старые ярлыки или переименуйте их, затем создайте новые. При запуске/самообновлении приложения удалённые ярлыки не восстанавливаются автоматически; закрепление на панели задач остаётся за пользователем.
 
 Запуск после установки:
 

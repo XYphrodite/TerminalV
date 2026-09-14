@@ -12,7 +12,7 @@
           <div class="sessions-heading"><span class="sessions-label">Сессии</span><span id="session-count" class="count-badge">0</span></div>
           <div class="sidebar-head-actions">
             <button id="search-btn" type="button" class="icon-btn" title="Поиск по выводу (Ctrl+Shift+F)" aria-label="Поиск по выводу" data-icon="search"></button>
-            <button id="settings-btn" type="button" class="icon-btn" title="Оформление (Ctrl+,)" aria-label="Оформление" data-icon="settings"></button>
+            <button id="settings-btn" type="button" class="icon-btn" title="Настройки (Ctrl+,)" aria-label="Настройки" data-icon="settings"></button>
             <button id="collapse-btn" type="button" class="icon-btn" title="Свернуть список (Ctrl+B)" aria-label="Свернуть список сессий" aria-expanded="true" data-icon="sidebar"></button>
           </div>
         </div>
@@ -76,8 +76,8 @@
     <div id="settings" class="settings hidden" role="dialog" aria-modal="true" aria-labelledby="settings-title">
       <div class="settings-panel">
         <div class="settings-head">
-          <div><div class="settings-eyebrow">ПОД ВАШ СТИЛЬ</div><h2 id="settings-title">Оформление</h2></div>
-          <button id="settings-close" type="button" class="icon-btn" title="Закрыть (Esc)" aria-label="Закрыть оформление" data-icon="close"></button>
+          <div><div class="settings-eyebrow">TERMINALV ПОД ВАС</div><h2 id="settings-title">Настройки</h2></div>
+          <button id="settings-close" type="button" class="icon-btn" title="Закрыть (Esc)" aria-label="Закрыть настройки" data-icon="close"></button>
         </div>
 
         <label class="field-label">Тема</label>
@@ -103,6 +103,14 @@
         </div>
         <label class="field-label" for="bg-opacity">Прозрачность фото <span id="bg-opacity-value">25%</span></label>
         <input id="bg-opacity" type="range" min="0" max="80" step="1" value="25" />
+        <section id="shortcut-settings" aria-labelledby="shortcuts-title">
+          <h3 id="shortcuts-title" class="settings-section-label">Ярлыки приложения</h3>
+          <p class="shortcut-hint" id="shortcuts-hint">Быстрый запуск этой копии TerminalV, в том числе из ZIP. При переносе папки приложения старые ярлыки нужно заменить.</p>
+          <label class="shortcut-option"><input id="shortcut-start-menu" type="checkbox" checked disabled /> Меню «Пуск»</label>
+          <label class="shortcut-option"><input id="shortcut-desktop" type="checkbox" disabled /> Рабочий стол</label>
+          <button id="create-shortcuts" type="button" class="ghost" aria-describedby="shortcuts-hint" disabled>Создать ярлыки</button>
+          <p id="shortcuts-status" class="shortcut-status" role="status" aria-live="polite" aria-atomic="true"></p>
+        </section>
       </div>
     </div>
     <dialog id="paste-confirmation" class="confirmation-dialog" role="alertdialog" aria-labelledby="paste-title" aria-describedby="paste-description">
