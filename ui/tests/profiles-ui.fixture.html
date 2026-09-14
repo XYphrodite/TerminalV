@@ -23,7 +23,9 @@
     const dialog = doc.getElementById("launch-profiles");
     return { frame, app, doc, dialog,
       field: (name) => dialog.querySelector(`[data-profile-${name}]`),
-      open: () => doc.getElementById("launch-profiles-btn").click(),
+      open: () => { doc.getElementById("launch-profiles-btn").click(); doc.querySelector("[data-edit-profile]").click(); },
+      new: () => { doc.getElementById("launch-profiles-btn").click(); doc.querySelector("[data-launch-new]").click(); },
+      launch: () => { doc.getElementById("launch-profiles-btn").click(); doc.querySelector('[data-launch-key^="profile:"]').click(); },
       messages: (type) => app.hostMessages.filter((m) => m.type === type),
       saved: () => { app.terminalvFlush(); return app.hostMessages.filter((m) => m.type === "persist-sessions").at(-1).sessions; }
     };
@@ -70,8 +72,7 @@
   });
 
   await check("save-only creates a reusable profile without running anything", async (s) => {
-    s.open();
-    s.field("new").click();
+    s.new();
     s.field("title").value = "Новый проект";
     s.field("shell").value = "cmd";
     s.field("command").value = "echo PROFILE";
@@ -80,13 +81,19 @@
     equal(s.messages("persist-profiles").at(-1).profiles.length, 2);
     equal(s.messages("create").length, 0);
     equal(s.dialog.open, true);
-    equal(s.field("select").selectedOptions[0].textContent, "Новый проект");
+    equal(s.field("title").value, "Новый проект");
+    equal(s.field("launch").hidden, true);
     equal(s.field("error").textContent, "Профиль сохранён.");
   });
 
   await check("launch waits for durable acknowledgement and ignores duplicate clicks and replies", async (s) => {
     s.app.profileSaveMode = "manual";
-    s.open();
+    s.new();
+    s.field("title").value = profile.title;
+    s.field("shell").value = profile.shell;
+    s.field("cwd").value = profile.cwd;
+    s.field("color").value = profile.color;
+    s.field("command").value = profile.startupCommand;
     s.field("launch").click();
     s.field("launch").click();
     equal(s.messages("persist-profiles").length, 1);
@@ -101,14 +108,14 @@
     const created = s.messages("create")[0];
     equal(created.cwd, profile.cwd);
     equal(created.shell, profile.shell);
-    equal(created.startupCommand, profile.startupCommand);
+    equal(created.startupCommand, profile.startupCommand.replaceAll("\r\n", "\n"));
     equal(created.id === profile.id, false);
     const row = s.doc.querySelector(`.tab[data-id="${created.id}"]`);
     equal(row.querySelector(".tab-title").textContent, profile.title);
     equal(row.querySelector("img"), null);
     equal(row.style.getPropertyValue("--session-color"), "#4ade80");
     equal(row.querySelector(".tab-meta").textContent, "Windows PowerShell");
-    equal(s.saved().find((p) => p.id === created.id).startupCommand, profile.startupCommand);
+    equal(s.saved().find((p) => p.id === created.id).startupCommand, created.startupCommand);
     equal(s.dialog.open, false);
   });
 
@@ -116,7 +123,7 @@
     s.app.profileSaveMode = "error";
     s.open();
     s.field("title").value = "Сохранить позже";
-    s.field("launch").click();
+    s.field("save").click();
     await delay();
     equal(s.messages("create").length, 0);
     equal(s.dialog.open, true);
@@ -132,11 +139,11 @@
   await check("invalid paths and multiline cmd commands are not saved or launched", async (s) => {
     s.open();
     s.field("cwd").value = "C:relative";
-    s.field("launch").click();
+    s.field("save").click();
     equal(s.field("error").textContent.includes("полный путь"), true);
     s.field("cwd").value = "";
     s.field("shell").value = "cmd";
-    s.field("launch").click();
+    s.field("save").click();
     equal(s.field("error").textContent.includes("одну строку"), true);
     equal(s.messages("persist-profiles").length, 0);
     equal(s.messages("create").length, 0);
@@ -145,8 +152,10 @@
   await check("empty profile cwd requests home, not the active project's folder", async (s) => {
     s.open();
     s.field("cwd").value = "";
-    s.field("launch").click();
+    s.field("save").click();
     await delay();
+    s.field("cancel").click();
+    s.launch();
     equal(s.messages("create").length, 1);
     equal(s.messages("create")[0].cwd, undefined);
     equal(s.messages("create")[0].startupCommand, profile.startupCommand);
@@ -171,8 +180,7 @@
   });
 
   await check("deleting a profile requires confirmation and preserves session launch snapshots", async (s) => {
-    s.open();
-    s.field("launch").click();
+    s.launch();
     await delay();
     const created = s.messages("create")[0];
     s.open();
@@ -180,7 +188,7 @@
     equal(s.field("delete-confirm").hidden, false);
     equal(s.field("delete-name").textContent, profile.title);
     s.field("keep").click();
-    equal(s.messages("persist-profiles").length, 1);
+    equal(s.messages("persist-profiles").length, 0);
     s.field("delete").click();
     s.field("confirm-delete").click();
     await delay();
@@ -216,8 +224,7 @@
   }, { sessions: [saved], liveIds: [] });
 
   await check("native launch errors remain visible and do not fall back to another shell or paste", async (s) => {
-    s.open();
-    s.field("launch").click();
+    s.launch();
     await delay();
     const created = s.messages("create")[0];
     s.app.sendHost({ type: "error", id: created.id, message: "Фоновый процесс не поддерживает профили запуска." });

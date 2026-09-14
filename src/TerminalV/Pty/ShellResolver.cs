@@ -6,8 +6,17 @@ internal readonly record struct ShellInfo(string CommandLine, string DisplayName
 
 internal static class ShellResolver
 {
-    public static ShellInfo Resolve(string? directory = null, string? shell = null, string? startupCommand = null)
+    public static ShellInfo Resolve(string? directory = null, string? shell = null, string? startupCommand = null, string? wslDistribution = null)
     {
+        if (shell == "wsl")
+        {
+            if (directory is not null || !string.IsNullOrEmpty(startupCommand))
+                throw new ArgumentException("Быстрый запуск WSL открывает домашнюю папку Linux без стартовой команды.");
+            var line = WslSupport.CommandLine(WslSupport.Executable, wslDistribution);
+            if (!File.Exists(WslSupport.Executable)) throw new FileNotFoundException("WSL не установлен.");
+            return new(line, wslDistribution + " · WSL");
+        }
+        if (wslDistribution is not null) throw new ArgumentException("Дистрибутив указан для оболочки, отличной от WSL.");
         if (startupCommand is { Length: > 4096 } || startupCommand?.Contains('\0') == true)
             throw new ArgumentException("Стартовая команда: максимум 4096 символов, без NUL.");
         var executable = shell switch

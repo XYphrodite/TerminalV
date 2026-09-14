@@ -33,6 +33,7 @@ internal sealed class TerminalBridge : IDisposable
     private readonly AppDatabase _db = new();
     private readonly SessionClient _host = new();
     private int _updateBusy;
+    private int _catalogBusy;
     private readonly Stopwatch _bellClock = Stopwatch.StartNew();
     private long _lastBellMs = -2000;
     private bool _disposed;
@@ -184,6 +185,9 @@ internal sealed class TerminalBridge : IDisposable
                 {
                     Post(new { type = "profiles-saved", requestId = message.RequestId, error = ex.Message });
                 }
+                break;
+            case "list-launch-targets":
+                _ = SendLaunchTargetsAsync(message.RequestId);
                 break;
             case "ready":
                 SendInit();
@@ -359,20 +363,25 @@ internal sealed class TerminalBridge : IDisposable
 
         try
         {
-            var cwd = WorkingDirectory.Resolve(message.Cwd);
+            var isWsl = message.Shell == "wsl";
+            if (isWsl && message.Cwd is not null)
+                throw new ArgumentException("Быстрый запуск WSL открывает домашнюю папку Linux.");
+            var cwd = WorkingDirectory.Resolve(isWsl ? null : message.Cwd);
             if (message.Shell is not null && cwd.Notice is not null)
                 throw new DirectoryNotFoundException("Папка профиля недоступна. Запуск отменён: " + message.Cwd);
-            Post(new { type = "cwd", id = message.Id, cwd = cwd.Path, notice = cwd.Notice });
+            if (!isWsl) Post(new { type = "cwd", id = message.Id, cwd = cwd.Path, notice = cwd.Notice });
             if (_host.Ensure())
             {
                 _host.Create(message.Id, Math.Max(message.Cols, 1), Math.Max(message.Rows, 1),
-                    message.Cwd is null ? null : cwd.Path, message.Shell, message.StartupCommand);
+                    isWsl || message.Cwd is null ? null : cwd.Path, message.Shell, message.StartupCommand, message.WslDistribution);
                 return;
             }
 
+            if (message.Shell is not null && _sessions.ContainsKey(message.Id))
+                throw new InvalidOperationException("Сессия уже работает. Повторный запуск отменён.");
+            var shell = ShellResolver.Resolve(isWsl || (message.Cwd is null && message.Shell is null) ? null : cwd.Path, message.Shell,
+                message.Shell is null ? null : message.StartupCommand, message.WslDistribution);
             KillLocal(message.Id);
-            var shell = ShellResolver.Resolve(message.Cwd is null && message.Shell is null ? null : cwd.Path, message.Shell,
-                message.Shell is null ? null : message.StartupCommand);
             ConPtySession.Start(
                 message.Id,
                 shell.CommandLine,
@@ -381,7 +390,7 @@ internal sealed class TerminalBridge : IDisposable
                 Math.Max(message.Rows, 1), session =>
                 {
                     session.Output += data => Post(new { type = "data", id = session.Id, data });
-                    session.DirectoryChanged += path => Post(new { type = "cwd", id = session.Id, cwd = path });
+                    session.DirectoryChanged += path => { if (!isWsl) Post(new { type = "cwd", id = session.Id, cwd = path }); };
                     session.Exited += code => Post(new { type = "exit", id = session.Id, code });
                     _sessions[session.Id] = session;
                 });
@@ -390,6 +399,23 @@ internal sealed class TerminalBridge : IDisposable
         {
             Post(new { type = "error", id = message.Id, message = ex.Message });
         }
+    }
+
+    private async Task SendLaunchTargetsAsync(string? requestId)
+    {
+        if (Interlocked.Exchange(ref _catalogBusy, 1) == 1)
+        {
+            Post(new { type = "launch-targets", requestId, error = "Список уже обновляется. Повторите попытку через несколько секунд." });
+            return;
+        }
+        try
+        {
+            var catalog = await LaunchCatalog.DiscoverAsync(_updateCts.Token).ConfigureAwait(false);
+            Post(new { type = "launch-targets", requestId, targets = catalog.Targets, notice = catalog.Notice });
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex) { Post(new { type = "launch-targets", requestId, error = ex.Message }); }
+        finally { Interlocked.Exchange(ref _catalogBusy, 0); }
     }
 
     private void Kill(string id)

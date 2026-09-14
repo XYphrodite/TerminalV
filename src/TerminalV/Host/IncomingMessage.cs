@@ -15,5 +15,6 @@ internal sealed class IncomingMessage
     public string? Cwd { get; set; }
     public string? Shell { get; set; }
     public string? StartupCommand { get; set; }
+    public string? WslDistribution { get; set; }
     public List<LaunchProfile>? Profiles { get; set; }
 }

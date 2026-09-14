@@ -28,4 +28,5 @@ internal sealed class SessionRecord
     // Snapshot, not a profile reference: editing/deleting a profile cannot change this session.
     public string? Shell { get; set; }
     public string? StartupCommand { get; set; }
+    public string? WslDistribution { get; set; }
 }

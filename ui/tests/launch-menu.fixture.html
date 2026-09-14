@@ -1,0 +1,183 @@
+<!doctype html>
+<meta charset="utf-8">
+<style>html, body { margin: 0; height: 100%; } iframe { width: 100%; height: 100%; border: 0; display: block; }</style>
+<script type="module">
+  const source = await (await fetch("/app/index.html")).text();
+  const results = [];
+  const delay = (ms = 100) => new Promise(resolve => setTimeout(resolve, ms));
+  function equal(actual, expected) {
+    if (JSON.stringify(actual) !== JSON.stringify(expected)) throw new Error(`Expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
+  }
+  const profile = { id: "project", title: "Muse — разработка <img>", shell: "powershell", cwd: "C:\\Проект O'Brien",
+    startupCommand: "echo 'первая'\r\necho 'вторая'", color: "green" };
+  async function setup(overrides = {}) {
+    const frame = document.createElement("iframe");
+    const init = { profiles: [profile], sessions: [{ id: "live", title: "PowerShell", active: true, cwd: "C:\\Active" }], liveIds: ["live"], ...overrides };
+    frame.srcdoc = source.replace("<head>", `<head><base href="${location.origin}/app/"><script>window.testInit = ${JSON.stringify(init).replaceAll("<", "\\u003c")};<\/script><script src="/tests/search-host.js"><\/script>`);
+    const loaded = new Promise(resolve => frame.addEventListener("load", resolve, { once: true }));
+    document.body.append(frame);
+    await loaded;
+    await delay();
+    const app = frame.contentWindow, doc = frame.contentDocument, menu = doc.getElementById("launch-menu");
+    return { frame, app, doc, menu, open: () => doc.getElementById("launch-profiles-btn").click(),
+      button: key => [...menu.querySelectorAll("[data-launch-key]")].find(b => b.dataset.launchKey === key),
+      messages: type => app.hostMessages.filter(m => m.type === type),
+      saved: () => { app.terminalvFlush(); return app.hostMessages.filter(m => m.type === "persist-sessions").at(-1).sessions; }
+    };
+  }
+  async function check(name, run, overrides) {
+    document.body.dataset.testProgress = name;
+    const s = await setup(overrides);
+    try { await run(s); equal(s.app.hostErrors, []); equal(s.messages("write").length, 0); results.push({ name, ok: true }); }
+    catch (error) { results.push({ name, ok: false, error: error.stack }); }
+    finally { s.frame.remove(); }
+  }
+  function key(s, target, key, code, options = {}) {
+    target.dispatchEvent(new s.app.KeyboardEvent("keydown", { key, code, bubbles: true, cancelable: true, ...options }));
+  }
+  function dismiss(s) { s.menu.dispatchEvent(new s.app.Event("cancel", { cancelable: true })); }
+
+  await check("opening the launcher only lists profiles and detected shells, never saves or launches", async s => {
+    equal(s.messages("list-launch-targets").length, 0);
+    s.open();
+    await delay();
+    equal(s.menu.open, true);
+    equal(s.doc.getElementById("launch-profiles").open, false);
+    equal(s.messages("list-launch-targets").length, 1);
+    equal(s.messages("create").length, 0);
+    equal(s.messages("persist-profiles").length, 0);
+    equal(s.button("profile:project").textContent.includes(profile.title), true);
+    equal(s.menu.querySelector("img"), null);
+    equal(s.button("wsl:Ubuntu").getAttribute("aria-label"), "Запустить Ubuntu");
+    equal(s.doc.activeElement, s.button("profile:project"));
+    const buttons = [...s.menu.querySelectorAll("button:not(:disabled)")];
+    buttons.at(-1).focus(); key(s, buttons.at(-1), "Tab", "Tab");
+    equal(s.doc.activeElement, buttons[0]);
+    key(s, buttons[0], "Tab", "Tab", { shiftKey: true });
+    equal(s.doc.activeElement, buttons.at(-1));
+  });
+  await check("saved profile launches once directly, without a database write or editing its command", async s => {
+    s.open();
+    const button = s.button("profile:project");
+    button.click(); button.click();
+    equal(s.messages("create").length, 1);
+    equal(s.messages("persist-profiles").length, 0);
+    const create = s.messages("create")[0];
+    equal(create.startupCommand, profile.startupCommand);
+    equal(create.cwd, profile.cwd);
+    equal(create.shell, "powershell");
+    equal(create.id === profile.id, false);
+    equal(s.menu.open, false);
+    equal(s.doc.activeElement.classList.contains("xterm-helper-textarea"), true);
+  });
+  await check("edit and create are separate actions; editing cannot launch or alter a live snapshot", async s => {
+    s.open(); s.button("profile:project").click();
+    const sessionId = s.messages("create")[0].id;
+    s.open(); s.button("edit:profile:project").click();
+    const editor = s.doc.getElementById("launch-profiles");
+    equal(editor.open, true); equal(s.menu.open, false);
+    equal(editor.querySelector("[data-profile-launch]").hidden, true);
+    editor.querySelector("[data-profile-command]").value = "echo changed";
+    editor.querySelector("[data-profile-save]").click();
+    await delay();
+    equal(s.messages("create").length, 1);
+    equal(s.saved().find(p => p.id === sessionId).startupCommand, profile.startupCommand);
+    editor.querySelector("[data-profile-cancel]").click();
+    s.open(); s.button("profile:project").click();
+    equal(s.messages("create")[1].startupCommand, "echo changed");
+    s.open(); s.menu.querySelector("[data-launch-new]").click();
+    equal(editor.querySelector("[data-profile-title]").value, "");
+    equal(editor.querySelector("[data-profile-launch]").hidden, false);
+  });
+  await check("WSL quick launch targets one distribution and never inherits Windows cwd or startup script", async s => {
+    s.open(); await delay();
+    const button = s.button("wsl:Ubuntu");
+    button.click(); button.click();
+    const created = s.messages("create");
+    equal(created.length, 1);
+    equal(created[0].shell, "wsl"); equal(created[0].wslDistribution, "Ubuntu");
+    equal(created[0].cwd, undefined); equal(created[0].startupCommand, undefined);
+    equal(s.messages("persist-profiles").length, 0);
+    equal(s.saved().find(p => p.id === created[0].id).wslDistribution, "Ubuntu");
+    s.app.sendHost({ type: "cwd", id: created[0].id, cwd: "C:\\Wrong Windows directory" });
+    equal(s.saved().find(p => p.id === created[0].id).cwd, null);
+    s.doc.getElementById("new-tab").click();
+    equal(s.messages("create")[1].shell, undefined);
+    equal(s.messages("create")[1].cwd, undefined);
+  });
+  const wsl = { id: "linux", title: "Ubuntu", shell: "wsl", wslDistribution: "Ubuntu", active: true, buffer: "saved Linux output" };
+  await check("restoring a live WSL session attaches without relaunching and retains its distribution", async s => {
+    equal(s.messages("create").length, 0);
+    equal(s.messages("attach").map(m => m.id), ["linux"]);
+    equal(s.saved()[0].wslDistribution, "Ubuntu");
+  }, { sessions: [wsl], liveIds: ["linux"] });
+  await check("missing WSL process waits for an explicit restart of the same distribution", async s => {
+    equal(s.messages("create").length, 0);
+    const button = s.doc.querySelector('.pane[data-id="linux"] .overlay button');
+    button.click(); button.click();
+    equal(s.messages("create").length, 1);
+    equal(s.messages("create")[0].wslDistribution, "Ubuntu");
+    equal(s.messages("create")[0].shell, "wsl");
+  }, { sessions: [wsl], liveIds: [] });
+  await check("Escape and menu navigation isolate EN/RU shortcuts and pending clipboard reads", async s => {
+    let resolveClipboard;
+    Object.defineProperty(s.app.navigator, "clipboard", { configurable: true, value: { readText: () => new Promise(resolve => { resolveClipboard = resolve; }) } });
+    s.doc.querySelector(".pane.active .terminal-host").dispatchEvent(new s.app.MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+    s.open(); resolveClipboard("first\nsecond"); await delay();
+    key(s, s.doc.activeElement, "Е", "KeyT", { ctrlKey: true, shiftKey: true });
+    key(s, s.doc.activeElement, "М", "KeyV", { ctrlKey: true, shiftKey: true });
+    key(s, s.doc.activeElement, "ArrowDown", "ArrowDown");
+    equal(s.doc.activeElement, s.button("edit:profile:project"));
+    equal(s.messages("create").length, 0);
+    equal(s.doc.getElementById("paste-confirmation").open, false);
+    dismiss(s);
+    equal(s.doc.activeElement.id, "launch-profiles-btn");
+    equal(s.doc.activeElement.getAttribute("aria-expanded"), "false");
+  });
+  await check("a late discovery result never reopens a dismissed menu and refresh ignores stale replies", async s => {
+    s.app.catalogMode = "manual";
+    s.open();
+    const request = s.messages("list-launch-targets")[0];
+    dismiss(s);
+    s.app.sendHost({ type: "launch-targets", requestId: request.requestId, targets: [] });
+    equal(s.menu.open, false);
+    s.open(); s.menu.querySelector("[data-launch-refresh]").click();
+    const next = s.messages("list-launch-targets").at(-1);
+    s.app.sendHost({ type: "launch-targets", requestId: request.requestId, targets: [{ id: "stale", title: "Stale", shell: "cmd" }] });
+    equal(s.button("stale"), undefined);
+    s.app.sendHost({ type: "launch-targets", requestId: next.requestId, targets: [], notice: "Дистрибутивы WSL не найдены." });
+    equal(s.menu.querySelector("[data-launch-status]").textContent, "Дистрибутивы WSL не найдены.");
+    equal(s.messages("create").length, 0);
+    s.app.sendHost({ type: "launch-targets" }); // unsolicited/malformed response cannot reopen or throw
+  });
+  await check("discovery failure leaves saved profiles usable and retry is explicit", async s => {
+    s.app.catalogMode = "error";
+    s.open(); await delay();
+    equal(s.menu.querySelector("[data-launch-status]").textContent, "Test WSL unavailable");
+    equal(s.menu.querySelector("[data-launch-refresh]").disabled, false);
+    s.app.catalogMode = null;
+    s.menu.querySelector("[data-launch-refresh]").click(); await delay();
+    equal(Boolean(s.button("wsl:Ubuntu")), true);
+    s.button("profile:project").click();
+    equal(s.messages("create").length, 1);
+    equal(s.messages("persist-profiles").length, 0);
+  });
+  await check("empty profiles and a narrow light window keep launch controls visible and names literal", async s => {
+    s.frame.style.width = "360px"; s.frame.style.height = "420px";
+    s.app.testLaunchTargets = [{ id: "wsl:long", title: "Ubuntu <img> " + "long ".repeat(30), shell: "wsl", wslDistribution: "Ubuntu" }];
+    s.open(); await delay();
+    equal(s.menu.querySelector("img"), null);
+    equal(s.menu.querySelector(".launch-empty").textContent, "Нет сохранённых профилей");
+    const bounds = s.menu.getBoundingClientRect();
+    equal(bounds.left >= 0 && bounds.right <= 360 && bounds.top >= 0 && bounds.bottom <= 420, true);
+    equal(s.menu.scrollWidth <= s.menu.clientWidth + 1, true);
+    s.menu.querySelector("[data-launch-new]").click();
+    equal(s.doc.getElementById("launch-profiles").open, true);
+  }, { profiles: [], settings: { themeId: "github-light", sidebarCollapsed: true } });
+
+  if (new URL(location.href).searchParams.has("preview")) {
+    const s = await setup({ profiles: [{ ...profile, title: "Muse — TerminalV", cwd: "C:\\Repos\\TerminalV", startupCommand: "muse" }] });
+    s.open(); await delay();
+  }
+  document.body.dataset.testResult = btoa(unescape(encodeURIComponent(JSON.stringify(results))));
+</script>

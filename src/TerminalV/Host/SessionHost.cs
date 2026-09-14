@@ -99,7 +99,8 @@ internal static class SessionHost
                         type = "list",
                         ids = Sessions.Keys.ToArray(),
                         cwdTrackingSupported = true,
-                        launchProfilesSupported = true
+                        launchProfilesSupported = true,
+                        wslLaunchSupported = true
                     });
                     break;
                 case "create":
@@ -143,18 +144,21 @@ internal static class SessionHost
         {
             if (request.Type == "create-profile" && Sessions.ContainsKey(request.Id))
                 throw new InvalidOperationException("Сессия уже работает. Повторный запуск профиля отменён.");
-            var cwd = WorkingDirectory.Resolve(request.Cwd);
+            var isWsl = request.Type == "create-profile" && request.Shell == "wsl";
+            if (isWsl && request.Cwd is not null)
+                throw new ArgumentException("Быстрый запуск WSL открывает домашнюю папку Linux.");
+            var cwd = WorkingDirectory.Resolve(isWsl ? null : request.Cwd);
             if (request.Type == "create-profile" && cwd.Notice is not null)
                 throw new DirectoryNotFoundException("Папка профиля недоступна. Запуск отменён: " + request.Cwd);
-            var shell = ShellResolver.Resolve(request.Cwd is null && request.Type != "create-profile" ? null : cwd.Path,
+            var shell = ShellResolver.Resolve(isWsl || (request.Cwd is null && request.Type != "create-profile") ? null : cwd.Path,
                 request.Type == "create-profile" ? request.Shell ?? "auto" : null,
-                request.Type == "create-profile" ? request.StartupCommand : null);
+                request.Type == "create-profile" ? request.StartupCommand : null, request.WslDistribution);
             Kill(request.Id);
             ConPtySession.Start(
                 request.Id, shell.CommandLine, cwd.Path,
                 Math.Max(request.Cols, 1), Math.Max(request.Rows, 1), pty =>
                 {
-                    var hosted = new HostedSession(pty);
+                    var hosted = new HostedSession(pty, reportDirectory: !isWsl);
                     pty.Output += chunk =>
                     {
                         lock (hosted.Gate)
@@ -165,6 +169,7 @@ internal static class SessionHost
                     };
                     pty.DirectoryChanged += _ =>
                     {
+                        if (isWsl) return;
                         lock (hosted.Gate)
                         {
                             Send(new { type = "cwd", id = request.Id, cwd = pty.CurrentDirectory });
@@ -176,7 +181,7 @@ internal static class SessionHost
                         Kill(request.Id);
                     };
                     Sessions[request.Id] = hosted;
-                    Send(new { type = "cwd", id = request.Id, cwd = cwd.Path, notice = cwd.Notice });
+                    if (!isWsl) Send(new { type = "cwd", id = request.Id, cwd = cwd.Path, notice = cwd.Notice });
                 });
         }
         catch (Exception ex)
@@ -201,7 +206,7 @@ internal static class SessionHost
                 Send(new { type = "data", id, data = snapshot });
             }
             // Kept independently of scrollback, including while the window is closed.
-            Send(new { type = "cwd", id, cwd = hosted.Pty.CurrentDirectory });
+            if (hosted.ReportDirectory) Send(new { type = "cwd", id, cwd = hosted.Pty.CurrentDirectory });
         }
     }
 
@@ -238,9 +243,10 @@ internal static class SessionHost
         private int _chars;
 
         public ConPtySession Pty { get; }
+        public bool ReportDirectory { get; }
         public object Gate { get; } = new();
 
-        public HostedSession(ConPtySession pty) => Pty = pty;
+        public HostedSession(ConPtySession pty, bool reportDirectory) { Pty = pty; ReportDirectory = reportDirectory; }
 
         public void Add(string chunk)
         {
@@ -271,6 +277,7 @@ internal static class SessionHost
         public string? Cwd { get; set; }
         public string? Shell { get; set; }
         public string? StartupCommand { get; set; }
+        public string? WslDistribution { get; set; }
         public int Cols { get; set; }
         public int Rows { get; set; }
     }

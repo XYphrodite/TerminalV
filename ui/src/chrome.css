@@ -192,6 +192,31 @@ input[type="range"], input[type="checkbox"] { accent-color: var(--accent); }
 #launch-profiles button { font-size: 12px; }
 .profile-delete-confirm { background: color-mix(in srgb, var(--danger) 7%, var(--sidebar)); }
 
+/* A compact launcher; profile editing is a separate dialog. */
+.launch-menu { position: fixed; inset: auto; margin: 0; width: min(380px, calc(100vw - 16px)); max-width: calc(100vw - 16px); max-height: calc(100vh - 16px); padding: 8px; overflow: auto; border: 1px solid var(--border-soft); border-radius: 12px; background: var(--sidebar); color: var(--text); box-shadow: 0 16px 50px #00000050; font: 13px var(--font-ui); }
+.launch-menu::backdrop { background: transparent; }
+.launch-menu-head { display: flex; align-items: center; justify-content: space-between; padding: 3px 4px 6px 10px; gap: 12px; }
+.launch-menu h2 { margin: 0; font-size: 14px; font-weight: 600; }
+.launch-section-label { padding: 10px 10px 6px; color: var(--label); font-size: 10px; }
+.launch-row { display: flex; align-items: center; gap: 2px; min-width: 0; border-radius: 7px; }
+.launch-row:hover, .launch-row:focus-within { background: var(--accent-wash); }
+.launch-item { display: flex; align-items: center; gap: 10px; min-width: 0; width: 100%; flex: 1; padding: 10px; border: 0; background: transparent; color: var(--text); text-align: left; border-radius: 7px; font: inherit; cursor: pointer; }
+.launch-item > .ui-icon { color: var(--accent); flex-shrink: 0; }
+.launch-item[data-shell="wsl"] > .ui-icon { color: var(--label); }
+.launch-labels { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; }
+.launch-labels > span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.launch-labels > span + span { color: var(--label); font-size: 10px; }
+.launch-hint { font-size: 10px; color: var(--label); }
+.launch-edit { flex-shrink: 0; margin-right: 4px; }
+.launch-empty, .launch-status { margin: 4px 10px 8px; color: var(--label); font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
+.launch-status:empty { display: none; }
+.launch-menu-foot { display: flex; gap: 6px; align-items: center; margin-top: 8px; padding: 8px 4px 0; border-top: 1px solid var(--border-soft); }
+.launch-menu-foot > button:first-child { display: flex; flex: 1; align-items: center; gap: 9px; padding: 8px 6px; background: transparent; border: 0; color: var(--text); text-align: left; font: inherit; border-radius: 6px; cursor: pointer; }
+.launch-menu button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.launch-menu button:hover { background: var(--accent-wash); }
+.launch-menu button:disabled { opacity: .45; cursor: wait; }
+@media (max-width: 400px) { .launch-hint { display: none; } }
+
 @media (max-width: 1050px) {
   #app { grid-template-columns: 224px minmax(0, 1fr); }
   .new-tab-shortcut, .pane-actions .action-label { display: none; }
