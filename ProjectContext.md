@@ -240,10 +240,10 @@ dotnet run --project src/TerminalV
 
 ## Document Information
 
-Оформление после v0.5.0: `ui/src/chrome.css` — визуальный слой поверх базовых стилей терминала, `ui/src/icons.js` — локальные SVG без внешних ресурсов. Контекст рабочей области строится из активной сессии через `textContent`. Ширина свёрнутого сайдбара не оставляет искусственный отступ у одиночного терминала. `appearance-ui.fixture.html` проверяет темы, контекст, фокус, узкое окно, диалог вставки и пустое состояние. Для скриншота задайте `TERMINALV_DESIGN_SCREENSHOT`, для варианта — `TERMINALV_DESIGN_VIEW` (`dark`, `light`, `settings`, `compact`, `empty`); затем запустите `node --test --test-name-pattern=appearance tests/selection.test.js` из `ui` после сборки. Мост в этой fixture тестовый: реальные PTY и буфер обмена не используются.
+Оформление v0.5.1: `ui/src/chrome.css` — визуальный слой поверх базовых стилей терминала, `ui/src/icons.js` — локальные SVG без внешних ресурсов. Контекст рабочей области строится из активной сессии через `textContent`. Ширина свёрнутого сайдбара не оставляет искусственный отступ у одиночного терминала. `appearance-ui.fixture.html` проверяет темы, контекст, фокус, узкое окно, диалог вставки и пустое состояние. Для скриншота задайте `TERMINALV_DESIGN_SCREENSHOT`, для варианта — `TERMINALV_DESIGN_VIEW` (`dark`, `light`, `settings`, `compact`, `empty`); затем запустите `node --test --test-name-pattern=appearance tests/selection.test.js` из `ui` после сборки. Мост в этой fixture тестовый: реальные PTY и буфер обмена не используются.
 
-**Last Updated**: 2026-09-13
-**Version**: 0.5.0
+**Last Updated**: 2026-09-14
+**Version**: 0.5.1
 **Status**: Active  
 **Repository**: `https://github.com/XYphrodite/TerminalV`  
 **Workspace**: `C:\Repos\TerminalV`
