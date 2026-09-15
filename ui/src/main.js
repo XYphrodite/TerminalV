@@ -1151,10 +1151,12 @@ function newTab(options = {}) {
   });
   function postWrite(targetId, data) {
     const t0 = performance.now();
+    try { post({ type: "diag-log", data: `[UI] onData len=${data.length} bracket=${data.includes("\u001b[200~")} t0=${t0.toFixed(1)}` }); } catch {}
     console.log(`[paste-diag] onData len=${data.length} t0=${t0.toFixed(1)} bracket=${data.includes("\u001b[200~")}`);
     const chunks = chunkText(data, WRITE_CHUNK);
     for (const chunk of chunks) queueMicrotask(() => {
       const t1 = performance.now();
+      try { post({ type: "diag-log", data: `[UI] post write len=${chunk.length} dt=${(t1-t0).toFixed(1)}ms` }); } catch {}
       console.log(`[paste-diag] post write len=${chunk.length} dt=${(t1-t0).toFixed(1)}ms`);
       post({ type: "write", id: targetId, data: chunk });
     });

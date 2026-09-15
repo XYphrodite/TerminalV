@@ -117,10 +117,12 @@ internal sealed class TerminalBridge : IDisposable
                     var writeId = message.Id;
                     var writeData = message.Data;
                     var t0 = Stopwatch.GetTimestamp();
+                    try { File.AppendAllText(Path.Combine(Path.GetTempPath(), "TerminalV-paste-diag.log"), $"{DateTime.Now:HH:mm:ss.fff} [Bridge] recv len={writeData.Length} id={writeId} t={t0}{Environment.NewLine}"); } catch { }
                     Debug.WriteLine($"[paste-diag] Bridge write recv len={writeData.Length} id={writeId} t={t0}");
                     _ = Task.Run(() =>
                     {
                         var queued = Stopwatch.GetTimestamp();
+                        try { File.AppendAllText(Path.Combine(Path.GetTempPath(), "TerminalV-paste-diag.log"), $"{DateTime.Now:HH:mm:ss.fff} [Bridge] queued dt={(queued-t0)*1000.0/Stopwatch.Frequency:F1}ms{Environment.NewLine}"); } catch { }
                         Debug.WriteLine($"[paste-diag] Bridge write queued dt={(queued-t0)*1000.0/Stopwatch.Frequency:F1}ms");
                         if (_host.Ensure())
                         {
@@ -131,6 +133,7 @@ internal sealed class TerminalBridge : IDisposable
                             writing.Write(writeData);
                         }
                         var done = Stopwatch.GetTimestamp();
+                        try { File.AppendAllText(Path.Combine(Path.GetTempPath(), "TerminalV-paste-diag.log"), $"{DateTime.Now:HH:mm:ss.fff} [Bridge] done len={writeData.Length} dt={(done-t0)*1000.0/Stopwatch.Frequency:F1}ms{Environment.NewLine}"); } catch { }
                         Debug.WriteLine($"[paste-diag] Bridge write done len={writeData.Length} dt={(done-t0)*1000.0/Stopwatch.Frequency:F1}ms");
                     });
                 }
@@ -231,6 +234,14 @@ internal sealed class TerminalBridge : IDisposable
                 break;
             case "pick-background":
                 PickBackground();
+                break;
+            case "diag-log":
+                try
+                {
+                    var logPath = Path.Combine(Path.GetTempPath(), "TerminalV-paste-diag.log");
+                    File.AppendAllText(logPath, $"{DateTime.Now:HH:mm:ss.fff} [diag] {message.Data}{Environment.NewLine}");
+                }
+                catch { }
                 break;
         }
     }
