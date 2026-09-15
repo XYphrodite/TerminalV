@@ -262,8 +262,10 @@ dotnet run --project src/TerminalV
 
 Вставка v0.5.6: большая вставка в `muse` режется на чанки по 4000/8192 (`ui/src/write-chunk.js`, `SessionClient.Write`, `ConPtySession.Write`) с сохранением `bracketed paste`, кириллицы и суррогатов `😀`. Один `write` не блокирует `NamedPipe`/`ConPTY` и `WebView2` на секунды. UI-часть добавляет `write-chunk.test.js` (5 тестов), хост-часть — `Program.cs` (`large paste is chunked`, 100 КБ `<500ms`). Ожидаемый полный прогон `verify-package.ps1`: 185 UI + 32 PTY + 11 Data + 21 Package + 9 Shell + 8 installer = 266 без пропусков. Перезапуск хоста не нужен. Подробности — `docs/releases/v0.5.6.md`.
 
+Вставка v0.5.7: даже 100 символов с диалогом в `muse` — `TerminalBridge` (`Task.Run` для `write`) и `ConPtySession` (очередь `Task.Run(ProcessWriteQueue)`) не блокируют WebView2 UI на `WriteFile`, `postWrite` через `queueMicrotask` не блокирует `xterm.triggerDataEvent`. Добавлен тест `100 chars with dialog via microtask` (6 UI, 33 PTY). Ожидаемо `186+33+11+21+9+8=268` без пропусков. Подробности — `docs/releases/v0.5.7.md`.
+
 **Last Updated**: 2026-09-16
-**Version**: 0.5.6
+**Version**: 0.5.7
 **Status**: Active  
 **Repository**: `https://github.com/XYphrodite/TerminalV`  
 **Workspace**: `C:\Repos\TerminalV`

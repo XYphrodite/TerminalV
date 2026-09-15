@@ -1151,7 +1151,9 @@ function newTab(options = {}) {
   });
   function postWrite(targetId, data) {
     const chunks = chunkText(data, WRITE_CHUNK);
-    for (const chunk of chunks) post({ type: "write", id: targetId, data: chunk });
+    // Don't block xterm's triggerDataEvent (called from term.paste) on pipe backpressure.
+    // Even 100 chars via WebView2→Host→ConPTY can stall UI if the TUI (muse) hasn't drained.
+    for (const chunk of chunks) queueMicrotask(() => post({ type: "write", id: targetId, data: chunk }));
   }
   term.onData((data) => postWrite(id, data));
   tab.output = createNotificationOutput(term, () => notifications.bell(tab), () => syncScrollLock(tab));

@@ -148,6 +148,10 @@ dotnet run --project tests/TerminalV.Data.Tests -c Release
 
 Исправлена вставка большого текста в `muse` и другие чаты TUI — ранее вставка 50–100 КБ занимала секунды из-за одного огромного `write` через `WebView2`/`NamedPipe`/`ConPTY`. Теперь текст режется на чанки по 4000/8192 с сохранением кириллицы, эмодзи и `bracketed paste`. Подробности — [заметки к релизу](docs/releases/v0.5.6.md).
 
+## Новое в v0.5.7
+
+Исправлена задержка даже для 100 символов в `muse` с диалогом многострочной вставки — `TerminalBridge` и `ConPtySession` больше не блокируют UI-поток на `WriteFile` в ConPTY, `postWrite` уходит через `queueMicrotask`. Подробности — [заметки к релизу](docs/releases/v0.5.7.md).
+
 ## Лицензия
 
 [MIT](LICENSE)

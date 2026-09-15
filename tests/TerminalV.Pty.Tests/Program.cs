@@ -250,6 +250,17 @@ Check("large paste is chunked into bounded writes and preserves surrogates", () 
         // Clear for next payload
         while (server.Requests.TryDequeue(out _)) { }
     }
+    // 100 chars with dialog (multiline) in muse — must not be chunked and must not block
+    var smallMultiline = new string('x', 95) + "\n123"; // 100 chars, contains \n
+    while (server.Requests.TryDequeue(out _)) { }
+    var swSmall = Stopwatch.StartNew();
+    client.Write("small-id", smallMultiline);
+    Equal(SpinWait.SpinUntil(() => server.Requests.Count >= 1, 500), true);
+    Thread.Sleep(50);
+    var smallWrites = server.Requests.Where(r => r.GetProperty("type").GetString() == "write").ToArray();
+    Equal(smallWrites.Length, 1);
+    Equal(string.Concat(smallWrites.Select(r => r.GetProperty("data").GetString())), smallMultiline);
+    Equal(swSmall.ElapsedMilliseconds < 100, true);
     // 100k large paste (typical Muse code paste) must be chunked promptly
     var huge = new string('q', 100000);
     while (server.Requests.TryDequeue(out _)) { }

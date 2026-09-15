@@ -17,6 +17,8 @@ internal sealed class ConPtySession : IDisposable
     private readonly FileStream _outputStream;
     private readonly StreamWriter _writer;
     private readonly object _writeGate = new();
+    private readonly Queue<string> _writeQueue = new();
+    private bool _writePumpRunning;
     private readonly WorkingDirectoryTracker _directory;
     private int _disposed;
 
@@ -142,36 +144,59 @@ internal sealed class ConPtySession : IDisposable
         }
 
         const int Chunk = 8192;
+        List<string> chunks;
         if (data.Length <= Chunk)
         {
-            lock (_writeGate)
+            chunks = [data];
+        }
+        else
+        {
+            chunks = [];
+            for (var i = 0; i < data.Length;)
             {
-                if (_disposed != 0)
-                {
-                    return;
-                }
-
-                _writer.Write(data);
+                var len = Math.Min(Chunk, data.Length - i);
+                if (len < data.Length - i && char.IsHighSurrogate(data[i + len - 1]) && i + len < data.Length && char.IsLowSurrogate(data[i + len]))
+                    len--;
+                chunks.Add(data.Substring(i, len));
+                i += len;
             }
-            return;
         }
 
-        for (var i = 0; i < data.Length;)
+        lock (_writeGate)
         {
-            var len = Math.Min(Chunk, data.Length - i);
-            if (len < data.Length - i && char.IsHighSurrogate(data[i + len - 1]) && i + len < data.Length && char.IsLowSurrogate(data[i + len]))
-                len--;
-            var chunk = data.Substring(i, len);
+            foreach (var c in chunks) _writeQueue.Enqueue(c);
+            if (_writePumpRunning) return;
+            _writePumpRunning = true;
+        }
+        _ = Task.Run(ProcessWriteQueue);
+    }
+
+    private void ProcessWriteQueue()
+    {
+        while (true)
+        {
+            string chunk;
             lock (_writeGate)
             {
-                if (_disposed != 0)
+                if (_writeQueue.Count == 0)
                 {
+                    _writePumpRunning = false;
                     return;
                 }
-
-                _writer.Write(chunk);
+                chunk = _writeQueue.Dequeue();
             }
-            i += len;
+            if (_disposed != 0) return;
+            try
+            {
+                // Keep writer exclusive but don't hold queue lock while blocking on pipe.
+                lock (_writeGate) // reuse same gate for writer exclusion
+                {
+                    if (_disposed != 0) return;
+                    _writer.Write(chunk);
+                }
+            }
+            catch (IOException) { return; }
+            catch (ObjectDisposedException) { return; }
         }
     }
 

@@ -112,14 +112,21 @@ internal sealed class TerminalBridge : IDisposable
             case "write":
                 if (message.Id is not null && message.Data is not null)
                 {
-                    if (_host.Ensure())
+                    // Don't block WebView2's WebMessageReceived (UI thread) on ConPTY backpressure.
+                    // Even 100 chars with bracketed paste (muse) can stall if the TUI hasn't drained.
+                    var writeId = message.Id;
+                    var writeData = message.Data;
+                    _ = Task.Run(() =>
                     {
-                        _host.Write(message.Id, message.Data);
-                    }
-                    else if (_sessions.TryGetValue(message.Id, out var writing))
-                    {
-                        writing.Write(message.Data);
-                    }
+                        if (_host.Ensure())
+                        {
+                            _host.Write(writeId, writeData);
+                        }
+                        else if (_sessions.TryGetValue(writeId, out var writing))
+                        {
+                            writing.Write(writeData);
+                        }
+                    });
                 }
                 break;
             case "resize":

@@ -53,3 +53,15 @@ test("newlines converted payload still round-trips", () => {
   const chunks = chunkText(payload);
   assert.equal(chunks.join(""), payload);
 });
+
+test("100 chars with dialog (multiline) stays one chunk and preserves order via microtask", async () => {
+  const text = "x".repeat(95) + "\n123"; // 100 chars, contains \n → dialog
+  const chunks = chunkText(text);
+  assert.equal(chunks.length, 1);
+  assert.equal(chunks[0], text);
+  // Simulate postWrite queueMicrotask ordering: even 100 chars must not block triggerDataEvent
+  const posted = [];
+  for (const c of chunks) queueMicrotask(() => posted.push(c));
+  await new Promise((r) => queueMicrotask(r));
+  assert.deepEqual(posted, chunks);
+});
