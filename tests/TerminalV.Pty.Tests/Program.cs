@@ -218,6 +218,49 @@ Check("WSL transport preserves distribution across explicit create and never rel
     Equal(server.Requests.Any(r => r.GetProperty("type").GetString() is "write" or "kill"), false);
     Equal(server.Requests.Single(r => r.GetProperty("type").GetString() == "attach").TryGetProperty("wslDistribution", out _), false);
 });
+Check("large paste is chunked into bounded writes and preserves surrogates", () =>
+{
+    using var server = new IsolatedHost(supportsProfiles: true, supportsWsl: true);
+    using var client = new SessionClient(server.PipeName, () => { });
+    Equal(client.Ensure(), true);
+    // Empty the initial list request
+    while (server.Requests.TryDequeue(out _)) { }
+    var large = new string('a', 10000) + " кириллица 🖥" + new string('b', 8000);
+    var emoji = "😀"; // surrogate pair
+    var withEmoji = new string('x', 3999) + emoji + new string('y', 5000);
+    foreach (var payload in new[] { large, withEmoji, "\u001b[200~" + new string('z', 12000) + "\u001b[201~" })
+    {
+        while (server.Requests.TryDequeue(out _)) { }
+        client.Write("test-id", payload);
+        // Give pipe time to deliver all chunks
+        Equal(SpinWait.SpinUntil(() => server.Requests.Count >= 1, 2000), true);
+        Thread.Sleep(100);
+        var writes = server.Requests.Where(r => r.GetProperty("type").GetString() == "write").ToArray();
+        Equal(writes.Length > 1 || payload.Length <= 4000, true);
+        foreach (var w in writes) Equal(w.GetProperty("data").GetString()!.Length <= 4000, true);
+        var reassembled = string.Concat(writes.Select(w => w.GetProperty("data").GetString()));
+        Equal(reassembled, payload);
+        // No chunk should split surrogate pair
+        foreach (var w in writes)
+        {
+            var data = w.GetProperty("data").GetString()!;
+            if (data.Length > 0) Equal(char.IsLowSurrogate(data[0]), false);
+            if (data.Length > 0) Equal(char.IsHighSurrogate(data[data.Length - 1]) && payload.Contains(data + "😀"), false);
+        }
+        // Clear for next payload
+        while (server.Requests.TryDequeue(out _)) { }
+    }
+    // 100k large paste (typical Muse code paste) must be chunked promptly
+    var huge = new string('q', 100000);
+    while (server.Requests.TryDequeue(out _)) { }
+    var sw = Stopwatch.StartNew();
+    client.Write("huge-id", huge);
+    SpinWait.SpinUntil(() => server.Requests.Count > 20, 2000);
+    sw.Stop();
+    Equal(sw.ElapsedMilliseconds < 500, true);
+    var hugeWrites = server.Requests.Where(r => r.GetProperty("type").GetString() == "write").ToArray();
+    Equal(string.Concat(hugeWrites.Select(r => r.GetProperty("data").GetString())).Length, huge.Length);
+});
 
 // Opt-in to a known installed distribution. No Linux profile, file writes or distro shutdown.
 var wslDistribution = Environment.GetEnvironmentVariable("TERMINALV_TEST_WSL_DISTRIBUTION");

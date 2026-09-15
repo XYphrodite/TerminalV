@@ -260,8 +260,10 @@ dotnet run --project src/TerminalV
 
 Ярлыки и релиз v0.5.5: «Пуск» по умолчанию, рабочий стол через `-DesktopShortcut`, выбор расположений и кнопка «Создать ярлыки» в настройках для установленной/ZIP-копии. Панель «Оформление» переименована в «Настройки». `-NoShortcut` запрещает создание обоих ярлыков. Полный прогон релизного ZIP: 180 Node/браузерных + 31 PTY/транспортная + 11 SQLite + 21 пакет/CLI/обновление + 9 Windows-ярлыков + 8 сценариев установщика = 260, без пропусков. ProductVersion EXE и интерфейс — `0.5.5`. Архив `artifacts/release-v0.5.5/TerminalV-win-x64.zip` — 66 629 212 байт, SHA-256 `c6d3aa281e1201eb43ce1f78f61afaa9bb9535a646861d4037c1452fdcd1f6f2`. Логи — `verification-711b155c439e4688a23e78bfb63481de/` рядом с ZIP. Ярлыки тестировались в изолированных каталогах; рабочая установка, пользовательские ярлыки, база и host не изменялись. Перезапуск фонового host для этой функции не нужен. Подробности — `docs/releases/v0.5.5.md`.
 
-**Last Updated**: 2026-09-14
-**Version**: 0.5.5
+Вставка v0.5.6: большая вставка в `muse` режется на чанки по 4000/8192 (`ui/src/write-chunk.js`, `SessionClient.Write`, `ConPtySession.Write`) с сохранением `bracketed paste`, кириллицы и суррогатов `😀`. Один `write` не блокирует `NamedPipe`/`ConPTY` и `WebView2` на секунды. UI-часть добавляет `write-chunk.test.js` (5 тестов), хост-часть — `Program.cs` (`large paste is chunked`, 100 КБ `<500ms`). Ожидаемый полный прогон `verify-package.ps1`: 185 UI + 32 PTY + 11 Data + 21 Package + 9 Shell + 8 installer = 266 без пропусков. Перезапуск хоста не нужен. Подробности — `docs/releases/v0.5.6.md`.
+
+**Last Updated**: 2026-09-16
+**Version**: 0.5.6
 **Status**: Active  
 **Repository**: `https://github.com/XYphrodite/TerminalV`  
 **Workspace**: `C:\Repos\TerminalV`

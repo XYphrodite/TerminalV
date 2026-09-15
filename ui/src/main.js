@@ -21,6 +21,7 @@ import { normalizeLayouts, layoutFor, leafIds, splitSession, detachSession, layo
   neighborPane, paneShortcut, MAX_PANES, MIN_PANE_WIDTH, MIN_PANE_HEIGHT } from "./pane-layout.js";
 import { createPaneView } from "./pane-view.js";
 import { createShortcuts } from "./shortcuts.js";
+import { WRITE_CHUNK, chunkText } from "./write-chunk.js";
 
 mountIcons(document);
 
@@ -1148,7 +1149,11 @@ function newTab(options = {}) {
   hostEl.addEventListener("focusin", () => {
     if (activeId !== id && isPaneVisible(tab) && !isModalOpen()) activate(id, { focus: false });
   });
-  term.onData((data) => post({ type: "write", id, data }));
+  function postWrite(targetId, data) {
+    const chunks = chunkText(data, WRITE_CHUNK);
+    for (const chunk of chunks) post({ type: "write", id: targetId, data: chunk });
+  }
+  term.onData((data) => postWrite(id, data));
   tab.output = createNotificationOutput(term, () => notifications.bell(tab), () => syncScrollLock(tab));
   if (options.buffer) tab.output.write(options.buffer, true);
   term.onTitleChange((title) => {

@@ -141,14 +141,37 @@ internal sealed class ConPtySession : IDisposable
             return;
         }
 
-        lock (_writeGate)
+        const int Chunk = 8192;
+        if (data.Length <= Chunk)
         {
-            if (_disposed != 0)
+            lock (_writeGate)
             {
-                return;
-            }
+                if (_disposed != 0)
+                {
+                    return;
+                }
 
-            _writer.Write(data);
+                _writer.Write(data);
+            }
+            return;
+        }
+
+        for (var i = 0; i < data.Length;)
+        {
+            var len = Math.Min(Chunk, data.Length - i);
+            if (len < data.Length - i && char.IsHighSurrogate(data[i + len - 1]) && i + len < data.Length && char.IsLowSurrogate(data[i + len]))
+                len--;
+            var chunk = data.Substring(i, len);
+            lock (_writeGate)
+            {
+                if (_disposed != 0)
+                {
+                    return;
+                }
+
+                _writer.Write(chunk);
+            }
+            i += len;
         }
     }
 

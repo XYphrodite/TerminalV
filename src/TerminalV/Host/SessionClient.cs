@@ -158,7 +158,23 @@ internal sealed class SessionClient : IDisposable
         }
     }
 
-    public void Write(string id, string data) => Send(new { type = "write", id, data });
+    public void Write(string id, string data)
+    {
+        const int Chunk = 4000;
+        if (data.Length <= Chunk)
+        {
+            Send(new { type = "write", id, data });
+            return;
+        }
+        for (var i = 0; i < data.Length;)
+        {
+            var len = Math.Min(Chunk, data.Length - i);
+            if (len < data.Length - i && char.IsHighSurrogate(data[i + len - 1]) && i + len < data.Length && char.IsLowSurrogate(data[i + len]))
+                len--;
+            Send(new { type = "write", id, data = data.Substring(i, len) });
+            i += len;
+        }
+    }
 
     public void Resize(string id, int cols, int rows) => Send(new { type = "resize", id, cols, rows });
 
