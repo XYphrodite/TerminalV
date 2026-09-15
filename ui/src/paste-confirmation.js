@@ -12,6 +12,8 @@ export function createPasteController({ dialog, readClipboard, canPaste, restore
     if (!operation) {
       return;
     }
+    const t0 = performance.now();
+    console.log(`[paste-diag] finish approved=${approved} len=${operation.text?.length} t0=${t0.toFixed(1)}`);
     pending = null;
     if (dialog.open) {
       dialog.close();
@@ -21,11 +23,15 @@ export function createPasteController({ dialog, readClipboard, canPaste, restore
     try {
       if (approved && operation.text && canPaste(operation.tab)) {
         // Keep xterm's newline normalization and bracketed paste support.
+        const t1 = performance.now();
+        console.log(`[paste-diag] term.paste start len=${operation.text.length} dt=${(t1-t0).toFixed(1)}ms`);
         operation.tab.term.paste(operation.text);
+        console.log(`[paste-diag] term.paste end dt=${(performance.now()-t1).toFixed(1)}ms`);
       }
     } finally {
       restoreFocus();
     }
+    console.log(`[paste-diag] finish done total=${(performance.now()-t0).toFixed(1)}ms`);
   }
 
   confirm.addEventListener("click", () => finish(true));

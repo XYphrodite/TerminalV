@@ -116,8 +116,12 @@ internal sealed class TerminalBridge : IDisposable
                     // Even 100 chars with bracketed paste (muse) can stall if the TUI hasn't drained.
                     var writeId = message.Id;
                     var writeData = message.Data;
+                    var t0 = Stopwatch.GetTimestamp();
+                    Debug.WriteLine($"[paste-diag] Bridge write recv len={writeData.Length} id={writeId} t={t0}");
                     _ = Task.Run(() =>
                     {
+                        var queued = Stopwatch.GetTimestamp();
+                        Debug.WriteLine($"[paste-diag] Bridge write queued dt={(queued-t0)*1000.0/Stopwatch.Frequency:F1}ms");
                         if (_host.Ensure())
                         {
                             _host.Write(writeId, writeData);
@@ -126,6 +130,8 @@ internal sealed class TerminalBridge : IDisposable
                         {
                             writing.Write(writeData);
                         }
+                        var done = Stopwatch.GetTimestamp();
+                        Debug.WriteLine($"[paste-diag] Bridge write done len={writeData.Length} dt={(done-t0)*1000.0/Stopwatch.Frequency:F1}ms");
                     });
                 }
                 break;
