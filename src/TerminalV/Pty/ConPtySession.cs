@@ -144,9 +144,7 @@ internal sealed class ConPtySession : IDisposable
             return;
         }
 
-        var t0 = Stopwatch.GetTimestamp();
-        try { File.AppendAllText(Path.Combine(Path.GetTempPath(), "TerminalV-paste-diag.log"), $"{DateTime.Now:HH:mm:ss.fff} [ConPty] Write enqueue len={data.Length} t={t0}{Environment.NewLine}"); } catch { }
-        System.Diagnostics.Debug.WriteLine($"[paste-diag] ConPty Write enqueue len={data.Length} t={t0}");
+
         const int Chunk = 8192;
         List<string> chunks;
         if (data.Length <= Chunk)
@@ -172,16 +170,11 @@ internal sealed class ConPtySession : IDisposable
             if (_writePumpRunning) return;
             _writePumpRunning = true;
         }
-        try { File.AppendAllText(Path.Combine(Path.GetTempPath(), "TerminalV-paste-diag.log"), $"{DateTime.Now:HH:mm:ss.fff} [ConPty] Write queued chunks={chunks.Count} dt={(Stopwatch.GetTimestamp()-t0)*1000.0/Stopwatch.Frequency:F1}ms{Environment.NewLine}"); } catch { }
-        System.Diagnostics.Debug.WriteLine($"[paste-diag] ConPty Write queued chunks={chunks.Count} dt={(Stopwatch.GetTimestamp()-t0)*1000.0/Stopwatch.Frequency:F1}ms");
         _ = Task.Run(ProcessWriteQueue);
     }
 
     private void ProcessWriteQueue()
     {
-        var pumpStart = Stopwatch.GetTimestamp();
-        try { File.AppendAllText(Path.Combine(Path.GetTempPath(), "TerminalV-paste-diag.log"), $"{DateTime.Now:HH:mm:ss.fff} [ConPty] pump start t={pumpStart}{Environment.NewLine}"); } catch { }
-        System.Diagnostics.Debug.WriteLine($"[paste-diag] ConPty pump start t={pumpStart}");
         while (true)
         {
             string chunk;
@@ -190,8 +183,6 @@ internal sealed class ConPtySession : IDisposable
                 if (_writeQueue.Count == 0)
                 {
                     _writePumpRunning = false;
-                    try { File.AppendAllText(Path.Combine(Path.GetTempPath(), "TerminalV-paste-diag.log"), $"{DateTime.Now:HH:mm:ss.fff} [ConPty] pump done total={(Stopwatch.GetTimestamp()-pumpStart)*1000.0/Stopwatch.Frequency:F1}ms{Environment.NewLine}"); } catch { }
-                    System.Diagnostics.Debug.WriteLine($"[paste-diag] ConPty pump done total={(Stopwatch.GetTimestamp()-pumpStart)*1000.0/Stopwatch.Frequency:F1}ms");
                     return;
                 }
                 chunk = _writeQueue.Dequeue();
@@ -199,15 +190,12 @@ internal sealed class ConPtySession : IDisposable
             if (_disposed != 0) return;
             try
             {
-                var w0 = Stopwatch.GetTimestamp();
                 // Keep writer exclusive but don't hold queue lock while blocking on pipe.
                 lock (_writeGate) // reuse same gate for writer exclusion
                 {
                     if (_disposed != 0) return;
                     _writer.Write(chunk);
                 }
-                try { File.AppendAllText(Path.Combine(Path.GetTempPath(), "TerminalV-paste-diag.log"), $"{DateTime.Now:HH:mm:ss.fff} [ConPty] Write chunk len={chunk.Length} dt={(Stopwatch.GetTimestamp()-w0)*1000.0/Stopwatch.Frequency:F1}ms{Environment.NewLine}"); } catch { }
-                System.Diagnostics.Debug.WriteLine($"[paste-diag] ConPty Write chunk len={chunk.Length} dt={(Stopwatch.GetTimestamp()-w0)*1000.0/Stopwatch.Frequency:F1}ms");
             }
             catch (IOException) { return; }
             catch (ObjectDisposedException) { return; }

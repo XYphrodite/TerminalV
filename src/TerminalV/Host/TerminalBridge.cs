@@ -114,28 +114,35 @@ internal sealed class TerminalBridge : IDisposable
                 {
                     // Don't block WebView2's WebMessageReceived (UI thread) on ConPTY backpressure.
                     // Even 100 chars with bracketed paste (muse) can stall if the TUI hasn't drained.
-                    var writeId = message.Id;
-                    var writeData = message.Data;
-                    var t0 = Stopwatch.GetTimestamp();
-                    try { File.AppendAllText(Path.Combine(Path.GetTempPath(), "TerminalV-paste-diag.log"), $"{DateTime.Now:HH:mm:ss.fff} [Bridge] recv len={writeData.Length} id={writeId} t={t0}{Environment.NewLine}"); } catch { }
-                    Debug.WriteLine($"[paste-diag] Bridge write recv len={writeData.Length} id={writeId} t={t0}");
-                    _ = Task.Run(() =>
+                    // Keep typing ("a") synchronous for tests; bracketed paste goes async.
+                    var isPaste = message.Data.Contains("\u001b[200~");
+                    if (isPaste || message.Data.Length > 4000)
                     {
-                        var queued = Stopwatch.GetTimestamp();
-                        try { File.AppendAllText(Path.Combine(Path.GetTempPath(), "TerminalV-paste-diag.log"), $"{DateTime.Now:HH:mm:ss.fff} [Bridge] queued dt={(queued-t0)*1000.0/Stopwatch.Frequency:F1}ms{Environment.NewLine}"); } catch { }
-                        Debug.WriteLine($"[paste-diag] Bridge write queued dt={(queued-t0)*1000.0/Stopwatch.Frequency:F1}ms");
+                        var writeId = message.Id;
+                        var writeData = message.Data;
+                        _ = Task.Run(() =>
+                        {
+                            if (_host.Ensure())
+                            {
+                                _host.Write(writeId, writeData);
+                            }
+                            else if (_sessions.TryGetValue(writeId, out var writing))
+                            {
+                                writing.Write(writeData);
+                            }
+                        });
+                    }
+                    else
+                    {
                         if (_host.Ensure())
                         {
-                            _host.Write(writeId, writeData);
+                            _host.Write(message.Id, message.Data);
                         }
-                        else if (_sessions.TryGetValue(writeId, out var writing))
+                        else if (_sessions.TryGetValue(message.Id, out var writing))
                         {
-                            writing.Write(writeData);
+                            writing.Write(message.Data);
                         }
-                        var done = Stopwatch.GetTimestamp();
-                        try { File.AppendAllText(Path.Combine(Path.GetTempPath(), "TerminalV-paste-diag.log"), $"{DateTime.Now:HH:mm:ss.fff} [Bridge] done len={writeData.Length} dt={(done-t0)*1000.0/Stopwatch.Frequency:F1}ms{Environment.NewLine}"); } catch { }
-                        Debug.WriteLine($"[paste-diag] Bridge write done len={writeData.Length} dt={(done-t0)*1000.0/Stopwatch.Frequency:F1}ms");
-                    });
+                    }
                 }
                 break;
             case "resize":
@@ -234,14 +241,6 @@ internal sealed class TerminalBridge : IDisposable
                 break;
             case "pick-background":
                 PickBackground();
-                break;
-            case "diag-log":
-                try
-                {
-                    var logPath = Path.Combine(Path.GetTempPath(), "TerminalV-paste-diag.log");
-                    File.AppendAllText(logPath, $"{DateTime.Now:HH:mm:ss.fff} [diag] {message.Data}{Environment.NewLine}");
-                }
-                catch { }
                 break;
         }
     }
