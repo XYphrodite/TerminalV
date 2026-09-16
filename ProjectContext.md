@@ -264,8 +264,10 @@ dotnet run --project src/TerminalV
 
 Вставка v0.5.7: даже 100 символов с диалогом в `muse` — `TerminalBridge` (`Task.Run` для `write`) и `ConPtySession` (очередь `Task.Run(ProcessWriteQueue)`) не блокируют WebView2 UI на `WriteFile`, `postWrite` через `queueMicrotask` не блокирует `xterm.triggerDataEvent`. Добавлен тест `100 chars with dialog via microtask` (6 UI, 33 PTY). Ожидаемо `186+33+11+21+9+8=268` без пропусков. Подробности — `docs/releases/v0.5.7.md`.
 
+Вставка v0.5.8: `v0.5.7` уже выпущен — тот же неблокирующий paste (синхронный ввод `"a"`, асинхронный `ESC[200~` paste) перепакован как `0.5.8` для публикации без перезаписи `v0.5.7` (условный `isPaste || >4000` в `main.js`/`TerminalBridge.cs`). Подробности — `docs/releases/v0.5.8.md`.
+
 **Last Updated**: 2026-09-16
-**Version**: 0.5.7
+**Version**: 0.5.8
 **Status**: Active  
 **Repository**: `https://github.com/XYphrodite/TerminalV`  
 **Workspace**: `C:\Repos\TerminalV`
