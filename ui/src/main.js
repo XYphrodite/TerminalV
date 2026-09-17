@@ -314,6 +314,24 @@ function post(message) {
   host()?.postMessage(message);
 }
 
+function openExternal(uri) {
+  if (typeof uri !== "string") return;
+  uri = uri.trim();
+  if (!uri) return;
+  try {
+    const url = new URL(uri);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return;
+    post({ type: "open-link", uri });
+  } catch {
+    // ignore invalid URLs
+  }
+}
+
+function handleLink(event, uri) {
+  try { event?.preventDefault?.(); } catch {}
+  openExternal(uri);
+}
+
 function uuid() {
   return crypto.randomUUID();
 }
@@ -1102,11 +1120,14 @@ function newTab(options = {}) {
     allowProposedApi: true,
     allowTransparency: Boolean(settings.backgroundPath),
     theme: termTheme(),
-    windowsPty: { backend: "conpty", buildNumber }
+    windowsPty: { backend: "conpty", buildNumber },
+    linkHandler: {
+      activate: (event, uri) => handleLink(event, uri)
+    }
   });
   const fit = new FitAddon();
   term.loadAddon(fit);
-  term.loadAddon(new WebLinksAddon());
+  term.loadAddon(new WebLinksAddon((event, uri) => handleLink(event, uri)));
   const serialize = new SerializeAddon();
   term.loadAddon(serialize);
   const search = new SearchAddon({ highlightLimit: SEARCH_HIGHLIGHT_LIMIT });

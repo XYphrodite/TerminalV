@@ -19,4 +19,5 @@ internal sealed class IncomingMessage
     public string? StartupCommand { get; set; }
     public string? WslDistribution { get; set; }
     public List<LaunchProfile>? Profiles { get; set; }
+    public string? Uri { get; set; }
 }

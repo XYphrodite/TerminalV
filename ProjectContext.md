@@ -268,8 +268,10 @@ dotnet run --project src/TerminalV
 
 Сохранение сессий v0.5.9: исправлен баг — видимая сессия теперь сохраняет `Buffer/Cwd` как скрытая, пустой чат после перезапуска устранён (`AppDatabase.SaveSessions` хранит все сессии, `SessionRecord.Hidden` — только видимость). Добавлен дюрабл-тест `visible sessions preserve buffer...`. Подробности — `docs/releases/v0.5.9.md`.
 
-**Last Updated**: 2026-09-16
-**Version**: 0.5.9
+Ссылки v0.5.10: клик по URL в терминале теперь открывает внешний браузер. Ранее `WebLinksAddon` делал `window.open` внутри WebView2 (встроенный popup). Теперь `ui/src/main.js` передаёт `open-link` через `TerminalBridge` + `linkHandler`, хост открывает только `http/https` через `UseShellExecute`, `MainWindow` перехватывает `NewWindowRequested`/`NavigationStarting`. Подробности — `docs/releases/v0.5.10.md`.
+
+**Last Updated**: 2026-09-18
+**Version**: 0.5.10
 **Status**: Active  
 **Repository**: `https://github.com/XYphrodite/TerminalV`  
 **Workspace**: `C:\Repos\TerminalV`

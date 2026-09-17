@@ -207,6 +207,34 @@ internal sealed class TerminalBridge : IDisposable
                     }
                 });
                 break;
+            case "open-link":
+                _dispatcher.BeginInvoke(() =>
+                {
+                    var uri = message.Uri;
+                    if (string.IsNullOrWhiteSpace(uri))
+                    {
+                        return;
+                    }
+
+                    uri = uri.Trim();
+                    // Only http(s) is allowed to be opened externally; anything else is ignored.
+                    if (!Uri.TryCreate(uri, UriKind.Absolute, out var parsed)
+                        || (parsed.Scheme != Uri.UriSchemeHttp && parsed.Scheme != Uri.UriSchemeHttps))
+                    {
+                        return;
+                    }
+
+                    try
+                    {
+                        using var browser = Process.Start(new ProcessStartInfo(parsed.AbsoluteUri) { UseShellExecute = true });
+                    }
+                    catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
+                    {
+                        MessageBox.Show("Не удалось открыть браузер. Ссылка: " + parsed.AbsoluteUri,
+                            "TerminalV", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    }
+                });
+                break;
             case "update-check":
                 _ = CheckUpdatesAsync(silent: false);
                 break;

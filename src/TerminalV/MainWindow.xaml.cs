@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Diagnostics;
 using System.IO;
 using System.Windows;
 using Microsoft.Web.WebView2.Core;
@@ -74,6 +75,46 @@ public partial class MainWindow : Window
 
         _bridge = new TerminalBridge(Dispatcher, core);
         core.WebMessageReceived += (_, args) => _bridge.Handle(args.WebMessageAsJson);
+        core.NewWindowRequested += (_, e) =>
+        {
+            // window.open() from xterm's default link handler (if any) should not show an embedded popup.
+            e.Handled = true;
+            var uri = e.Uri;
+            if (!string.IsNullOrWhiteSpace(uri)
+                && Uri.TryCreate(uri, UriKind.Absolute, out var parsed)
+                && (parsed.Scheme == Uri.UriSchemeHttp || parsed.Scheme == Uri.UriSchemeHttps))
+            {
+                try
+                {
+                    using var browser = Process.Start(new ProcessStartInfo(parsed.AbsoluteUri) { UseShellExecute = true });
+                }
+                catch
+                {
+                }
+            }
+        };
+        core.NavigationStarting += (_, e) =>
+        {
+            // Virtual hosts are the only allowed in-WebView navigation; everything else goes to the system browser.
+            if (e.Uri.StartsWith("https://terminalv.local", StringComparison.OrdinalIgnoreCase)
+                || e.Uri.StartsWith("https://tvdata.local", StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            if (e.Uri.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+                || e.Uri.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+            {
+                e.Cancel = true;
+                try
+                {
+                    using var browser = Process.Start(new ProcessStartInfo(e.Uri) { UseShellExecute = true });
+                }
+                catch
+                {
+                }
+            }
+        };
         core.NavigationCompleted += (_, args) =>
         {
             if (args.IsSuccess)
