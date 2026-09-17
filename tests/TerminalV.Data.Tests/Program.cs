@@ -234,6 +234,42 @@ try
         Equal(reopened.LoadSessions().Single().Group, "Группа");
         Equal(reopened.LoadSettings().FontSize, 18);
     });
+
+    Check("visible sessions preserve buffer and metadata without requiring hidden", () =>
+    {
+        var visiblePath = Path.Combine(root, "visible.db");
+        using (var db = new AppDatabase(visiblePath))
+        {
+            db.SaveSessions([
+                new() { Id = "visible", Title = "Чат", Buffer = "привет чат история\nвторая строка \u001b[34m", Cwd = @"C:\Проект", SortOrder = 0, Active = true, Hidden = false, Group = "Проект", Color = "green", Pinned = true },
+                new() { Id = "hidden", Title = "HiddenChat", Buffer = "hidden buffer \u001b[?1049h", Cwd = @"D:\Папка", SortOrder = 1, Active = false, Hidden = true }
+            ]);
+        }
+        using var reopened = new AppDatabase(visiblePath);
+        var records = reopened.LoadSessions();
+        Equal(records.Count, 2);
+        var visible = records.First(r => r.Id == "visible");
+        Equal(visible.Buffer, "привет чат история\nвторая строка \u001b[34m");
+        Equal(visible.Cwd, @"C:\Проект");
+        Equal(visible.Active, true);
+        Equal(visible.Hidden, false);
+        Equal(visible.Group, "Проект");
+        Equal(visible.Color, "green");
+        Equal(visible.Pinned, true);
+        var hidden = records.First(r => r.Id == "hidden");
+        Equal(hidden.Buffer, "hidden buffer \u001b[?1049h");
+        Equal(hidden.Hidden, true);
+        // Layout must keep visible session, hidden must not appear in layout
+        using (var db = new AppDatabase(visiblePath))
+        {
+            db.SaveSessions(records, [new() { SessionId = "visible" }, new() { SessionId = "hidden" }]);
+        }
+        using var relayout = new AppDatabase(visiblePath);
+        var layouts = relayout.LoadLayouts();
+        Equal(layouts.Count, 1);
+        Equal(layouts[0].SessionId, "visible");
+        Equal(relayout.LoadSessions().First(r => r.Id == "visible").Buffer, "привет чат история\nвторая строка \u001b[34m");
+    });
 }
 finally
 {

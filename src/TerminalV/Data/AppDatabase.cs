@@ -130,6 +130,8 @@ internal sealed class AppDatabase : IDisposable
 
     public void SaveSessions(IReadOnlyList<SessionRecord> sessions, IReadOnlyList<PaneLayout>? layouts = null)
     {
+        // Preserve every session regardless of Hidden – visible sessions must also
+        // survive restart with buffer/cwd, not only hidden ones.
         var normalized = PaneLayout.Normalize(layouts ?? LoadLayouts(), sessions);
         using var tx = _connection.BeginTransaction();
         using (var clear = _connection.CreateCommand())

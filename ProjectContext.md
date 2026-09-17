@@ -266,8 +266,10 @@ dotnet run --project src/TerminalV
 
 Вставка v0.5.8: `v0.5.7` уже выпущен — тот же неблокирующий paste (синхронный ввод `"a"`, асинхронный `ESC[200~` paste) перепакован как `0.5.8` для публикации без перезаписи `v0.5.7` (условный `isPaste || >4000` в `main.js`/`TerminalBridge.cs`). Подробности — `docs/releases/v0.5.8.md`.
 
+Сохранение сессий v0.5.9: исправлен баг — видимая сессия теперь сохраняет `Buffer/Cwd` как скрытая, пустой чат после перезапуска устранён (`AppDatabase.SaveSessions` хранит все сессии, `SessionRecord.Hidden` — только видимость). Добавлен дюрабл-тест `visible sessions preserve buffer...`. Подробности — `docs/releases/v0.5.9.md`.
+
 **Last Updated**: 2026-09-16
-**Version**: 0.5.8
+**Version**: 0.5.9
 **Status**: Active  
 **Repository**: `https://github.com/XYphrodite/TerminalV`  
 **Workspace**: `C:\Repos\TerminalV`
