@@ -12,6 +12,10 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+# Console in powershell.exe defaults to CP866 → Cyrillic from dotnet/node appears as ╨Ю╨┐...  Force UTF-8.
+try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::InputEncoding = [System.Text.Encoding]::UTF8 } catch {}
+try { $OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
+try { chcp 65001 >$null } catch {}
 $root = Split-Path -Parent $PSScriptRoot
 $zip = (Resolve-Path -LiteralPath $Package).Path
 if ([string]::IsNullOrWhiteSpace($ExpectedVersion)) {

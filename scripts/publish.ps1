@@ -13,6 +13,9 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::InputEncoding = [System.Text.Encoding]::UTF8 } catch {}
+try { $OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
+try { chcp 65001 >$null } catch {}
 
 $root = Split-Path -Parent $PSScriptRoot
 if ([System.IO.Path]::IsPathRooted($OutputDirectory)) {
