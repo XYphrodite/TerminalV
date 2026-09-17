@@ -272,8 +272,10 @@ dotnet run --project src/TerminalV
 
 Разделение v0.5.11: кнопка «Справа»/«Снизу» теперь вставляет новую сессию рядом с родительской в списке слева, а не в конец. Ранее `tabs.push` всегда добавлял в конец; теперь `insertAfter` вставляет после `splitFrom`. Дочерние панели отмечаются отступом и тонкой линией-веткой (`split-child`/`split-parent` из `isSplitChild`/`isSplitParent`), свёрнутый сайдбар без отступа. Подробности — `docs/releases/v0.5.11.md`.
 
+Кнопка сессии v0.5.12: `⋯` (управление сессией) теперь всегда видна — `chrome.css` переопределяет `opacity:0`→`1` (в свёрнутом остаётся скрытой). Подробности — `docs/releases/v0.5.12.md`.
+
 **Last Updated**: 2026-09-18
-**Version**: 0.5.11
+**Version**: 0.5.12
 **Status**: Active  
 **Repository**: `https://github.com/XYphrodite/TerminalV`  
 **Workspace**: `C:\Repos\TerminalV`

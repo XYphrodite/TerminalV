@@ -52,7 +52,7 @@ kbd { font: 10px var(--font-ui); letter-spacing: .02em; white-space: nowrap; }
 .tab-body { gap: 3px; }
 .tab-meta { color: var(--label); font: 11px/1.4 var(--font-ui); }
 .tab-rename { background: var(--bg); color: var(--text); font-size: 12px; min-height: 25px; }
-.tab-close, .tab-options { display: grid; place-items: center; padding: 0; width: 22px; height: 26px; border-radius: 6px; color: var(--label); }
+.tab-close, .tab-options { display: grid; place-items: center; padding: 0; width: 22px; height: 26px; border-radius: 6px; color: var(--label); opacity: 1; }
 .tab-close .ui-icon, .tab-options .ui-icon { width: 14px; height: 14px; }
 .tab-close:hover { background: color-mix(in srgb, var(--danger) 12%, var(--sidebar)); }
 .tab.has-attention { box-shadow: none; border-color: var(--accent); }
