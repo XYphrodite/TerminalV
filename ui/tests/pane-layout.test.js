@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { normalizeLayouts, leafIds, layoutFor, layoutGeometry, splitSession, detachSession,
-  neighborPane, paneShortcut, MAX_PANES } from "../src/pane-layout.js";
+  neighborPane, paneShortcut, MAX_PANES, isSplitChild, isSplitParent } from "../src/pane-layout.js";
 
 const leaf = (sessionId) => ({ sessionId });
 const branch = (first, second, axis = "columns", ratio = .5) => ({ axis, ratio, first, second });
@@ -68,4 +68,27 @@ test("split shortcuts use physical keys in both layouts and exclude AltGr/compos
   assert.equal(paneShortcut({ key: "ArrowRight", altKey: true }), "ArrowRight");
   assert.equal(paneShortcut({ key: "+", code: "Equal", altKey: true, shiftKey: true, ctrlKey: true }), null);
   assert.equal(paneShortcut({ key: "+", code: "Equal", altKey: true, shiftKey: true, isComposing: true }), null);
+});
+
+test("split child/parent are detectable for sidebar rendering", () => {
+  const base = [leaf("a"), leaf("other")];
+  const split = splitSession(base, "a", "b", "columns");
+  assert.equal(isSplitChild(split, "b"), true);
+  assert.equal(isSplitParent(split, "a"), true);
+  assert.equal(isSplitChild(split, "a"), false);
+  assert.equal(isSplitParent(split, "b"), false);
+  assert.equal(isSplitChild(split, "other"), false);
+  // nested split: b is parent of c
+  const nested = splitSession(split, "b", "c", "rows");
+  assert.equal(isSplitChild(nested, "c"), true);
+  assert.equal(isSplitParent(nested, "b"), true);
+  // a remains parent of b, not of c directly
+  assert.equal(isSplitParent(nested, "a"), true);
+  assert.equal(isSplitChild(nested, "a"), false);
+  // detached child loses direct relation, but sibling collapses: a remains parent of c
+  const detached = detachSession(nested, "b");
+  assert.equal(isSplitChild(detached, "b"), false);
+  assert.equal(isSplitParent(detached, "b"), false);
+  assert.equal(isSplitChild(detached, "c"), true);
+  assert.equal(isSplitParent(detached, "a"), true);
 });

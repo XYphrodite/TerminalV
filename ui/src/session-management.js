@@ -16,6 +16,17 @@ export function sessionMetadata(record) {
   };
 }
 
+export function insertAfter(tabs, newTab, parentId) {
+  if (parentId) {
+    const idx = tabs.findIndex((t) => t.id === parentId);
+    if (idx !== -1) {
+      tabs.splice(idx + 1, 0, newTab);
+      return;
+    }
+  }
+  tabs.push(newTab);
+}
+
 // Stable groups follow stored tab order; pinned tabs lead each group.
 export function sessionGroups(sessions, { hidden = false, query = "" } = {}) {
   const needle = query.trim().toLocaleLowerCase();

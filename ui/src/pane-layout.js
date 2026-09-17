@@ -79,6 +79,34 @@ export function neighborPane(panes, id, direction) {
       (Math.abs(center(b) - center(current)) + 2 * Math.abs(cross(b) - cross(current))))[0]?.id || null;
 }
 
+export function isSplitChild(layouts, id) {
+  if (!Array.isArray(layouts) || !id) return false;
+  const stack = [...layouts];
+  while (stack.length) {
+    const n = stack.pop();
+    if (!n || typeof n !== "object") continue;
+    if (n.sessionId) continue;
+    if (n.second?.sessionId === id) return true;
+    if (n.first) stack.push(n.first);
+    if (n.second) stack.push(n.second);
+  }
+  return false;
+}
+
+export function isSplitParent(layouts, id) {
+  if (!Array.isArray(layouts) || !id) return false;
+  const stack = [...layouts];
+  while (stack.length) {
+    const n = stack.pop();
+    if (!n || typeof n !== "object") continue;
+    if (n.sessionId) continue;
+    if (n.first?.sessionId === id && n.second) return true;
+    if (n.first) stack.push(n.first);
+    if (n.second) stack.push(n.second);
+  }
+  return false;
+}
+
 export function paneShortcut(event) {
   if (!event.altKey || event.ctrlKey || event.metaKey || event.isComposing) return null;
   if (!event.shiftKey && ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return event.key;

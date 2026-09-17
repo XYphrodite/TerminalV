@@ -13,12 +13,12 @@ import { getPlainSelection } from "./selection.js";
 import { createPasteController } from "./paste-confirmation.js";
 import { createCloseConfirmation } from "./close-confirmation.js";
 import { createTerminalSearch, isSearchShortcut, SEARCH_HIGHLIGHT_LIMIT } from "./terminal-search.js";
-import { createSessionOptions, sessionMetadata, sessionGroups, SESSION_COLORS } from "./session-management.js";
+import { createSessionOptions, sessionMetadata, sessionGroups, SESSION_COLORS, insertAfter } from "./session-management.js";
 import { createNotifications, createNotificationOutput } from "./notifications.js";
 import { createLaunchProfiles, PROFILE_SHELLS } from "./launch-profiles.js";
 import { createLaunchMenu } from "./launch-menu.js";
 import { normalizeLayouts, layoutFor, leafIds, splitSession, detachSession, layoutGeometry,
-  neighborPane, paneShortcut, MAX_PANES, MIN_PANE_WIDTH, MIN_PANE_HEIGHT } from "./pane-layout.js";
+  neighborPane, paneShortcut, MAX_PANES, MIN_PANE_WIDTH, MIN_PANE_HEIGHT, isSplitChild, isSplitParent } from "./pane-layout.js";
 import { createPaneView } from "./pane-view.js";
 import { createShortcuts } from "./shortcuts.js";
 import { WRITE_CHUNK, chunkText } from "./write-chunk.js";
@@ -615,6 +615,8 @@ function renderTabs() {
       applyNotificationRow(row, tab);
       row.classList.toggle("pinned", tab.pinned);
       row.classList.toggle("in-view", isPaneVisible(tab));
+      row.classList.toggle("split-child", isSplitChild(layouts, tab.id));
+      row.classList.toggle("split-parent", isSplitParent(layouts, tab.id));
       if (tab.color) row.style.setProperty("--session-color", SESSION_COLORS[tab.color].value);
 
       const accent = document.createElement("span");
@@ -836,6 +838,8 @@ function patchTabRow(tab) {
   if (!tab.hidden) row.setAttribute("aria-selected", String(tab.id === activeId));
   applyNotificationRow(row, tab);
   row.classList.toggle("unread", Boolean(tab.unread));
+  row.classList.toggle("split-child", isSplitChild(layouts, tab.id));
+  row.classList.toggle("split-parent", isSplitParent(layouts, tab.id));
   const title = row.querySelector(".tab-title");
   if (title && !tab.renaming) {
     title.textContent = tab.customTitle || tab.title;
@@ -1245,7 +1249,7 @@ function newTab(options = {}) {
   observer.observe(hostEl);
   tab.resizeObserver = observer;
 
-  tabs.push(tab);
+  insertAfter(tabs, tab, options.splitFrom);
   if (!options.skipActivate) {
     layouts = options.splitFrom ? splitSession(layouts, options.splitFrom, id, options.splitAxis)
       : normalizeLayouts(layouts, tabs);

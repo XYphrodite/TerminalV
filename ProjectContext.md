@@ -270,8 +270,10 @@ dotnet run --project src/TerminalV
 
 Ссылки v0.5.10: клик по URL в терминале теперь открывает внешний браузер. Ранее `WebLinksAddon` делал `window.open` внутри WebView2 (встроенный popup). Теперь `ui/src/main.js` передаёт `open-link` через `TerminalBridge` + `linkHandler`, хост открывает только `http/https` через `UseShellExecute`, `MainWindow` перехватывает `NewWindowRequested`/`NavigationStarting`. Подробности — `docs/releases/v0.5.10.md`.
 
+Разделение v0.5.11: кнопка «Справа»/«Снизу» теперь вставляет новую сессию рядом с родительской в списке слева, а не в конец. Ранее `tabs.push` всегда добавлял в конец; теперь `insertAfter` вставляет после `splitFrom`. Дочерние панели отмечаются отступом и тонкой линией-веткой (`split-child`/`split-parent` из `isSplitChild`/`isSplitParent`), свёрнутый сайдбар без отступа. Подробности — `docs/releases/v0.5.11.md`.
+
 **Last Updated**: 2026-09-18
-**Version**: 0.5.10
+**Version**: 0.5.11
 **Status**: Active  
 **Repository**: `https://github.com/XYphrodite/TerminalV`  
 **Workspace**: `C:\Repos\TerminalV`
