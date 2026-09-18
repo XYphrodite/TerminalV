@@ -184,8 +184,11 @@ public sealed class SshNetSession : SshSessionBase
             authMethods.Add(Activator.CreateInstance(authType, _options.Username, password)!);
 
         var connInfoType = asm.GetType("Renci.SshNet.ConnectionInfo")!;
-        var connInfo = Activator.CreateInstance(connInfoType, _options.Host, _options.Port, _options.Username,
-            (object)authMethods.ToArray().Select(a => (dynamic)a).ToArray())!;
+        // Build AuthenticationMethod[] of the correct runtime type for the ConnectionInfo ctor (params AuthenticationMethod[])
+        var authBaseType = asm.GetType("Renci.SshNet.AuthenticationMethod")!;
+        var typedArray = Array.CreateInstance(authBaseType, authMethods.Count);
+        for (int i = 0; i < authMethods.Count; i++) typedArray.SetValue(authMethods[i], i);
+        var connInfo = Activator.CreateInstance(connInfoType, _options.Host, _options.Port, _options.Username, typedArray)!;
 
         // ConnectionInfo Timeout
         try { connInfoType.GetProperty("Timeout")?.SetValue(connInfo, _options.ConnectTimeout); } catch { }
