@@ -9,7 +9,6 @@
     <SingleProject>true</SingleProject>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <PublishTrimmed>false</PublishTrimmed>
     <TrimMode>partial</TrimMode>
     <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'ios'">14.2</SupportedOSPlatformVersion>
     <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'maccatalyst'">14.0</SupportedOSPlatformVersion>
@@ -41,6 +40,11 @@
     <Compile Include="..\TerminalV\Ssh\SshNetSession.cs" Link="Ssh\SshNetSession.cs" />
     <Compile Include="..\TerminalV\Ssh\GatewaySshSession.cs" Link="Ssh\GatewaySshSession.cs" />
     <Compile Include="..\TerminalV\Ssh\SshService.cs" Link="Ssh\SshService.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <TrimmerRootAssembly Include="Renci.SshNet" />
+    <TrimmerRootAssembly Include="SSH.NET" />
   </ItemGroup>
 
 </Project>
