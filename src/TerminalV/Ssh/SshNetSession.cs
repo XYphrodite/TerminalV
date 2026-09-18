@@ -46,9 +46,19 @@ public sealed class SshNetSession : SshSessionBase
         {
             State = SshSessionState.Faulted;
             var actual = ex is System.Reflection.TargetInvocationException tie && tie.InnerException != null ? tie.InnerException : ex;
-            RaiseError(actual.Message);
+            // Improve gateway/port confusion: SSH identification string missing means client connected to non-SSH port (e.g., gateway 5454 with direct mode)
+            var msg = actual.Message;
+            if (msg.Contains("SSH identification string", StringComparison.OrdinalIgnoreCase) || msg.Contains("Protocol Version Exchange", StringComparison.OrdinalIgnoreCase))
+            {
+                msg = $"{msg} — проверь порт: 22 для прямого SSH (выкл. 'Через шлюз'), 5454 — только с включённым 'Через шлюз' и запущенным TerminalV на ПК (сейчас 5454 не слушает).";
+            }
+            else if (msg.Contains("Connection timed out", StringComparison.OrdinalIgnoreCase) && _options.Port == 5454 && !_options.UseGateway)
+            {
+                msg = $"{msg} — порт 5454 — это шлюз TerminalV, включи 'Через шлюз' или смени порт на 22 для прямого SSH.";
+            }
+            RaiseError(msg);
             await DisconnectCoreAsync().ConfigureAwait(false);
-            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(actual).Throw();
+            if (actual != ex) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(actual).Throw();
             throw;
         }
         finally { _gate.Release(); }
