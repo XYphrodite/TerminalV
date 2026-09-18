@@ -276,8 +276,10 @@ dotnet run --project src/TerminalV
 
 Свёрнутый сайдбар v0.5.13: в свёрнутом режиме `⋯`/`×` теперь появляются на `hover/active/focus` как оверлей (`position:absolute` справа), а не исчезают полностью. Подробности — `docs/releases/v0.5.13.md`.
 
+Мобильный SSH v0.6.0: лёгкий MAUI Blazor Hybrid `src/TerminalV.Mobile` (Android/iOS/Windows) с `xterm.js` + `SSH.NET` + двойной коннектор (прямо к `sshd` и через шлюз `TerminalV` WebSocket). `WPF` остаётся fallback для локального `ConPTY`. Подробности — `docs/releases/v0.6.0.md`.
+
 **Last Updated**: 2026-09-18
-**Version**: 0.5.13
+**Version**: 0.6.0
 **Status**: Active  
 **Repository**: `https://github.com/XYphrodite/TerminalV`  
 **Workspace**: `C:\Repos\TerminalV`

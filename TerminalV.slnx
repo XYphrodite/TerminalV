@@ -2,6 +2,7 @@
   <Folder Name="/src/">
     <Project Path="src/TerminalV/TerminalV.csproj" />
     <Project Path="src/TerminalV.Com/TerminalV.Com.csproj" />
+    <Project Path="src/TerminalV.Mobile/TerminalV.Mobile.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/TerminalV.Data.Tests/TerminalV.Data.Tests.csproj" />

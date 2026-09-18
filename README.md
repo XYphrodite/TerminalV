@@ -176,6 +176,10 @@ dotnet run --project tests/TerminalV.Data.Tests -c Release
 
 В свёрнутом сайдбаре кнопки `⋯`/`×` теперь появляются при наведении/фокусе как оверлей, а не исчезают полностью. Подробности — [заметки к релизу](docs/releases/v0.5.13.md).
 
+## Новое в v0.6.0
+
+Лёгкий MAUI-клиент `TerminalV.Mobile` (Android/iOS/Windows) — подключается к ПК по `OpenSSH` напрямую и через шлюз `TerminalV`, только `shell` (SFTP/туннели позже). `WPF` остаётся для локального терминала. Подробности — [заметки к релизу](docs/releases/v0.6.0.md).
+
 ## Лицензия
 
 [MIT](LICENSE)
