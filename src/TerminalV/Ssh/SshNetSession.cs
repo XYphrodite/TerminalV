@@ -45,8 +45,10 @@ public sealed class SshNetSession : SshSessionBase
         catch (Exception ex)
         {
             State = SshSessionState.Faulted;
-            RaiseError(ex.Message);
+            var actual = ex is System.Reflection.TargetInvocationException tie && tie.InnerException != null ? tie.InnerException : ex;
+            RaiseError(actual.Message);
             await DisconnectCoreAsync().ConfigureAwait(false);
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(actual).Throw();
             throw;
         }
         finally { _gate.Release(); }
@@ -206,8 +208,12 @@ public sealed class SshNetSession : SshSessionBase
         return null;
     }
 
-    private static void DynamicConnect(object client) => client.GetType().GetMethod("Connect")!.Invoke(client, null);
-    private static void DynamicDisconnect(object? client) { try { client?.GetType().GetMethod("Disconnect")?.Invoke(client, null); } catch { } }
+    private static void DynamicConnect(object client)
+    {
+        try { client.GetType().GetMethod("Connect")!.Invoke(client, null); }
+        catch (System.Reflection.TargetInvocationException tie) when (tie.InnerException != null) { System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw(); throw; }
+    }
+    private static void DynamicDisconnect(object? client) { try { client?.GetType().GetMethod("Disconnect")?.Invoke(client, null); } catch (System.Reflection.TargetInvocationException tie) when (tie.InnerException != null) { } catch { } }
     private static void TrySetKeepAlive(object client, TimeSpan interval)
     {
         if (interval <= TimeSpan.Zero) return;
@@ -239,10 +245,19 @@ public sealed class SshNetSession : SshSessionBase
             // fallback: call with 7 args pattern
             var m7 = client.GetType().GetMethod("CreateShellStream", new[] { typeof(string), typeof(uint), typeof(uint), typeof(uint), typeof(uint), typeof(IDictionary<,>).MakeGenericType(modesType, typeof(uint)), typeof(int) });
         } catch { }
-        return mi.Invoke(client, args)!;
+        try { return mi.Invoke(client, args)!; }
+        catch (System.Reflection.TargetInvocationException tie) when (tie.InnerException != null) { System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw(); throw; }
     }
-    private static void DynamicWrite(object stream, byte[] buf, int off, int count) => stream.GetType().GetMethod("Write", new[] { typeof(byte[]), typeof(int), typeof(int) })!.Invoke(stream, new object[] { buf, off, count });
-    private static int DynamicRead(object stream, byte[] buf, int off, int count) => (int)stream.GetType().GetMethod("Read", new[] { typeof(byte[]), typeof(int), typeof(int) })!.Invoke(stream, new object[] { buf, off, count })!;
+    private static void DynamicWrite(object stream, byte[] buf, int off, int count)
+    {
+        try { stream.GetType().GetMethod("Write", new[] { typeof(byte[]), typeof(int), typeof(int) })!.Invoke(stream, new object[] { buf, off, count }); }
+        catch (System.Reflection.TargetInvocationException tie) when (tie.InnerException != null) { System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw(); throw; }
+    }
+    private static int DynamicRead(object stream, byte[] buf, int off, int count)
+    {
+        try { return (int)stream.GetType().GetMethod("Read", new[] { typeof(byte[]), typeof(int), typeof(int) })!.Invoke(stream, new object[] { buf, off, count })!; }
+        catch (System.Reflection.TargetInvocationException tie) when (tie.InnerException != null) { System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw(); throw; }
+    }
     private static bool TrySendWindowChange(object stream, uint cols, uint rows)
     {
         try
@@ -250,7 +265,7 @@ public sealed class SshNetSession : SshSessionBase
             // SSH.NET internal Channel has SendWindowChangeRequest
             var t = stream.GetType();
             var mi = t.GetMethod("SendWindowChangeRequest", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public);
-            if (mi is not null) { mi.Invoke(stream, new object[] { cols, rows, 0u, 0u }); return true; }
+            if (mi is not null) { try { mi.Invoke(stream, new object[] { cols, rows, 0u, 0u }); return true; } catch (System.Reflection.TargetInvocationException tie) when (tie.InnerException != null) { System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw(); throw; } }
             // alternative: via Channel property
             var chanProp = t.GetProperty("Channel", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public);
             if (chanProp?.GetValue(stream) is object ch)

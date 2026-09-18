@@ -128,5 +128,44 @@ CheckAsync("SshService direct gateway does not hit ConnectionInfo (uses Gateway)
     await Task.CompletedTask;
 });
 
+// Regression for Arg_TargetInvocationException: reflection Invoke wraps inner exception in TargetInvocationException
+// Previously SshNetSession.DynamicConnect/CreateShellStream/etc used Invoke without unwrapping, so auth failures showed as TargetInvocationException
+Check("Ssh Connect failure unwraps TargetInvocationException to inner", () =>
+{
+    var opts = new SshConnectionOptions
+    {
+        Host = "127.0.0.1",
+        Port = 2222, // no sshd here, will fail to connect
+        Username = "test",
+        Password = "wrong",
+        ConnectTimeout = TimeSpan.FromSeconds(1)
+    };
+    var svc = new SshService();
+    var sess = svc.Create("test-unwrap", opts);
+    try
+    {
+        sess.ConnectAsync().GetAwaiter().GetResult();
+        throw new Exception("Expected connection failure, but ConnectAsync succeeded");
+    }
+    catch (System.Reflection.TargetInvocationException tie)
+    {
+        throw new Exception($"TargetInvocationException not unwrapped - bug not fixed: {tie.InnerException?.GetType().Name}: {tie.InnerException?.Message}", tie);
+    }
+    catch (MissingMethodException)
+    {
+        throw;
+    }
+    catch
+    {
+        // Expected: SocketException, SshException, etc. - but not TargetInvocationException
+        // If we get here without TargetInvocationException, the fix works
+    }
+    finally
+    {
+        sess.Dispose();
+        svc.Dispose();
+    }
+});
+
 Console.WriteLine($"Ssh checks: {passed} passed, {failed} failed.");
 if (failed > 0) Environment.Exit(1);
