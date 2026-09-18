@@ -24,10 +24,10 @@
   </ItemGroup>
 
   <ItemGroup>
-    <MauiXaml Include="App.xaml">
+    <MauiXaml Update="App.xaml">
       <Generator>MSBuild:Compile</Generator>
     </MauiXaml>
-    <MauiXaml Include="MainPage.xaml">
+    <MauiXaml Update="MainPage.xaml">
       <Generator>MSBuild:Compile</Generator>
     </MauiXaml>
   </ItemGroup>
