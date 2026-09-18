@@ -52,7 +52,7 @@ kbd { font: 10px var(--font-ui); letter-spacing: .02em; white-space: nowrap; }
 .tab-body { gap: 3px; }
 .tab-meta { color: var(--label); font: 11px/1.4 var(--font-ui); }
 .tab-rename { background: var(--bg); color: var(--text); font-size: 12px; min-height: 25px; }
-.tab-close, .tab-options { display: grid; place-items: center; padding: 0; width: 22px; height: 26px; border-radius: 6px; color: var(--label); opacity: 1; }
+.tab-close, .tab-options { display: grid; place-items: center; padding: 0; width: 22px; height: 26px; border-radius: 6px; color: var(--text); background: var(--surface); border: 1px solid var(--border-soft); opacity: 1; }
 .tab-close .ui-icon, .tab-options .ui-icon { width: 14px; height: 14px; }
 .tab-close:hover { background: color-mix(in srgb, var(--danger) 12%, var(--sidebar)); }
 .tab.has-attention { box-shadow: none; border-color: var(--accent); }
@@ -129,8 +129,16 @@ kbd { font: 10px var(--font-ui); letter-spacing: .02em; white-space: nowrap; }
 #app.collapsed .sidebar-head { min-height: 108px; padding: 8px 0; }
 #app.collapsed .sidebar-head-actions { gap: 3px; }
 #app.collapsed .tabs { padding: 5px 6px; gap: 5px; scrollbar-gutter: auto; }
-#app.collapsed .tab { grid-template-columns: minmax(0, 1fr); min-height: 40px; padding: 4px; justify-items: center; }
+#app.collapsed .tab { grid-template-columns: minmax(0, 1fr); min-height: 40px; padding: 4px; justify-items: center; position: relative; }
 #app.collapsed .tab-accent { top: 9px; height: 20px; }
+#app.collapsed .tab .tab-options,
+#app.collapsed .tab .tab-close { display: none; position: absolute; right: 3px; top: 50%; transform: translateY(-50%); z-index: 2; }
+#app.collapsed .tab:hover .tab-options,
+#app.collapsed .tab.active .tab-options,
+#app.collapsed .tab:focus-within .tab-options,
+#app.collapsed .tab:hover .tab-close,
+#app.collapsed .tab.active .tab-close,
+#app.collapsed .tab:focus-within .tab-close { display: grid; opacity: 1; }
 #app.collapsed .sidebar-foot { padding: 10px; }
 #app.collapsed #new-tab, #app.collapsed #launch-profiles-btn { width: 36px; height: 36px; padding: 0; justify-content: center; margin-left: auto; margin-right: auto; }
 

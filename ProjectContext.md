@@ -274,8 +274,10 @@ dotnet run --project src/TerminalV
 
 Кнопка сессии v0.5.12: `⋯` (управление сессией) теперь всегда видна — `chrome.css` переопределяет `opacity:0`→`1` (в свёрнутом остаётся скрытой). Подробности — `docs/releases/v0.5.12.md`.
 
+Свёрнутый сайдбар v0.5.13: в свёрнутом режиме `⋯`/`×` теперь появляются на `hover/active/focus` как оверлей (`position:absolute` справа), а не исчезают полностью. Подробности — `docs/releases/v0.5.13.md`.
+
 **Last Updated**: 2026-09-18
-**Version**: 0.5.12
+**Version**: 0.5.13
 **Status**: Active  
 **Repository**: `https://github.com/XYphrodite/TerminalV`  
 **Workspace**: `C:\Repos\TerminalV`
