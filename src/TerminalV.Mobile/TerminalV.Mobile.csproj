@@ -43,8 +43,12 @@
   </ItemGroup>
 
   <ItemGroup>
-    <TrimmerRootAssembly Include="Renci.SshNet" />
-    <TrimmerRootAssembly Include="SSH.NET" />
+    <TrimmerRootAssembly Include="Renci.SshNet">
+      <RootMode>All</RootMode>
+    </TrimmerRootAssembly>
+    <TrimmerRootAssembly Include="SSH.NET">
+      <RootMode>All</RootMode>
+    </TrimmerRootAssembly>
   </ItemGroup>
 
 </Project>
