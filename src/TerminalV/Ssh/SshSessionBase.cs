@@ -1,6 +1,6 @@
 namespace TerminalV.Ssh;
 
-internal abstract class SshSessionBase : ISshSession
+public abstract class SshSessionBase : ISshSession
 {
     protected readonly SshConnectionOptions _options;
     private int _disposed;

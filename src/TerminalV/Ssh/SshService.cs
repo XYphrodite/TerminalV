@@ -5,7 +5,7 @@ namespace TerminalV.Ssh;
 /// Handles host/port/user/auth, shell type xterm-256color, cols/rows, reconnect.
 /// Intended for MAUI and WPF: no UI dependency.
 /// </summary>
-internal sealed class SshService : IDisposable
+public sealed class SshService : IDisposable
 {
     private readonly Dictionary<string, ISshSession> _sessions = new();
     private readonly object _lock = new();

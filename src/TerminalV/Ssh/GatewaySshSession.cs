@@ -10,7 +10,7 @@ namespace TerminalV.Ssh;
 /// Handles host/port/user/auth, shell type xterm-256color, cols/rows, reconnect via WebSocket.
 /// Protocol: gateway ws endpoint accepts query params or JSON handshake + binary/text frames.
 /// </summary>
-internal sealed class GatewaySshSession : SshSessionBase
+public sealed class GatewaySshSession : SshSessionBase
 {
     private ClientWebSocket? _ws;
     private CancellationTokenSource? _readCts;

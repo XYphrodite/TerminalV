@@ -3,7 +3,7 @@ namespace TerminalV.Ssh;
 /// <summary>
 /// Connection options for SSH. Supports direct OpenSSH via SSH.NET and TerminalV gateway WebSocket.
 /// </summary>
-internal sealed class SshConnectionOptions
+public sealed class SshConnectionOptions
 {
     public string Host { get; set; } = "";
     public int Port { get; set; } = 22;

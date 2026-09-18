@@ -1,8 +1,8 @@
 namespace TerminalV.Ssh;
 
-internal enum SshSessionState { Disconnected, Connecting, Connected, Faulted }
+public enum SshSessionState { Disconnected, Connecting, Connected, Faulted }
 
-internal interface ISshSession : IAsyncDisposable, IDisposable
+public interface ISshSession : IAsyncDisposable, IDisposable
 {
     string Id { get; }
     SshConnectionOptions Options { get; }

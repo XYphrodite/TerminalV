@@ -32,4 +32,13 @@
     </MauiXaml>
   </ItemGroup>
 
+  <ItemGroup>
+    <Compile Include="..\TerminalV\Ssh\SshConnectionOptions.cs" Link="Ssh\SshConnectionOptions.cs" />
+    <Compile Include="..\TerminalV\Ssh\ISshSession.cs" Link="Ssh\ISshSession.cs" />
+    <Compile Include="..\TerminalV\Ssh\SshSessionBase.cs" Link="Ssh\SshSessionBase.cs" />
+    <Compile Include="..\TerminalV\Ssh\SshNetSession.cs" Link="Ssh\SshNetSession.cs" />
+    <Compile Include="..\TerminalV\Ssh\GatewaySshSession.cs" Link="Ssh\GatewaySshSession.cs" />
+    <Compile Include="..\TerminalV\Ssh\SshService.cs" Link="Ssh\SshService.cs" />
+  </ItemGroup>
+
 </Project>

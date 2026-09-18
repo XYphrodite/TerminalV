@@ -8,7 +8,7 @@ namespace TerminalV.Ssh;
 /// Handles host/port/user/auth, shell type xterm-256color, cols/rows, reconnect.
 /// Requires NuGet package SSH.NET (Renci.SshNet).
 /// </summary>
-internal sealed class SshNetSession : SshSessionBase
+public sealed class SshNetSession : SshSessionBase
 {
     private object? _client; // Renci.SshNet.SshClient when package present
     private object? _shellStream; // Renci.SshNet.ShellStream
