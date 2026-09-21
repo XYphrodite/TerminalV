@@ -4,6 +4,7 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 using Microsoft.Win32.SafeHandles;
+using TerminalV.Diagnostics;
 
 namespace TerminalV.Pty;
 
@@ -17,7 +18,8 @@ internal sealed class ConPtySession : IDisposable
     private readonly FileStream _inputStream;
     private readonly FileStream _outputStream;
     private readonly StreamWriter _writer;
-    private readonly object _writeGate = new();
+    private readonly object _queueGate = new();
+    private readonly object _writerGate = new();
     private readonly Queue<string> _writeQueue = new();
     private bool _writePumpRunning;
     private readonly WorkingDirectoryTracker _directory;
@@ -144,7 +146,7 @@ internal sealed class ConPtySession : IDisposable
             return;
         }
 
-
+        var enqueueSw = Stopwatch.StartNew();
         const int Chunk = 8192;
         List<string> chunks;
         if (data.Length <= Chunk)
@@ -164,12 +166,20 @@ internal sealed class ConPtySession : IDisposable
             }
         }
 
-        lock (_writeGate)
+        int qLen;
+        bool wasRunning;
+        lock (_queueGate)
         {
             foreach (var c in chunks) _writeQueue.Enqueue(c);
-            if (_writePumpRunning) return;
-            _writePumpRunning = true;
+            qLen = _writeQueue.Count;
+            wasRunning = _writePumpRunning;
+            if (_writePumpRunning) { }
+            else _writePumpRunning = true;
         }
+        enqueueSw.Stop();
+        if (enqueueSw.ElapsedMilliseconds > 20 || chunks.Count > 1)
+            Diag.Log("pty", $"Write enqueue id={Id} chunks={chunks.Count} len={data.Length} qLen={qLen} wasRunning={wasRunning} enqueueMs={enqueueSw.ElapsedMilliseconds}", null);
+        if (wasRunning) return;
         _ = Task.Run(ProcessWriteQueue);
     }
 
@@ -178,7 +188,8 @@ internal sealed class ConPtySession : IDisposable
         while (true)
         {
             string chunk;
-            lock (_writeGate)
+            int remaining;
+            lock (_queueGate)
             {
                 if (_writeQueue.Count == 0)
                 {
@@ -186,19 +197,24 @@ internal sealed class ConPtySession : IDisposable
                     return;
                 }
                 chunk = _writeQueue.Dequeue();
+                remaining = _writeQueue.Count;
             }
             if (_disposed != 0) return;
+            var sw = Stopwatch.StartNew();
             try
             {
-                // Keep writer exclusive but don't hold queue lock while blocking on pipe.
-                lock (_writeGate) // reuse same gate for writer exclusion
+                // Dedicated gate for writer — queueGate stays free so enqueue never blocks on a stuck pipe.
+                lock (_writerGate)
                 {
                     if (_disposed != 0) return;
                     _writer.Write(chunk);
                 }
             }
-            catch (IOException) { return; }
+            catch (IOException ex) { Diag.Log("pty", $"Write chunk failed id={Id} remaining={remaining} ex={ex.Message}", null); return; }
             catch (ObjectDisposedException) { return; }
+            sw.Stop();
+            if (sw.ElapsedMilliseconds > 50)
+                Diag.Log("pty", $"Write chunk slow id={Id} chunkLen={chunk.Length} remaining={remaining} ms={sw.ElapsedMilliseconds}", null);
         }
     }
 
@@ -242,8 +258,9 @@ internal sealed class ConPtySession : IDisposable
 
         try
         {
-            lock (_writeGate)
+            lock (_writerGate)
             {
+                lock (_queueGate) { _writeQueue.Clear(); }
                 _writer.Dispose();
             }
         }

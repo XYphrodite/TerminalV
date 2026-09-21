@@ -180,6 +180,10 @@ dotnet run --project tests/TerminalV.Data.Tests -c Release
 
 Лёгкий MAUI-клиент `TerminalV.Mobile` (Android/iOS/Windows) — подключается к ПК по `OpenSSH` напрямую и через шлюз `TerminalV`, только `shell` (SFTP/туннели позже). `WPF` остаётся для локального терминала. Подробности — [заметки к релизу](docs/releases/v0.6.0.md).
 
+## Новое в v0.6.1
+
+Исправлено зависание вкладки при вставке ~4K многострочного текста в `muse` со сплитом 4 панели — причина была в блокирующем `lock` очереди `ConPtySession` во время `WriteFile` в ConPTY. Теперь очередь и труба под разными локами, добавлен файл диагностики `%LOCALAPPDATA%\TerminalV\diagnostics.log`. Подробности — [заметки к релизу](docs/releases/v0.6.1.md).
+
 ## Лицензия
 
 [MIT](LICENSE)

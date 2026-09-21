@@ -1,8 +1,11 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.IO;
 using System.IO.Pipes;
 using System.Text;
 using System.Text.Json;
+using System.Threading;
+using TerminalV.Diagnostics;
 using TerminalV.Pty;
 
 namespace TerminalV.Host;
@@ -115,7 +118,11 @@ internal static class SessionHost
                     if (request.Id is not null && request.Data is not null &&
                         Sessions.TryGetValue(request.Id, out var writing))
                     {
+                        var sw = Stopwatch.StartNew();
                         writing.Pty.Write(request.Data);
+                        sw.Stop();
+                        if (sw.ElapsedMilliseconds > 10)
+                            Diag.Log("host", $"write serve id={request.Id} len={request.Data.Length} ms={sw.ElapsedMilliseconds}", null);
                     }
                     break;
                 case "resize":
@@ -222,19 +229,27 @@ internal static class SessionHost
     private static void Send(object payload)
     {
         var json = JsonSerializer.Serialize(payload, Json);
-        lock (WriteGate)
+        var sw = Stopwatch.StartNew();
+        bool waited = false;
+        if (!Monitor.TryEnter(WriteGate, 50))
+        {
+            waited = true;
+            Diag.Log("host", $"Send gate contention len={json.Length}", null);
+            Monitor.Enter(WriteGate);
+        }
+        try
         {
             try
             {
                 _writer?.WriteLine(json);
             }
-            catch (IOException)
-            {
-            }
-            catch (ObjectDisposedException)
-            {
-            }
+            catch (IOException ex) { Diag.Log("host", $"Send fail {ex.Message}", null); }
+            catch (ObjectDisposedException ex) { Diag.Log("host", $"Send disposed {ex.Message}", null); }
         }
+        finally { Monitor.Exit(WriteGate); }
+        sw.Stop();
+        if (sw.ElapsedMilliseconds > 20 || waited)
+            Diag.Log("host", $"Send done len={json.Length} ms={sw.ElapsedMilliseconds} waited={waited}", null);
     }
 
     private sealed class HostedSession : IDisposable

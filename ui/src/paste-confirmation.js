@@ -7,11 +7,15 @@ export function createPasteController({ dialog, readClipboard, canPaste, restore
   const cancel = dialog.querySelector("[data-paste-cancel]");
   let pending = null;
 
+  function diag(msg) { try { window.chrome?.webview?.postMessage({ type: "diag", data: msg }); } catch {} }
   function finish(approved) {
     const operation = pending;
     if (!operation) {
       return;
     }
+    const start = performance.now();
+    const tLen = operation.text?.length ?? 0;
+    diag(`paste finish approved=${approved} len=${tLen} ms=${(performance.now()-start).toFixed(1)}`);
     pending = null;
     if (dialog.open) {
       dialog.close();
@@ -20,11 +24,18 @@ export function createPasteController({ dialog, readClipboard, canPaste, restore
     truncated.hidden = true;
     try {
       if (approved && operation.text && canPaste(operation.tab)) {
+        const t0 = performance.now();
+        diag(`paste term.paste start len=${operation.text.length}`);
         // Keep xterm's newline normalization and bracketed paste support.
         operation.tab.term.paste(operation.text);
+        diag(`paste term.paste done ms=${(performance.now()-t0).toFixed(1)}`);
+      } else if (approved) {
+        diag(`paste approved but canPaste=false`);
       }
-    } finally {
+    } catch (e) { diag(`paste error ${e}`); }
+    finally {
       restoreFocus();
+      diag(`paste finish restoreFocus ms=${(performance.now()-start).toFixed(1)}`);
     }
   }
 
@@ -47,13 +58,17 @@ export function createPasteController({ dialog, readClipboard, canPaste, restore
       return dialog.open;
     },
     async request(tab) {
+      const t0 = performance.now();
       if (pending || !canPaste(tab)) {
+        diag(`paste request skip pending=${!!pending} canPaste=${canPaste(tab)}`);
         return;
       }
+      diag(`paste request start tab=${tab.id}`);
       const operation = { tab, text: "", showing: false };
       pending = operation;
       try {
         const text = await readClipboard();
+        diag(`paste clipboard done len=${text?.length ?? 0} ms=${(performance.now()-t0).toFixed(1)}`);
         // A closed or switched tab must not receive a late clipboard reply.
         if (pending !== operation) {
           return;

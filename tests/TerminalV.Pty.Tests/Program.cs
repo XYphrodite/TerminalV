@@ -273,6 +273,35 @@ Check("large paste is chunked into bounded writes and preserves surrogates", () 
     Equal(string.Concat(hugeWrites.Select(r => r.GetProperty("data").GetString())).Length, huge.Length);
 });
 
+Check("concurrent 4k paste writes don't deadlock queue lock (split 4 panes reproducer)", () =>
+{
+    // Reproduces the 4k multiline bracketed paste that previously held queueGate during blocking Write.
+    using var standardHandles = new GuiStandardHandles();
+    var cmd = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "cmd.exe") + " /d";
+    using var pty = ConPtySession.Start("concurrent-4k", cmd, Path.GetTempPath(), 120, 30, session =>
+    {
+        session.Output += _ => { };
+    });
+    var payload = "\u001b[200~" + new string('a', 4000) + "\u001b[201~"; // 4012 chars -> 2 chunks via SessionClient but 1 via ConPty (8192)
+    var tasks = Enumerable.Range(0, 4).Select(_ => Task.Run(() =>
+    {
+        // Simulate 4 panes pasting at once (or rapid successive chunks needing queue)
+        for (var i = 0; i < 8; i++) pty.Write(payload);
+    })).ToArray();
+    var sw = Stopwatch.StartNew();
+    var completed = Task.WaitAll(tasks, 5000);
+    sw.Stop();
+    Equal(completed, true);
+    Equal(sw.ElapsedMilliseconds < 2000, true);
+    // Allow pump to drain
+    Thread.Sleep(400);
+    // Verify pump still responsive to new write after burst
+    var sw2 = Stopwatch.StartNew();
+    pty.Write("echo OK\r");
+    // Don't require output, just that Write doesn't block
+    Equal(sw2.ElapsedMilliseconds < 500, true);
+});
+
 // Opt-in to a known installed distribution. No Linux profile, file writes or distro shutdown.
 var wslDistribution = Environment.GetEnvironmentVariable("TERMINALV_TEST_WSL_DISTRIBUTION");
 if (!string.IsNullOrWhiteSpace(wslDistribution))

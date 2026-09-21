@@ -1,3 +1,4 @@
+using System.IO;
 namespace TerminalV.Ssh;
 
 /// <summary>

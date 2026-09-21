@@ -278,8 +278,10 @@ dotnet run --project src/TerminalV
 
 Мобильный SSH v0.6.0: лёгкий MAUI Blazor Hybrid `src/TerminalV.Mobile` (Android/iOS/Windows) с `xterm.js` + `SSH.NET` + двойной коннектор (прямо к `sshd` и через шлюз `TerminalV` WebSocket). `WPF` остаётся fallback для локального `ConPTY`. Подробности — `docs/releases/v0.6.0.md`.
 
-**Last Updated**: 2026-09-18
-**Version**: 0.6.0
+Вставка v0.6.1: фикс зависания вкладки при 4K многострочной вставке в `muse` со сплитом 4 (`ConPtySession` раздельны `_queueGate/_writerGate`, slow-write лог), `Diagnostics/Diag.cs` → `%LOCALAPPDATA%\TerminalV\diagnostics.log`, `SessionClient/SessionHost/TerminalBridge` логи gate contention, UI `diag` канал. Добавлен durable тест `concurrent 4k paste writes don't deadlock`. Подробности — `docs/releases/v0.6.1.md`.
+
+**Last Updated**: 2026-09-21
+**Version**: 0.6.1
 **Status**: Active  
 **Repository**: `https://github.com/XYphrodite/TerminalV`  
 **Workspace**: `C:\Repos\TerminalV`

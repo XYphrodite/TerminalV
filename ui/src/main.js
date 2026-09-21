@@ -1174,14 +1174,32 @@ function newTab(options = {}) {
   hostEl.addEventListener("focusin", () => {
     if (activeId !== id && isPaneVisible(tab) && !isModalOpen()) activate(id, { focus: false });
   });
+    function diag(area, msg, id = null) {
+    try { post({ type: "diag", data: `${area}: ${msg}`, id }); } catch {}
+    try { console.debug(`[diag] ${area}: ${msg}`); } catch {}
+  }
   function postWrite(targetId, data) {
     const chunks = chunkText(data, WRITE_CHUNK);
     const isPaste = data.includes("\u001b[200~");
-    // Keep single-char typing synchronous for tests and responsiveness;
-    // bracketed paste (muse, dialog) goes async to avoid blocking WebView2/ConPTY on even 100 chars.
+    const t0 = performance.now();
     if (isPaste || chunks.length > 1) {
-      for (const chunk of chunks) queueMicrotask(() => post({ type: "write", id: targetId, data: chunk }));
+      diag("ui", `postWrite async id=${targetId} len=${data.length} chunks=${chunks.length} isPaste=${isPaste}`, targetId);
+      for (let i = 0; i < chunks.length; i++) {
+        const c = chunks[i];
+        queueMicrotask(() => {
+          const t1 = performance.now();
+          post({ type: "write", id: targetId, data: c });
+          const dt = performance.now() - t1;
+          if (dt > 10) diag("ui", `write post slow chunk ${i}/${chunks.length} ms=${dt.toFixed(1)}`, targetId);
+        });
+      }
+      // watchdog: if still not writable after 2s, report
+      setTimeout(() => {
+        const dt = performance.now() - t0;
+        diag("ui", `postWrite watchdog id=${targetId} after ${dt.toFixed(0)}ms`, targetId);
+      }, 2000);
     } else {
+      if (data.length > 100) diag("ui", `postWrite sync len=${data.length}`, targetId);
       for (const chunk of chunks) post({ type: "write", id: targetId, data: chunk });
     }
   }

@@ -3,6 +3,8 @@ using System.IO;
 using System.IO.Pipes;
 using System.Text;
 using System.Text.Json;
+using System.Threading;
+using TerminalV.Diagnostics;
 
 namespace TerminalV.Host;
 
@@ -160,20 +162,29 @@ internal sealed class SessionClient : IDisposable
 
     public void Write(string id, string data)
     {
+        var swTotal = Stopwatch.StartNew();
         const int Chunk = 4000;
+        int chunks = 0;
         if (data.Length <= Chunk)
         {
+            chunks = 1;
             Send(new { type = "write", id, data });
-            return;
         }
-        for (var i = 0; i < data.Length;)
+        else
         {
-            var len = Math.Min(Chunk, data.Length - i);
-            if (len < data.Length - i && char.IsHighSurrogate(data[i + len - 1]) && i + len < data.Length && char.IsLowSurrogate(data[i + len]))
-                len--;
-            Send(new { type = "write", id, data = data.Substring(i, len) });
-            i += len;
+            for (var i = 0; i < data.Length;)
+            {
+                var len = Math.Min(Chunk, data.Length - i);
+                if (len < data.Length - i && char.IsHighSurrogate(data[i + len - 1]) && i + len < data.Length && char.IsLowSurrogate(data[i + len]))
+                    len--;
+                Send(new { type = "write", id, data = data.Substring(i, len) });
+                i += len;
+                chunks++;
+            }
         }
+        swTotal.Stop();
+        if (chunks > 1 || swTotal.ElapsedMilliseconds > 20)
+            Diag.Log("client", $"Write id={id} len={data.Length} chunks={chunks} ms={swTotal.ElapsedMilliseconds}", null);
     }
 
     public void Resize(string id, int cols, int rows) => Send(new { type = "resize", id, cols, rows });
@@ -254,16 +265,33 @@ internal sealed class SessionClient : IDisposable
     private void Send(object payload)
     {
         var json = JsonSerializer.Serialize(payload, Json);
-        lock (_gate)
+        var sw = Stopwatch.StartNew();
+        bool waited = false;
+        // Try to detect lock contention
+        if (!Monitor.TryEnter(_gate, 50))
+        {
+            waited = true;
+            Diag.Log("client", $"Send gate contention type={(payload.GetType().GetProperty("type")?.GetValue(payload) ?? "?")}", null);
+            Monitor.Enter(_gate);
+        }
+        try
         {
             try
             {
                 _writer?.WriteLine(json);
             }
-            catch (IOException)
+            catch (IOException ex)
             {
+                Diag.Log("client", $"Send write failed {ex.Message}", null);
             }
         }
+        finally
+        {
+            Monitor.Exit(_gate);
+        }
+        sw.Stop();
+        if (sw.ElapsedMilliseconds > 30 || waited)
+            Diag.Log("client", $"Send done len={json.Length} ms={sw.ElapsedMilliseconds} waited={waited}", null);
     }
 
     private static void StartHost()

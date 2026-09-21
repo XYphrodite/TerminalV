@@ -10,6 +10,7 @@ using System.Windows.Threading;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Win32;
 using TerminalV.Data;
+using TerminalV.Diagnostics;
 using TerminalV.Pty;
 using TerminalV.Shell;
 using TerminalV.Update;
@@ -116,33 +117,43 @@ internal sealed class TerminalBridge : IDisposable
                     // Even 100 chars with bracketed paste (muse) can stall if the TUI hasn't drained.
                     // Keep typing ("a") synchronous for tests; bracketed paste goes async.
                     var isPaste = message.Data.Contains("\u001b[200~");
+                    var swBridge = Stopwatch.StartNew();
                     if (isPaste || message.Data.Length > 4000)
                     {
                         var writeId = message.Id;
                         var writeData = message.Data;
+                        Diag.Log("bridge", $"write async id={writeId} len={writeData.Length} isPaste={isPaste}", null);
                         _ = Task.Run(() =>
                         {
-                            if (_host.Ensure())
+                            var sw = Stopwatch.StartNew();
+                            try
                             {
-                                _host.Write(writeId, writeData);
+                                if (_host.Ensure())
+                                    _host.Write(writeId, writeData);
+                                else if (_sessions.TryGetValue(writeId, out var writing))
+                                    writing.Write(writeData);
                             }
-                            else if (_sessions.TryGetValue(writeId, out var writing))
+                            finally
                             {
-                                writing.Write(writeData);
+                                sw.Stop();
+                                if (sw.ElapsedMilliseconds > 30)
+                                    Diag.Log("bridge", $"write async done id={writeId} ms={sw.ElapsedMilliseconds}", null);
                             }
                         });
                     }
                     else
                     {
+                        Diag.Log("bridge", $"write sync id={message.Id} len={message.Data.Length}", null);
+                        var sw = Stopwatch.StartNew();
                         if (_host.Ensure())
-                        {
                             _host.Write(message.Id, message.Data);
-                        }
                         else if (_sessions.TryGetValue(message.Id, out var writing))
-                        {
                             writing.Write(message.Data);
-                        }
+                        sw.Stop();
+                        if (sw.ElapsedMilliseconds > 30)
+                            Diag.Log("bridge", $"write sync done id={message.Id} ms={sw.ElapsedMilliseconds}", null);
                     }
+                    swBridge.Stop();
                 }
                 break;
             case "resize":
@@ -266,6 +277,10 @@ internal sealed class TerminalBridge : IDisposable
                 break;
             case "ready":
                 SendInit();
+                break;
+            case "diag":
+                if (message.Data is not null)
+                    Diag.Log("ui", message.Data, message.Id);
                 break;
             case "pick-background":
                 PickBackground();
