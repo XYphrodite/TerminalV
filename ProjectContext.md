@@ -284,10 +284,8 @@ dotnet run --project src/TerminalV
 
 Перезагрузка v0.6.3: автоподъём обычных `shell` после ребута (`hidden || startupCommand` → `exited`, иначе `create`), `diag restore`. Обновлён `session-restore.test.js` 6/6 (204 UI). Подробности — `docs/releases/v0.6.3.md`.
 
-Вставка v0.6.4: `Diag` синхронный `AppendAllText` → асинхронный батч `ConcurrentQueue`+`FlushQueue` (до 50 строк), устранена «по строчке» пауза при вставке в `muse`. Починён `AndroidTsnetConnector` для `net10.0-android` (убраны `Android.App.Application`/`Java.Lang.Class`). Подробности — `docs/releases/v0.6.4.md`.
-
 **Last Updated**: 2026-09-21
-**Version**: 0.6.4
+**Version**: 0.6.3
 **Status**: Active  
 **Repository**: `https://github.com/XYphrodite/TerminalV`  
 **Workspace**: `C:\Repos\TerminalV`

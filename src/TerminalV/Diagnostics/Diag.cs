@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.IO;
 
@@ -6,8 +5,6 @@ namespace TerminalV.Diagnostics;
 
 internal static class Diag
 {
-    private static readonly ConcurrentQueue<string> Queue = new();
-    private static int _writerRunning;
     private static readonly object Gate = new();
     private static readonly Stopwatch Clock = Stopwatch.StartNew();
     private static string? _path;
@@ -33,47 +30,28 @@ internal static class Diag
     {
         var ts = Clock.Elapsed;
         var line = $"{DateTime.UtcNow:HH:mm:ss.fff} +{ts.TotalSeconds:000.000}s [T{Environment.CurrentManagedThreadId:00}] {area}: {message}" + (detail is null ? "" : $" | {detail}");
-        try { Debug.WriteLine(line); } catch { }
-        // Hot path (paste/write per chunk) must not block on file I/O — enqueue async.
-        Queue.Enqueue(line);
-        if (Interlocked.Exchange(ref _writerRunning, 1) == 0)
-            _ = Task.Run(FlushQueue);
-    }
-
-    private static void FlushQueue()
-    {
         try
         {
-            // Batch up to 50 lines per flush to keep per-chunk paste fast ("по строчке" lag)
-            while (true)
+            lock (Gate)
             {
-                var batch = new System.Collections.Generic.List<string>(50);
-                while (batch.Count < 50 && Queue.TryDequeue(out var l)) batch.Add(l);
-                if (batch.Count == 0) break;
+                var p = PathForLog();
+                // rotate once
                 try
                 {
-                    lock (Gate)
+                    var fi = new FileInfo(p);
+                    if (fi.Exists && fi.Length > MaxBytes)
                     {
-                        var p = PathForLog();
-                        try
-                        {
-                            var fi = new FileInfo(p);
-                            if (fi.Exists && fi.Length > MaxBytes)
-                            {
-                                var bak = p + ".1";
-                                File.Delete(bak);
-                                File.Move(p, bak);
-                            }
-                        }
-                        catch { }
-                        File.AppendAllLines(p, batch);
+                        var bak = p + ".1";
+                        File.Delete(bak);
+                        File.Move(p, bak);
                     }
                 }
                 catch { }
-                if (Queue.IsEmpty) break;
+                File.AppendAllText(p, line + Environment.NewLine);
             }
         }
-        finally { Interlocked.Exchange(ref _writerRunning, 0); if (!Queue.IsEmpty && Interlocked.Exchange(ref _writerRunning, 1) == 0) _ = Task.Run(FlushQueue); }
+        catch { }
+        try { Debug.WriteLine(line); } catch { }
     }
 
     public static IDisposable Time(string area, string op, int? bytes = null)
