@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Android.App;
 using Android.Content;
+using TerminalV.Ssh;
 
 namespace TerminalV.Mobile.Tailscale;
 
