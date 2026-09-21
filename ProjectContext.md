@@ -282,8 +282,10 @@ dotnet run --project src/TerminalV
 
 Ресайз v0.6.2: `scheduleFit` 80ms → `rAF` 16ms, `diag` вынесен глобально, `applyFit` лог. Добавлен `ui/tests/resize.test.js` (198 UI тестов). Подробности — `docs/releases/v0.6.2.md`.
 
+Перезагрузка v0.6.3: автоподъём обычных `shell` после ребута (`hidden || startupCommand` → `exited`, иначе `create`), `diag restore`. Обновлён `session-restore.test.js` 6/6 (204 UI). Подробности — `docs/releases/v0.6.3.md`.
+
 **Last Updated**: 2026-09-21
-**Version**: 0.6.2
+**Version**: 0.6.3
 **Status**: Active  
 **Repository**: `https://github.com/XYphrodite/TerminalV`  
 **Workspace**: `C:\Repos\TerminalV`

@@ -1301,15 +1301,18 @@ function newTab(options = {}) {
   }
   const cols = term.cols || 80;
   const rows = term.rows || 24;
+  diag("restore", `newTab id=${id} live=${!!options.live} restored=${!!options.restored} hidden=${!!tab.hidden} shell=${tab.shell||""} startup=${(tab.startupCommand||"").slice(0,40)}`, id);
   if (options.live) {
     post({ type: "attach", id });
     window.setTimeout(() => pulseResize(tab), 300);
-  } else if (tab.hidden || (options.restored && tab.shell)) {
+  } else if (tab.hidden || (options.restored && tab.startupCommand)) {
     // The shell is gone (e.g. Windows restarted). Keep the saved screen, but
-    // never silently start a new process for a hidden or profile session.
+    // never silently start a new process for a hidden session or a profile with a startup command (would duplicate servers/tests).
+    // Plain shell sessions (no startupCommand) auto-restart — they are just a shell.
     tab.exited = true;
     tab.overlayText.textContent = "Сессия не запущена. Сохранённый вывод доступен; запуск — кнопкой ниже.";
     tab.overlay.classList.add("visible");
+    diag("restore", `exited hidden/startup id=${id}`, id);
   } else {
     const createMsg = { type: "create", id, cols, rows, cwd: cwd || undefined,
       shell: tab.shell, startupCommand: tab.startupCommand, wslDistribution: tab.wslDistribution };

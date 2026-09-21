@@ -44,6 +44,14 @@ function buildRestoreArgs(records, liveIds) {
   }));
 }
 
+function shouldAutoCreate(record, liveIds) {
+  const isLive = new Set(liveIds).has(record.id);
+  if (isLive) return "attach";
+  if (record.hidden) return "exited";
+  if (record.startupCommand) return "exited"; // profile with command needs manual restart (would duplicate servers)
+  return "create"; // plain shell (even with shell=powershell) auto-restarts after reboot
+}
+
 test("serializeTab prefers SerializeAddon, falls back to buffer", () => {
   const viaAddon = { serialize: { serialize: () => "vt-dump" }, buffer: "fallback" };
   assert.equal(serializeTab(viaAddon), "vt-dump");
@@ -111,4 +119,14 @@ test("persist payload handles unicode and WSL fields", () => {
   assert.equal(payload[0].shell, "wsl");
   assert.equal(payload[0].wslDistribution, "Ubuntu");
   assert.equal(payload[0].cwd, null);
+});
+
+test("reboot auto-create: plain shell restarts, profile with startupCommand stays exited (v0.6.3)", () => {
+  const liveIds = []; // after reboot no live
+  assert.equal(shouldAutoCreate({ id: "plain-pwsh", hidden: false, shell: "powershell", startupCommand: null }, liveIds), "create", "plain shell must auto-create after reboot");
+  assert.equal(shouldAutoCreate({ id: "default", hidden: false, shell: null, startupCommand: null }, liveIds), "create");
+  assert.equal(shouldAutoCreate({ id: "with-cmd", hidden: false, shell: "powershell", startupCommand: "npm start" }, liveIds), "exited", "profile with command must stay exited");
+  assert.equal(shouldAutoCreate({ id: "wsl-cmd", hidden: false, shell: "wsl", startupCommand: "npm start" }, liveIds), "exited");
+  assert.equal(shouldAutoCreate({ id: "hidden-plain", hidden: true, shell: "powershell", startupCommand: null }, liveIds), "exited", "hidden stays exited");
+  assert.equal(shouldAutoCreate({ id: "live", hidden: false, shell: "powershell", startupCommand: "npm start" }, ["live"]), "attach", "live reattaches regardless");
 });
