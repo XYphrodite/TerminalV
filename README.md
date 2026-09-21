@@ -184,6 +184,10 @@ dotnet run --project tests/TerminalV.Data.Tests -c Release
 
 Исправлено зависание вкладки при вставке ~4K многострочного текста в `muse` со сплитом 4 панели — причина была в блокирующем `lock` очереди `ConPtySession` во время `WriteFile` в ConPTY. Теперь очередь и труба под разными локами, добавлен файл диагностики `%LOCALAPPDATA%\TerminalV\diagnostics.log`. Подробности — [заметки к релизу](docs/releases/v0.6.1.md).
 
+## Новое в v0.6.2
+
+Ресайз окна и панелей теперь без задержки: вместо 80ms debounce используется `requestAnimationFrame` (~16ms) с коалесценцией. Подробности — [заметки к релизу](docs/releases/v0.6.2.md).
+
 ## Лицензия
 
 [MIT](LICENSE)

@@ -65,6 +65,7 @@ let appVersion = "0.5.5";
 let updateSupported = false;
 let persistTimer = 0;
 let fitTimer = 0;
+let fitRaf = 0;
 let ignoreFitUntil = 0;
 let readyForPersist = false;
 const clipboardWaiters = new Map();
@@ -313,6 +314,10 @@ function host() {
 function post(message) {
   host()?.postMessage(message);
 }
+function diag(area, msg, id = null) {
+  try { post({ type: "diag", data: `${area}: ${msg}`, id }); } catch {}
+  try { console.debug(`[diag] ${area}: ${msg}`); } catch {}
+}
 
 function openExternal(uri) {
   if (typeof uri !== "string") return;
@@ -463,18 +468,41 @@ function applyFit(tab) {
     return false;
   }
 
+  const t0 = performance.now();
   if (!tab.exited) post({ type: "resize", id: tab.id, cols: proposed.cols, rows: proposed.rows });
   tab.term.resize(proposed.cols, proposed.rows);
   tab.term.refresh(0, Math.max(0, tab.term.rows - 1));
+  diag("fit", `applyFit id=${tab.id} ${proposed.cols}x${proposed.rows} ms=${(performance.now()-t0).toFixed(1)}`, tab.id);
   return true;
 }
 
-function scheduleFit(tab, immediate = false) {
+function cancelFit() {
+  if (fitRaf) { try { cancelAnimationFrame(fitRaf); } catch {} fitRaf = 0; }
   window.clearTimeout(fitTimer);
-  const fitVisible = () => { for (const item of visibleTabs()) applyFit(item); };
-  if (immediate) fitVisible();
-  // One shared debounce fits ALL visible panels, not just the last observer.
-  fitTimer = window.setTimeout(fitVisible, Math.max(80, ignoreFitUntil - Date.now() + 1));
+  fitTimer = 0;
+}
+function scheduleFit(tab, immediate = false) {
+  const fitVisible = () => {
+    fitRaf = 0;
+    fitTimer = 0;
+    const t0 = performance.now();
+    let changed = 0;
+    for (const item of visibleTabs()) if (applyFit(item)) changed++;
+    if (changed) diag("fit", `scheduleFit done changed=${changed} ms=${(performance.now()-t0).toFixed(1)}`, null);
+  };
+  if (immediate) {
+    cancelFit();
+    fitVisible();
+    return;
+  }
+  // Window/pane resize should feel instant — coalesce via rAF (16ms), not 80ms debounce.
+  // Fallback to 16ms timeout when rAF unavailable (Node tests).
+  if (fitRaf || fitTimer) return;
+  if (typeof window.requestAnimationFrame === "function") {
+    fitRaf = window.requestAnimationFrame(fitVisible);
+  } else {
+    fitTimer = window.setTimeout(fitVisible, 16);
+  }
 }
 
 function applyToTerminals() {
@@ -1174,10 +1202,6 @@ function newTab(options = {}) {
   hostEl.addEventListener("focusin", () => {
     if (activeId !== id && isPaneVisible(tab) && !isModalOpen()) activate(id, { focus: false });
   });
-    function diag(area, msg, id = null) {
-    try { post({ type: "diag", data: `${area}: ${msg}`, id }); } catch {}
-    try { console.debug(`[diag] ${area}: ${msg}`); } catch {}
-  }
   function postWrite(targetId, data) {
     const chunks = chunkText(data, WRITE_CHUNK);
     const isPaste = data.includes("\u001b[200~");
@@ -1455,7 +1479,7 @@ function toggleSidebar() {
   applyChrome();
   persistSettings();
   ignoreFitUntil = Date.now() + 200;
-  window.clearTimeout(fitTimer);
+  cancelFit();
   scheduleFit();
 }
 

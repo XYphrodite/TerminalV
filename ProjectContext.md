@@ -280,8 +280,10 @@ dotnet run --project src/TerminalV
 
 Вставка v0.6.1: фикс зависания вкладки при 4K многострочной вставке в `muse` со сплитом 4 (`ConPtySession` раздельны `_queueGate/_writerGate`, slow-write лог), `Diagnostics/Diag.cs` → `%LOCALAPPDATA%\TerminalV\diagnostics.log`, `SessionClient/SessionHost/TerminalBridge` логи gate contention, UI `diag` канал. Добавлен durable тест `concurrent 4k paste writes don't deadlock`. Подробности — `docs/releases/v0.6.1.md`.
 
+Ресайз v0.6.2: `scheduleFit` 80ms → `rAF` 16ms, `diag` вынесен глобально, `applyFit` лог. Добавлен `ui/tests/resize.test.js` (198 UI тестов). Подробности — `docs/releases/v0.6.2.md`.
+
 **Last Updated**: 2026-09-21
-**Version**: 0.6.1
+**Version**: 0.6.2
 **Status**: Active  
 **Repository**: `https://github.com/XYphrodite/TerminalV`  
 **Workspace**: `C:\Repos\TerminalV`
