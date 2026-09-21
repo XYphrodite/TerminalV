@@ -163,17 +163,10 @@ public sealed class AndroidTsnetConnector : ITailscaleConnector
                     if (fd < 0)
                         throw new IOException($"tsnet dial {host}:{port} returned fd {fd}");
 
-                    var pfdClass = JNIEnv.FindClass("android/os/ParcelFileDescriptor");
-                    var adoptFd = JNIEnv.GetStaticMethodID(pfdClass, "adoptFd", "(I)Landroid/os/ParcelFileDescriptor;");
-                    var pfd = JNIEnv.CallStaticObjectMethod(pfdClass, adoptFd, new JValue(fd));
-                    if (pfd == 0)
-                        throw new IOException("ParcelFileDescriptor.adoptFd returned null");
-
-                    var pfdObj = new Android.OS.ParcelFileDescriptor(pfd, JniHandleOwnership.TransferLocalRef);
-                    var input = new Android.OS.ParcelFileDescriptor.AutoCloseInputStream(pfdObj);
-                    var output = new Android.OS.ParcelFileDescriptor.AutoCloseOutputStream(pfdObj);
-                    // Combine into a single Stream (read from input, write to output) — use a simple duplex wrapper
-                    return new ParcelFdStream(input, output);
+                    // Use SafeFileHandle directly on the fd returned by Go (dup'd fd) — avoids ParcelFileDescriptor JNI complexity
+                    var safeHandle = new Microsoft.Win32.SafeHandles.SafeFileHandle(new IntPtr(fd), ownsHandle: true);
+                    // FileStream with async IO for duplex read/write
+                    return new FileStream(safeHandle, FileAccess.ReadWrite, 4096, isAsync: true);
                 }
                 finally
                 {
@@ -187,27 +180,7 @@ public sealed class AndroidTsnetConnector : ITailscaleConnector
         }, ct);
     }
 
-    private sealed class ParcelFdStream : Stream
-    {
-        private readonly Stream _input;
-        private readonly Stream _output;
-        public ParcelFdStream(Stream input, Stream output) { _input = input; _output = output; }
-        public override bool CanRead => true;
-        public override bool CanSeek => false;
-        public override bool CanWrite => true;
-        public override long Length => throw new NotSupportedException();
-        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
-        public override void Flush() => _output.Flush();
-        public override int Read(byte[] buffer, int offset, int count) => _input.Read(buffer, offset, count);
-        public override void Write(byte[] buffer, int offset, int count) => _output.Write(buffer, offset, count);
-        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
-        public override void SetLength(long value) => throw new NotSupportedException();
-        protected override void Dispose(bool disposing)
-        {
-            if (disposing) { try { _input.Dispose(); } catch { } try { _output.Dispose(); } catch { } }
-            base.Dispose(disposing);
-        }
-    }
+
 
     public void Dispose()
     {
