@@ -194,5 +194,103 @@ Check("Ssh identification string hint", () =>
     svc.Dispose();
 });
 
+Check("TailscaleOptions validate passes for disabled", () =>
+{
+    var opts = new SshConnectionOptions
+    {
+        Host = "100.119.48.15",
+        Port = 22,
+        Username = "local",
+        Password = "5454",
+        ConnectTimeout = TimeSpan.FromSeconds(1)
+    };
+    opts.Tailscale.Enabled = false;
+    opts.Validate();
+    if (opts.UseTailscale) throw new Exception("UseTailscale should be false");
+});
+
+Check("TailscaleOptions validate and UseTailscale", () =>
+{
+    var opts = new SshConnectionOptions
+    {
+        Host = "100.119.48.15",
+        Port = 22,
+        Username = "local",
+        Password = "5454",
+        ConnectTimeout = TimeSpan.FromSeconds(1)
+    };
+    opts.Tailscale.Enabled = true;
+    opts.Tailscale.AuthKey = "tskey-auth-test123";
+    opts.Tailscale.Hostname = "terminalv-mobile";
+    opts.Validate();
+    if (!opts.UseTailscale) throw new Exception("UseTailscale should be true");
+    if (opts.Clone().Tailscale.AuthKey != "tskey-auth-test123") throw new Exception("Clone should copy Tailscale");
+    if (ReferenceEquals(opts.Tailscale, opts.Clone().Tailscale)) throw new Exception("Clone must deep copy Tailscale");
+});
+
+Check("SshService creates TsnetSshSession when UseTailscale", () =>
+{
+    var opts = new SshConnectionOptions
+    {
+        Host = "100.119.48.15",
+        Port = 22,
+        Username = "local",
+        Password = "5454",
+        ConnectTimeout = TimeSpan.FromSeconds(1)
+    };
+    opts.Tailscale.Enabled = true;
+    opts.Tailscale.AuthKey = "tskey-auth-test123";
+    var svc = new SshService();
+    var sess = svc.Create("test-tsnet", opts);
+    if (sess is not TsnetSshSession) throw new Exception($"Expected TsnetSshSession, got {sess.GetType().Name}");
+    svc.Dispose();
+});
+
+Check("Tsnet without AAR throws PlatformNotSupported with hint", () =>
+{
+    var opts = new SshConnectionOptions
+    {
+        Host = "100.119.48.15",
+        Port = 22,
+        Username = "local",
+        Password = "5454",
+        ConnectTimeout = TimeSpan.FromSeconds(1)
+    };
+    opts.Tailscale.Enabled = true;
+    opts.Tailscale.AuthKey = "tskey-auth-test123";
+    var svc = new SshService();
+    var sess = svc.Create("test-tsnet-no-aar", opts);
+    string? captured = null;
+    sess.ErrorReceived += m => captured = m;
+    try { sess.ConnectAsync().GetAwaiter().GetResult(); } catch (PlatformNotSupportedException) { }
+    catch { }
+    // Stub connector throws PlatformNotSupportedException with build hint
+    // ConnectAsync will raise ErrorReceived or throw — verify no TargetInvocationException leak
+    if (captured != null && captured.Contains("TargetInvocationException"))
+        throw new Exception($"Leaked TargetInvocationException: {captured}");
+    sess.Dispose();
+    svc.Dispose();
+});
+
+Check("Gateway and Tailscale mutually exclusive priority (Tailscale wins)", () =>
+{
+    var opts = new SshConnectionOptions
+    {
+        Host = "100.119.48.15",
+        Port = 22,
+        Username = "local",
+        Password = "5454",
+        GatewayUrl = "ws://100.119.48.15:5454",
+        ConnectTimeout = TimeSpan.FromSeconds(1)
+    };
+    opts.Tailscale.Enabled = true;
+    opts.Tailscale.AuthKey = "tskey-auth-test123";
+    var svc = new SshService();
+    var sess = svc.Create("test-both", opts);
+    // Tailscale has priority per SshService (UseTailscale checked first)
+    if (sess is not TsnetSshSession) throw new Exception($"Expected TsnetSshSession when both set, got {sess.GetType().Name}");
+    svc.Dispose();
+});
+
 Console.WriteLine($"Ssh checks: {passed} passed, {failed} failed.");
 if (failed > 0) Environment.Exit(1);

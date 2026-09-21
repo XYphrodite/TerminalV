@@ -22,9 +22,11 @@ public sealed class SshService : IDisposable
         options.Columns = Math.Clamp(options.Columns, 1, 1000);
         options.Rows = Math.Clamp(options.Rows, 1, 1000);
 
-        ISshSession session = options.UseGateway
-            ? new GatewaySshSession(id, options)
-            : new SshNetSession(id, options);
+        ISshSession session = options.UseTailscale
+            ? new TsnetSshSession(id, options)
+            : options.UseGateway
+                ? new GatewaySshSession(id, options)
+                : new SshNetSession(id, options);
 
         lock (_lock)
         {

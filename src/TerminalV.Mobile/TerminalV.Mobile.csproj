@@ -35,11 +35,19 @@
 
   <ItemGroup>
     <Compile Include="..\TerminalV\Ssh\SshConnectionOptions.cs" Link="Ssh\SshConnectionOptions.cs" />
+    <Compile Include="..\TerminalV\Ssh\TailscaleOptions.cs" Link="Ssh\TailscaleOptions.cs" />
+    <Compile Include="..\TerminalV\Ssh\ITailscaleConnector.cs" Link="Ssh\ITailscaleConnector.cs" />
+    <Compile Include="..\TerminalV\Ssh\TailscaleStubConnector.cs" Link="Ssh\TailscaleStubConnector.cs" />
+    <Compile Include="..\TerminalV\Ssh\TsnetSshSession.cs" Link="Ssh\TsnetSshSession.cs" />
     <Compile Include="..\TerminalV\Ssh\ISshSession.cs" Link="Ssh\ISshSession.cs" />
     <Compile Include="..\TerminalV\Ssh\SshSessionBase.cs" Link="Ssh\SshSessionBase.cs" />
     <Compile Include="..\TerminalV\Ssh\SshNetSession.cs" Link="Ssh\SshNetSession.cs" />
     <Compile Include="..\TerminalV\Ssh\GatewaySshSession.cs" Link="Ssh\GatewaySshSession.cs" />
     <Compile Include="..\TerminalV\Ssh\SshService.cs" Link="Ssh\SshService.cs" />
+  </ItemGroup>
+
+  <ItemGroup Condition="Exists('Platforms\Android\libs\tsnet.aar')">
+    <AndroidAarLibrary Include="Platforms\Android\libs\tsnet.aar" />
   </ItemGroup>
 
   <ItemGroup>

@@ -10,7 +10,7 @@
         <div class="connect-card">
             <div class="card-head">
                 <h1>TerminalV Mobile</h1>
-                <p>Подключение к ПК через OpenSSH — прямой <code>sshd</code> или через шлюз TerminalV</p>
+                <p>Подключение к ПК через OpenSSH — прямой <code>sshd</code>, шлюз TerminalV или <b>вшитый Tailscale</b> (без отдельного VPN, не конфликтует с Happ)</p>
             </div>
             <div class="form-grid">
                 <label class="field">
@@ -30,7 +30,7 @@
                     <input type="password" @bind="password" placeholder="••••" autocomplete="current-password" />
                 </label>
                 <label class="field field-check">
-                    <input type="checkbox" @bind="useGateway" />
+                    <input type="checkbox" @bind="useGateway" disabled="@useTailscale" />
                     <span>Через шлюз TerminalV</span>
                 </label>
                 @if (useGateway)
@@ -40,6 +40,22 @@
                         <input @bind="gatewayUrl" placeholder="ws://100.119.48.15:5454" />
                     </label>
                 }
+                <label class="field field-check">
+                    <input type="checkbox" @bind="useTailscale" disabled="@useGateway" />
+                    <span>Через вшитый Tailscale (без VPN, рядом с Happ)</span>
+                </label>
+                @if (useTailscale)
+                {
+                    <label class="field" style="grid-column:1 / -1">
+                        <span>Tailscale Auth Key (admin.tailscale.com → Keys)</span>
+                        <input type="password" @bind="tailscaleAuthKey" placeholder="tskey-auth-..." autocomplete="off" />
+                    </label>
+                    <label class="field" style="grid-column:1 / -1">
+                        <span>Hostname в tailnet (опционально)</span>
+                        <input @bind="tailscaleHostname" placeholder="terminalv-mobile" autocomplete="off" />
+                    </label>
+                    <div class="hint" style="grid-column:1 / -1">Нужно один раз сгенерить ephemeral auth key. На телефоне не нужен отдельный Tailscale VPN — TUN внутри приложения. Требуется пересобранный apk с Go AAR (tools/tsnet-bridge).</div>
+                }
             </div>
             @if (!string.IsNullOrEmpty(error))
             {
@@ -47,13 +63,13 @@
             }
             <div class="status">@status</div>
             <button class="primary" @onclick="ConnectAsync" disabled="@connecting">@(connecting ? "Подключение…" : "Подключиться")</button>
-            <div class="hint">5454 — шлюз, 22 — прямой sshd. Для xeon: 100.119.48.15 / local / 5454</div>
+            <div class="hint">5454 — шлюз, 22 — прямой sshd, вшитый Tailscale — 100.119.48.15 без отдельного VPN. Для xeon: 100.119.48.15 / local / 5454</div>
         </div>
     }
     else
     {
         <div class="terminal-bar">
-            <span class="badge">@host:@port · @username @(useGateway ? "· gateway" : "")</span>
+            <span class="badge">@host:@port · @username @(useGateway ? "· gateway" : useTailscale ? "· tsnet" : "")</span>
             <button class="ghost" @onclick="DisconnectAsync">Отключиться</button>
         </div>
         @if (!string.IsNullOrEmpty(error))
@@ -100,6 +116,9 @@
     private string password = "5454";
     private bool useGateway = false;
     private string gatewayUrl = "ws://100.119.48.15:5454";
+    private bool useTailscale = false;
+    private string tailscaleAuthKey = "";
+    private string tailscaleHostname = "terminalv-mobile";
     private bool connecting = false;
     private bool isConnected = false;
     private string error = "";
@@ -127,8 +146,18 @@
             error = "Укажи пароль.";
             return;
         }
+        if (useTailscale && string.IsNullOrWhiteSpace(tailscaleAuthKey))
+        {
+            error = "Укажи Tailscale auth key (admin.tailscale.com → Keys). Без него вшитый tsnet не войдёт в tailnet.";
+            return;
+        }
+        if (useTailscale && useGateway)
+        {
+            error = "Выбери что-то одно: либо 'Через шлюз', либо 'Через вшитый Tailscale'.";
+            return;
+        }
         connecting = true;
-        status = useGateway ? $"Подключение через шлюз {gatewayUrl}…" : $"Подключение к {host}:{port}…";
+        status = useTailscale ? $"Подключение через вшитый Tailscale к {host}:{port} (без VPN)…" : useGateway ? $"Подключение через шлюз {gatewayUrl}…" : $"Подключение к {host}:{port}…";
         StateHasChanged();
         try
         {
@@ -142,6 +171,12 @@
                 Columns = 80,
                 Rows = 24
             };
+            if (useTailscale)
+            {
+                opts.Tailscale.Enabled = true;
+                opts.Tailscale.AuthKey = tailscaleAuthKey.Trim();
+                opts.Tailscale.Hostname = string.IsNullOrWhiteSpace(tailscaleHostname) ? "terminalv-mobile" : tailscaleHostname.Trim();
+            }
             opts.Validate();
             session?.Dispose();
             session = Ssh.Create(Guid.NewGuid().ToString(), opts);

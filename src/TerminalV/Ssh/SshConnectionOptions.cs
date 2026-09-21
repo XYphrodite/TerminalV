@@ -14,6 +14,8 @@ public sealed class SshConnectionOptions
     public string? PrivateKeyPassphrase { get; set; }
     public string? GatewayUrl { get; set; }
     public string? GatewayToken { get; set; }
+    public TailscaleOptions Tailscale { get; set; } = new();
+    public bool UseTailscale => Tailscale.Enabled;
     public string TerminalType { get; set; } = "xterm-256color";
     public int Columns { get; set; } = 80;
     public int Rows { get; set; } = 24;
@@ -48,6 +50,12 @@ public sealed class SshConnectionOptions
                 (u.Scheme != Uri.UriSchemeWs && u.Scheme != Uri.UriSchemeWss && u.Scheme != Uri.UriSchemeHttp && u.Scheme != Uri.UriSchemeHttps))
                 throw new ArgumentException("Некорректный URL шлюза.", nameof(GatewayUrl));
         }
+        Tailscale.Validate();
     }
-    public SshConnectionOptions Clone() => (SshConnectionOptions)MemberwiseClone();
+    public SshConnectionOptions Clone()
+    {
+        var c = (SshConnectionOptions)MemberwiseClone();
+        c.Tailscale = Tailscale.Clone();
+        return c;
+    }
 }

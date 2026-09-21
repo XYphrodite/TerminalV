@@ -17,6 +17,8 @@ public static class MauiProgram
 
         builder.Services.AddMauiBlazorWebView();
         builder.Services.AddSingleton<TerminalV.Ssh.SshService>();
+        builder.Services.AddSingleton<TerminalV.Mobile.Tailscale.TailscaleService>();
+        builder.Services.AddSingleton<TerminalV.Mobile.Tailscale.ITailscaleService>(sp => sp.GetRequiredService<TerminalV.Mobile.Tailscale.TailscaleService>());
 
 #if DEBUG
         builder.Services.AddBlazorWebViewDeveloperTools();
