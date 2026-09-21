@@ -1208,15 +1208,13 @@ function newTab(options = {}) {
     const t0 = performance.now();
     if (isPaste || chunks.length > 1) {
       diag("ui", `postWrite async id=${targetId} len=${data.length} chunks=${chunks.length} isPaste=${isPaste}`, targetId);
-      for (let i = 0; i < chunks.length; i++) {
-        const c = chunks[i];
-        queueMicrotask(() => {
-          const t1 = performance.now();
-          post({ type: "write", id: targetId, data: c });
-          const dt = performance.now() - t1;
-          if (dt > 10) diag("ui", `write post slow chunk ${i}/${chunks.length} ms=${dt.toFixed(1)}`, targetId);
-        });
-      }
+      // One microtask for whole paste — avoids per-chunk pause ("мб между чанками большие паузы")
+      queueMicrotask(() => {
+        const t1 = performance.now();
+        for (let i = 0; i < chunks.length; i++) post({ type: "write", id: targetId, data: chunks[i] });
+        const dt = performance.now() - t1;
+        if (dt > 10) diag("ui", `write post batch ${chunks.length} chunks ms=${dt.toFixed(1)}`, targetId);
+      });
       // watchdog: if still not writable after 2s, report
       setTimeout(() => {
         const dt = performance.now() - t0;

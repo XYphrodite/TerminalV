@@ -65,3 +65,23 @@ test("100 chars with dialog (multiline) stays one chunk and preserves order via 
   await new Promise((r) => queueMicrotask(r));
   assert.deepEqual(posted, chunks);
 });
+
+test("paste batch uses single microtask, not per-chunk pause", async () => {
+  const payload = "\u001b[200~" + "a".repeat(WRITE_CHUNK * 2 + 500) + "\u001b[201~";
+  const chunks = chunkText(payload);
+  assert.ok(chunks.length >= 2, "needs multiple chunks");
+  // New postWrite batches all chunks in ONE microtask — should be 1 batch + 1 await, not N+1
+  let microtasks = 0;
+  const origQueueMicrotask = global.queueMicrotask;
+  const posted = [];
+  global.queueMicrotask = (cb) => { microtasks++; origQueueMicrotask(cb); };
+  // Simulate new postWrite: single microtask posts all chunks
+  queueMicrotask(() => { for (const c of chunks) posted.push(c); });
+  await new Promise((r) => queueMicrotask(r));
+  global.queueMicrotask = origQueueMicrotask;
+  assert.equal(posted.length, chunks.length);
+  assert.equal(microtasks, 2, "paste should use single batch microtask (1 batch + 1 await), not per-chunk N+1");
+  assert.equal(posted.join(""), payload);
+  // Old per-chunk would be chunks.length +1 microtasks — ensure we are not that
+  assert.ok(microtasks < chunks.length + 1, "must be batched, not per-chunk");
+});

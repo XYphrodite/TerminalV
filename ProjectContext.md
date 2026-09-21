@@ -286,8 +286,10 @@ dotnet run --project src/TerminalV
 
 Вставка v0.6.5: `Diag` асинхронный батч 50 строк — устранена «по строчке» пауза при вставке в `muse` (восстановлен фикс `v0.6.4` без пример-теста). Подробности — `docs/releases/v0.6.5.md`.
 
+Вставка v0.6.6: паузы между чанками — `postWrite` 1 микрозадача на все чанки, добавлен `write-chunk 7/7` тест `paste batch`. Подробности — `docs/releases/v0.6.6.md`.
+
 **Last Updated**: 2026-09-21
-**Version**: 0.6.5
+**Version**: 0.6.6
 **Status**: Active  
 **Repository**: `https://github.com/XYphrodite/TerminalV`  
 **Workspace**: `C:\Repos\TerminalV`
