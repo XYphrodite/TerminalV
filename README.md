@@ -200,6 +200,10 @@ dotnet run --project tests/TerminalV.Data.Tests -c Release
 
 Паузы между чанками вставки убраны — `postWrite` батчит все чанки в одну микрозадачу. Подробности — [заметки к релизу](docs/releases/v0.6.6.md).
 
+## Новое в v0.6.7
+
+Рваный верх `muse` после ресайза — теперь `WebGL` текстура чистится `hard refresh` только для `alternate buffer`, история сверху не удаляется. Подробности — [заметки к релизу](docs/releases/v0.6.7.md).
+
 ## Лицензия
 
 [MIT](LICENSE)

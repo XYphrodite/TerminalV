@@ -471,7 +471,13 @@ function applyFit(tab) {
   const t0 = performance.now();
   if (!tab.exited) post({ type: "resize", id: tab.id, cols: proposed.cols, rows: proposed.rows });
   tab.term.resize(proposed.cols, proposed.rows);
-  tab.term.refresh(0, Math.max(0, tab.term.rows - 1));
+  // Alternate buffer (muse TUI) leaves torn top after resize — hard refresh only its canvas, not normal scrollback
+  if (tab.host.classList.contains("tui-lock")) {
+    try { tab.webgl?.clearTexture?.(); } catch {}
+    tab.term.refresh(0, Math.max(0, tab.term.rows - 1), true);
+  } else {
+    tab.term.refresh(0, Math.max(0, tab.term.rows - 1));
+  }
   diag("fit", `applyFit id=${tab.id} ${proposed.cols}x${proposed.rows} ms=${(performance.now()-t0).toFixed(1)}`, tab.id);
   return true;
 }

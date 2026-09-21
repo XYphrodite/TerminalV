@@ -288,8 +288,10 @@ dotnet run --project src/TerminalV
 
 Вставка v0.6.6: паузы между чанками — `postWrite` 1 микрозадача на все чанки, добавлен `write-chunk 7/7` тест `paste batch`. Подробности — `docs/releases/v0.6.6.md`.
 
+TUI v0.6.7: рваный верх `muse` после ресайза — `applyFit` для `tui-lock` `webgl.clearTexture()+refresh(true)`, `tui-refresh.test.js` 2/2. Подробности — `docs/releases/v0.6.7.md`.
+
 **Last Updated**: 2026-09-21
-**Version**: 0.6.6
+**Version**: 0.6.7
 **Status**: Active  
 **Repository**: `https://github.com/XYphrodite/TerminalV`  
 **Workspace**: `C:\Repos\TerminalV`
