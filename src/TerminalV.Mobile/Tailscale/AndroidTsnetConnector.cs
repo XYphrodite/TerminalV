@@ -14,8 +14,8 @@ namespace TerminalV.Mobile.Tailscale;
 /// </summary>
 public sealed class AndroidTsnetConnector : ITailscaleConnector
 {
-    private IntPtr _classHandle;
-    private IntPtr _instanceHandle;
+    private nint _classHandle;
+    private nint _instanceHandle;
     private bool _running;
     private string? _lastError;
     private bool _disposed;
@@ -37,17 +37,16 @@ public sealed class AndroidTsnetConnector : ITailscaleConnector
                 if (tsnetClass is null)
                     throw new PlatformNotSupportedException("Go AAR tsnet.Tsnet_ не найден. Проверь что tsnet.aar в libs и apk собран с AAR.");
 
-                // tsnet.Tsnet_ has public Tsnet_() and methods: start(String,String,String,String,long), stop(), dialFD(String,long)
                 var clazz = JNIEnv.FindClass("tsnet/Tsnet_");
-                if (clazz == IntPtr.Zero)
+                if (clazz == 0)
                     throw new PlatformNotSupportedException("JNI FindClass tsnet/Tsnet_ failed. AAR не подключён.");
 
                 var ctor = JNIEnv.GetMethodID(clazz, "<init>", "()V");
-                if (ctor == IntPtr.Zero)
+                if (ctor == 0)
                     throw new MissingMethodException("tsnet.Tsnet_::<init> not found");
 
                 var instance = JNIEnv.NewObject(clazz, ctor);
-                if (instance == IntPtr.Zero)
+                if (instance == 0)
                     throw new InvalidOperationException("Failed to create tsnet.Tsnet_ instance");
 
                 _classHandle = clazz;
@@ -59,7 +58,7 @@ public sealed class AndroidTsnetConnector : ITailscaleConnector
                 Directory.CreateDirectory(stateDir);
 
                 var mid = JNIEnv.GetMethodID(clazz, "start", "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;J)V");
-                if (mid == IntPtr.Zero)
+                if (mid == 0)
                     throw new MissingMethodException("tsnet.Tsnet_.start not found");
 
                 var jAuthKey = JNIEnv.NewString(options.AuthKey ?? "");
@@ -77,11 +76,12 @@ public sealed class AndroidTsnetConnector : ITailscaleConnector
                         new JValue((long)(options.LogVerbosity))
                     };
                     JNIEnv.CallVoidMethod(instance, mid, args);
-                    if (JNIEnv.ExceptionOccurred())
+                    if (JNIEnv.ExceptionOccurred() != 0)
                     {
                         var ex = JNIEnv.ExceptionOccurred();
                         JNIEnv.ExceptionClear();
-                        var msg = ex?.ToString() ?? "tsnet start failed";
+                        var msg = ex.ToString() ?? "tsnet start failed";
+                        JNIEnv.DeleteLocalRef(ex);
                         throw new InvalidOperationException(msg);
                     }
                 }
@@ -116,22 +116,22 @@ public sealed class AndroidTsnetConnector : ITailscaleConnector
         {
             try
             {
-                if (_instanceHandle != IntPtr.Zero && _classHandle != IntPtr.Zero)
+                if (_instanceHandle != 0 && _classHandle != 0)
                 {
                     var mid = JNIEnv.GetMethodID(_classHandle, "stop", "()V");
-                    if (mid != IntPtr.Zero)
+                    if (mid != 0)
                     {
                         JNIEnv.CallVoidMethod(_instanceHandle, mid);
-                        if (JNIEnv.ExceptionOccurred()) JNIEnv.ExceptionClear();
+                        if (JNIEnv.ExceptionOccurred() != 0) JNIEnv.ExceptionClear();
                     }
                 }
             }
             catch { }
             finally
             {
-                if (_instanceHandle != IntPtr.Zero) JNIEnv.DeleteGlobalRef(_instanceHandle);
-                _instanceHandle = IntPtr.Zero;
-                _classHandle = IntPtr.Zero;
+                if (_instanceHandle != 0) JNIEnv.DeleteGlobalRef(_instanceHandle);
+                _instanceHandle = 0;
+                _classHandle = 0;
                 _running = false;
             }
         });
@@ -139,22 +139,22 @@ public sealed class AndroidTsnetConnector : ITailscaleConnector
 
     public Task<Stream> DialAsync(string host, int port, CancellationToken ct = default)
     {
-        if (!_running || _instanceHandle == IntPtr.Zero || _classHandle == IntPtr.Zero)
+        if (!_running || _instanceHandle == 0 || _classHandle == 0)
             throw new InvalidOperationException("Tailscale не запущен. Сначала StartAsync с auth key.");
 
-        return Task.Run(() =>
+        return Task.Run<Stream>(() =>
         {
             try
             {
                 var mid = JNIEnv.GetMethodID(_classHandle, "dialFD", "(Ljava/lang/String;J)I");
-                if (mid == IntPtr.Zero)
+                if (mid == 0)
                     throw new MissingMethodException("tsnet.Tsnet_.dialFD not found");
 
                 var jHost = JNIEnv.NewString(host);
                 try
                 {
                     var fd = JNIEnv.CallIntMethod(_instanceHandle, mid, new JValue(jHost), new JValue((long)port));
-                    if (JNIEnv.ExceptionOccurred())
+                    if (JNIEnv.ExceptionOccurred() != 0)
                     {
                         var ex = JNIEnv.ExceptionOccurred();
                         JNIEnv.ExceptionClear();
@@ -163,16 +163,17 @@ public sealed class AndroidTsnetConnector : ITailscaleConnector
                     if (fd < 0)
                         throw new IOException($"tsnet dial {host}:{port} returned fd {fd}");
 
-                    // Wrap fd in ParcelFileDescriptor and then in Stream
                     var pfdClass = JNIEnv.FindClass("android/os/ParcelFileDescriptor");
                     var adoptFd = JNIEnv.GetStaticMethodID(pfdClass, "adoptFd", "(I)Landroid/os/ParcelFileDescriptor;");
                     var pfd = JNIEnv.CallStaticObjectMethod(pfdClass, adoptFd, new JValue(fd));
-                    if (pfd == IntPtr.Zero)
+                    if (pfd == 0)
                         throw new IOException("ParcelFileDescriptor.adoptFd returned null");
 
-                    var autoCloseInput = new Android.OS.ParcelFileDescriptor(pfd);
-                    var stream = new Android.OS.ParcelFileDescriptor.AutoCloseInputStream(autoCloseInput);
-                    return (Stream)stream;
+                    var pfdObj = new Android.OS.ParcelFileDescriptor(pfd, JniHandleOwnership.TransferLocalRef);
+                    var input = new Android.OS.ParcelFileDescriptor.AutoCloseInputStream(pfdObj);
+                    var output = new Android.OS.ParcelFileDescriptor.AutoCloseOutputStream(pfdObj);
+                    // Combine into a single Stream (read from input, write to output) — use a simple duplex wrapper
+                    return new ParcelFdStream(input, output);
                 }
                 finally
                 {
@@ -186,13 +187,35 @@ public sealed class AndroidTsnetConnector : ITailscaleConnector
         }, ct);
     }
 
+    private sealed class ParcelFdStream : Stream
+    {
+        private readonly Stream _input;
+        private readonly Stream _output;
+        public ParcelFdStream(Stream input, Stream output) { _input = input; _output = output; }
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => true;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override void Flush() => _output.Flush();
+        public override int Read(byte[] buffer, int offset, int count) => _input.Read(buffer, offset, count);
+        public override void Write(byte[] buffer, int offset, int count) => _output.Write(buffer, offset, count);
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing) { try { _input.Dispose(); } catch { } try { _output.Dispose(); } catch { } }
+            base.Dispose(disposing);
+        }
+    }
+
     public void Dispose()
     {
         if (_disposed) return;
         _disposed = true;
         try { StopAsync().GetAwaiter().GetResult(); } catch { }
-        if (_instanceHandle != IntPtr.Zero) JNIEnv.DeleteGlobalRef(_instanceHandle);
-        _instanceHandle = IntPtr.Zero;
+        if (_instanceHandle != 0) JNIEnv.DeleteGlobalRef(_instanceHandle);
+        _instanceHandle = 0;
     }
 }
 #endif
