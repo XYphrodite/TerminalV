@@ -300,8 +300,10 @@ TUI v0.6.7: рваный верх `muse` после ресайза — `applyFit
 
 Диагностика v0.6.12: `ConPtySession.Resize` логирует `HRESULT` отказа (`pty: Resize failed ... hr=...`) — был немой игнор, из-за чего отказ ConPTY на маленьких размерах неотличим от бага рендера. Подробности — `docs/releases/v0.6.12.md`.
 
+Окно v0.6.13: хук `WM_GETMINMAXINFO` ронял `MinWidth/MinHeight` — добавлен `ptMinTrackSize` из `MinWidth/MinHeight × DPI` (`ComputeMinTrackSize`, `internal`, масштаб свежий на каждый вызов). Подробности — `docs/releases/v0.6.13.md`.
+
 **Last Updated**: 2026-09-22
-**Version**: 0.6.12
+**Version**: 0.6.13
 **Status**: Active  
 **Repository**: `https://github.com/XYphrodite/TerminalV`  
 **Workspace**: `C:\Repos\TerminalV`

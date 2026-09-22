@@ -224,6 +224,10 @@ dotnet run --project tests/TerminalV.Data.Tests -c Release
 
 Диагностика ресайза ConPTY: отказы `ResizePseudoConsole` теперь видны в `diagnostics.log` (`pty: Resize failed ... hr=...`) — для расследования пропадания правой части в узком окне. Подробности — [заметки к релизу](docs/releases/v0.6.12.md).
 
+## Новое в v0.6.13
+
+Окно больше не сужается ниже 800×480: хук `WM_GETMINMAXINFO` выставляет минимум из `MinWidth/MinHeight` с учётом DPI. Подробности — [заметки к релизу](docs/releases/v0.6.13.md).
+
 ## Лицензия
 
 [MIT](LICENSE)
