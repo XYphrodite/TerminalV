@@ -1209,19 +1209,29 @@ function newTab(options = {}) {
     if (activeId !== id && isPaneVisible(tab) && !isModalOpen()) activate(id, { focus: false });
   });
   function postWrite(targetId, data) {
-    const chunks = chunkText(data, WRITE_CHUNK);
     const isPaste = data.includes("\u001b[200~");
-    const t0 = performance.now();
-    if (isPaste || chunks.length > 1) {
-      diag("ui", `postWrite async id=${targetId} len=${data.length} chunks=${chunks.length} isPaste=${isPaste}`, targetId);
-      // One microtask for whole paste — avoids per-chunk pause ("мб между чанками большие паузы")
+    // For bracketed paste (muse) send as single post — host will chunk efficiently in one Task.Run batch.
+    // Per-chunk queueMicrotask/post caused visible inter-chunk pause ("мб между чанками большие паузы").
+    if (isPaste) {
+      const t0 = performance.now();
+      diag("ui", `postWrite paste single id=${targetId} len=${data.length}`, targetId);
+      queueMicrotask(() => {
+        const t1 = performance.now();
+        post({ type: "write", id: targetId, data });
+        diag("ui", `postWrite paste posted ms=${(performance.now()-t1).toFixed(1)} queuedMs=${(performance.now()-t0).toFixed(1)}`, targetId);
+      });
+      return;
+    }
+    const chunks = chunkText(data, WRITE_CHUNK);
+    if (chunks.length > 1) {
+      const t0 = performance.now();
+      diag("ui", `postWrite async large id=${targetId} len=${data.length} chunks=${chunks.length}`, targetId);
       queueMicrotask(() => {
         const t1 = performance.now();
         for (let i = 0; i < chunks.length; i++) post({ type: "write", id: targetId, data: chunks[i] });
         const dt = performance.now() - t1;
         if (dt > 10) diag("ui", `write post batch ${chunks.length} chunks ms=${dt.toFixed(1)}`, targetId);
       });
-      // watchdog: if still not writable after 2s, report
       setTimeout(() => {
         const dt = performance.now() - t0;
         diag("ui", `postWrite watchdog id=${targetId} after ${dt.toFixed(0)}ms`, targetId);
