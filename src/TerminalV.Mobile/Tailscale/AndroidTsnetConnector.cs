@@ -146,22 +146,23 @@ public sealed class AndroidTsnetConnector : ITailscaleConnector
         {
             try
             {
-                var mid = JNIEnv.GetMethodID(_classHandle, "dialFD", "(Ljava/lang/String;J)I");
+                var mid = JNIEnv.GetMethodID(_classHandle, "dialFD", "(Ljava/lang/String;J)J");
                 if (mid == IntPtr.Zero)
                     throw new MissingMethodException("tsnet.Tsnet_.dialFD not found");
 
                 var jHost = JNIEnv.NewString(host);
                 try
                 {
-                    var fd = JNIEnv.CallIntMethod(_instanceHandle, mid, new JValue(jHost), new JValue((long)port));
+                    var fdLong = JNIEnv.CallLongMethod(_instanceHandle, mid, new JValue(jHost), new JValue((long)port));
                     if (JNIEnv.ExceptionOccurred())
                     {
                         var ex = JNIEnv.ExceptionOccurred();
                         JNIEnv.ExceptionClear();
                         throw new InvalidOperationException($"tsnet dial {host}:{port} failed: {ex}");
                     }
-                    if (fd < 0)
-                        throw new IOException($"tsnet dial {host}:{port} returned fd {fd}");
+                    if (fdLong < 0)
+                        throw new IOException($"tsnet dial {host}:{port} returned fd {fdLong}");
+                    var fd = (int)fdLong;
 
                     // Wrap fd in ParcelFileDescriptor and then in Stream
                     var pfdClass = JNIEnv.FindClass("android/os/ParcelFileDescriptor");
