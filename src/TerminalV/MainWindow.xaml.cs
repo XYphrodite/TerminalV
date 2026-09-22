@@ -166,5 +166,7 @@ public partial class MainWindow : Window
         MaximizeGlyph.Visibility = maximized ? Visibility.Collapsed : Visibility.Visible;
         RestoreGlyph.Visibility = maximized ? Visibility.Visible : Visibility.Collapsed;
         MaximizeButton.ToolTip = maximized ? "Свернуть в окно" : "Развернуть";
+        // Keep the airspace inset in sync: no resize border needed when maximized.
+        ContentRoot.Margin = maximized ? new Thickness(0) : new Thickness(6, 0, 6, 6);
     }
 }

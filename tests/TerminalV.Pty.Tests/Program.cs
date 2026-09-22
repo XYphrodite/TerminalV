@@ -332,6 +332,36 @@ Check("WindowChrome hit-test: all four edges, corners, caption and maximized", (
     Equal(Hit(l, t, r, b, r - 120, t + 10), 1); // over minimize
 });
 
+Check("WindowChrome WebView inset leaves WPF resize border (airspace fix)", () =>
+{
+    // WebView2 is a child HWND: where it touches the window edge it eats
+    // WM_NCHITTEST, so the parent WindowFrame hook never sees left/right/bottom.
+    // MainWindow must inset the web content by ResizeBorder=6 on left/right/bottom
+    // (top is the WPF caption) and collapse the inset when maximized.
+    static string FindFile(string relative)
+    {
+        var candidates = new[] { AppContext.BaseDirectory, Directory.GetCurrentDirectory() };
+        foreach (var start in candidates)
+        {
+            var dir = new DirectoryInfo(start);
+            for (var i = 0; i < 10 && dir is not null; i++, dir = dir.Parent)
+            {
+                var full = Path.Combine(dir.FullName, relative);
+                if (File.Exists(full)) return full;
+            }
+        }
+        throw new Exception($"Test layout file not found: {relative}");
+    }
+    var xaml = File.ReadAllText(FindFile(Path.Combine("src", "TerminalV", "MainWindow.xaml")));
+    Equal(xaml.Contains("x:Name=\"ContentRoot\""), true);
+    // Inset 6px left/right/bottom, 0 on top (caption row handles the top edge).
+    Equal(xaml.Contains("Margin=\"6,0,6,6\""), true);
+    var code = File.ReadAllText(FindFile(Path.Combine("src", "TerminalV", "MainWindow.xaml.cs")));
+    Equal(code.Contains("ContentRoot.Margin"), true);
+    Equal(code.Contains("new Thickness(0)"), true);
+    Equal(code.Contains("new Thickness(6, 0, 6, 6)"), true);
+});
+
 // Opt-in to a known installed distribution. No Linux profile, file writes or distro shutdown.
 var wslDistribution = Environment.GetEnvironmentVariable("TERMINALV_TEST_WSL_DISTRIBUTION");
 if (!string.IsNullOrWhiteSpace(wslDistribution))

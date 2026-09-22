@@ -296,8 +296,10 @@ TUI v0.6.7: рваный верх `muse` после ресайза — `applyFit
 
 Сайдбар v0.6.10: в `collapsed` `×` скрыт `display:none !important`, только `⋯`. Подробности — `docs/releases/v0.6.10.md`.
 
-**Last Updated**: 2026-09-21
-**Version**: 0.6.10
+Окно v0.6.11: `WebView2` (дочерний `HWND`, airspace) съедал `WM_NCHITTEST` на краях — контент вставлен на `6px` (`ContentRoot` `Margin="6,0,6,6"`, в `maximized` `0`), полоса WPF для ресайза открыта, `Pty` новый `airspace fix` тест. Подробности — `docs/releases/v0.6.11.md`.
+
+**Last Updated**: 2026-09-22
+**Version**: 0.6.11
 **Status**: Active  
 **Repository**: `https://github.com/XYphrodite/TerminalV`  
 **Workspace**: `C:\Repos\TerminalV`
