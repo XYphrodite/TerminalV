@@ -31,6 +31,7 @@ if (-not (Test-Path $AndroidSdk)) {
 
 $oldLoc = Get-Location
 Set-Location $PSScriptRoot
+    if ($AndroidSdk) { $env:ANDROID_HOME = $AndroidSdk; $env:ANDROID_SDK_ROOT = $AndroidSdk; Write-Host "==> ANDROID_HOME=$env:ANDROID_HOME" }
     Write-Host "==> go mod tidy"
     go mod tidy
 
@@ -48,7 +49,8 @@ Set-Location $PSScriptRoot
     Write-Host "==> Скопирован в $destDir\tsnet.aar"
 
     # iOS framework (опционально, требует macOS)
-    if ($IsMacOS -or (uname 2>$null | Out-String) -match "Darwin") {
+    if ($false) { # iOS skip on Windows - requires macOS
+        # original: $IsMacOS or uname Darwin
         Write-Host "==> gomobile bind -target ios -o Tsnet.xcframework"
         gomobile bind -target ios -o "$PSScriptRoot\Tsnet.xcframework" ./...
         Write-Host "==> iOS framework готов"
