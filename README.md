@@ -220,6 +220,10 @@ dotnet run --project tests/TerminalV.Data.Tests -c Release
 
 Окно тянется за левый/правый/нижний край — `WebView2` больше не перекрывает полосу ресайза (airspace-инсет `6px`, в maximized схлопывается). Подробности — [заметки к релизу](docs/releases/v0.6.11.md).
 
+## Новое в v0.6.12
+
+Диагностика ресайза ConPTY: отказы `ResizePseudoConsole` теперь видны в `diagnostics.log` (`pty: Resize failed ... hr=...`) — для расследования пропадания правой части в узком окне. Подробности — [заметки к релизу](docs/releases/v0.6.12.md).
+
 ## Лицензия
 
 [MIT](LICENSE)
