@@ -2,7 +2,10 @@ module org.terminalv.tsnet
 
 go 1.26.0
 
-require tailscale.com v1.82.0
+require (
+	github.com/wlynxg/anet v0.0.5
+	tailscale.com v1.82.0
+)
 
 require (
 	filippo.io/edwards25519 v1.1.0 // indirect
@@ -83,10 +86,7 @@ require (
 	gvisor.dev/gvisor v0.0.0-20250205023644-9414b50a5633 // indirect
 )
 
-
 tool (
 	golang.org/x/mobile/cmd/gobind
 	golang.org/x/mobile/cmd/gomobile
 )
-
-
