@@ -1,6 +1,6 @@
-# Собирает Go AAR (Android) для вшитого tsnet — userspace Tailscale без системного VPN.
-# Запускать на xeon (Windows) где есть Go + gomobile + Android SDK. На gamer без Go — собирается stub.
-# Результат: tools/tsnet-bridge/tsnet.aar → копируется в src/TerminalV.Mobile/Platforms/Android/libs/
+﻿# Собирает Go AAR (Android) для вшитого tsnet - userspace Tailscale без системного VPN.
+# Запускать на xeon (Windows) где есть Go + gomobile + Android SDK. На gamer без Go - собирается stub.
+# Результат: tools/tsnet-bridge/tsnet.aar -> копируется в src/TerminalV.Mobile/Platforms/Android/libs/
 param(
     [string]$AndroidSdk = "$env:LOCALAPPDATA\Android\Sdk",
     [string]$OutputAAR = "$PSScriptRoot\tsnet.aar"
@@ -15,7 +15,7 @@ go version
 
 Write-Host "==> gomobile"
 if (-not (Get-Command gomobile -ErrorAction SilentlyContinue)) {
-    Write-Host "gomobile не найден — ставлю"
+    Write-Host "gomobile не найден - ставлю"
     go install golang.org/x/mobile/cmd/gomobile@latest
     go install golang.org/x/mobile/cmd/gobind@latest
     $goBin = "$(go env GOPATH)\bin"
@@ -25,8 +25,8 @@ gomobile version
 if ($LASTEXITCODE -ne 0) { gomobile init }
 
 if (-not (Test-Path $AndroidSdk)) {
-    Write-Host "WARN: Android SDK не найден в $AndroidSdk — gomobile всё равно попробует собрать, но может упасть."
-    Write-Host "Установи: Visual Studio Installer → Mobile development with .NET → Android SDK, или dotnet workload install android"
+    Write-Host "WARN: Android SDK не найден в $AndroidSdk - gomobile всё равно попробует собрать, но может упасть."
+    Write-Host "Установи: Visual Studio Installer -> Mobile development with .NET -> Android SDK, или dotnet workload install android"
 }
 
 $oldLoc = Get-Location
