@@ -302,8 +302,10 @@ TUI v0.6.7: рваный верх `muse` после ресайза — `applyFit
 
 Окно v0.6.13: хук `WM_GETMINMAXINFO` ронял `MinWidth/MinHeight` — добавлен `ptMinTrackSize` из `MinWidth/MinHeight × DPI` (`ComputeMinTrackSize`, `internal`, масштаб свежий на каждый вызов). Подробности — `docs/releases/v0.6.13.md`.
 
+Окно v0.6.14: минимум опущен до 560×360 (только `MinWidth`/`MinHeight` в XAML, хук v0.6.13 подхватил сам). Подробности — `docs/releases/v0.6.14.md`.
+
 **Last Updated**: 2026-09-22
-**Version**: 0.6.13
+**Version**: 0.6.14
 **Status**: Active  
 **Repository**: `https://github.com/XYphrodite/TerminalV`  
 **Workspace**: `C:\Repos\TerminalV`
