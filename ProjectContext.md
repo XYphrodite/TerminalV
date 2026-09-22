@@ -292,8 +292,14 @@ TUI v0.6.7: рваный верх `muse` после ресайза — `applyFit
 
 Вставка v0.6.8: точная причина — `N` `queueMicrotask`+`Task.Run`+`Send` на чанк 4000 давали секунды на 60К; теперь 1 батч. `write-chunk 7/7`, `Pty 25/25` 5К `1ms`. Подробности — `docs/releases/v0.6.8.md`.
 
-**Last Updated**: 2026-09-21
-**Version**: 0.6.8
+Окно v0.6.9: `WebView2` блокировал `WM_NCHITTEST` — добавлен `WindowFrame` хит-тест 6px/36px, все 4 стороны + углы + `maximized` без ресайза, `Pty 25/25` новый `hit-test`. Подробности — `docs/releases/v0.6.9.md`.
+
+Сайдбар v0.6.10: в `collapsed` `×` скрыт `display:none !important`, только `⋯`. Подробности — `docs/releases/v0.6.10.md`.
+
+Окно v0.6.11: `WebView2` (дочерний `HWND`, airspace) съедал `WM_NCHITTEST` на краях — контент вставлен на `6px` (`ContentRoot` `Margin="6,0,6,6"`, в `maximized` `0`), полоса WPF для ресайза открыта, `Pty` новый `airspace fix` тест. Подробности — `docs/releases/v0.6.11.md`.
+
+**Last Updated**: 2026-09-22
+**Version**: 0.6.11
 **Status**: Active  
 **Repository**: `https://github.com/XYphrodite/TerminalV`  
 **Workspace**: `C:\Repos\TerminalV`

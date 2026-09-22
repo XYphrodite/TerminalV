@@ -144,7 +144,11 @@
             </Grid>
         </Border>
 
-        <Grid Grid.Row="1">
+        <!-- WebView2 is a child HWND and eats WM_NCHITTEST where it touches the
+             window edge (airspace): the parent WindowFrame hook then never sees
+             left/right/bottom. Inset by ResizeBorder=6 to expose a WPF strip
+             for resizing; collapsed to 0 when maximized in code-behind. -->
+        <Grid x:Name="ContentRoot" Grid.Row="1" Margin="6,0,6,6">
             <TextBlock Text="Загрузка TerminalV…"
                        Foreground="#8B98A8"
                        HorizontalAlignment="Center"
