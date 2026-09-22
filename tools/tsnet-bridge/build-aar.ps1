@@ -31,7 +31,6 @@ if (-not (Test-Path $AndroidSdk)) {
 
 $oldLoc = Get-Location
 Set-Location $PSScriptRoot
-try {
     Write-Host "==> go mod tidy"
     go mod tidy
 
@@ -56,4 +55,4 @@ try {
     } else {
         Write-Host "==> iOS пропускаем (требует macOS)"
     }
-} finally { Set-Location $oldLoc }
+Set-Location $oldLoc
