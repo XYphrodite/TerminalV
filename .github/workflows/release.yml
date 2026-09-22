@@ -1,0 +1,54 @@
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. v0.6.11). Must match Version in src/TerminalV/TerminalV.csproj'
+        required: true
+        default: 'v0.6.11'
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-publish:
+    runs-on: windows-latest
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref_name }}
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Check tag matches project version
+        shell: pwsh
+        run: |
+          [xml]$p = Get-Content src/TerminalV/TerminalV.csproj
+          $v = $p.Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1
+          if ("v$v" -ne $env:TAG) { throw "Tag $env:TAG != csproj Version $v" }
+
+      - name: Publish package
+        shell: pwsh
+        run: ./scripts/publish.ps1 -OutputDirectory "artifacts/release-$env:TAG"
+
+      - name: Create GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $notes = "docs/releases/$env:TAG.md"
+          gh release create $env:TAG --title "TerminalV $env:TAG" --notes-file $notes `
+            "artifacts/release-$env:TAG/TerminalV-win-x64.zip" `
+            "artifacts/release-$env:TAG/TerminalV-win-x64.zip.sha256"
