@@ -142,7 +142,7 @@ public sealed class AndroidTsnetConnector : ITailscaleConnector
         if (!_running || _instanceHandle == IntPtr.Zero || _classHandle == IntPtr.Zero)
             throw new InvalidOperationException("Tailscale не запущен. Сначала StartAsync с auth key.");
 
-        return Task.Run(() =>
+        return Task.Run<Stream>(() =>
         {
             try
             {
@@ -164,16 +164,10 @@ public sealed class AndroidTsnetConnector : ITailscaleConnector
                         throw new IOException($"tsnet dial {host}:{port} returned fd {fdLong}");
                     var fd = (int)fdLong;
 
-                    // Wrap fd in ParcelFileDescriptor and then in Stream
-                    var pfdClass = JNIEnv.FindClass("android/os/ParcelFileDescriptor");
-                    var adoptFd = JNIEnv.GetStaticMethodID(pfdClass, "adoptFd", "(I)Landroid/os/ParcelFileDescriptor;");
-                    var pfd = JNIEnv.CallStaticObjectMethod(pfdClass, adoptFd, new JValue(fd));
-                    if (pfd == IntPtr.Zero)
-                        throw new IOException("ParcelFileDescriptor.adoptFd returned null");
-
-                    var autoCloseInput = new Android.OS.ParcelFileDescriptor(pfd);
-                    var stream = new Android.OS.ParcelFileDescriptor.AutoCloseInputStream(autoCloseInput);
-                    return (Stream)stream;
+                    // Use SafeFileHandle directly on the fd returned by Go (dup'd fd) — avoids ParcelFileDescriptor JNI complexity
+                    var safeHandle = new Microsoft.Win32.SafeHandles.SafeFileHandle(new IntPtr(fd), ownsHandle: true);
+                    // FileStream with async IO for duplex read/write
+                    return new FileStream(safeHandle, FileAccess.ReadWrite, 4096, isAsync: true);
                 }
                 finally
                 {
