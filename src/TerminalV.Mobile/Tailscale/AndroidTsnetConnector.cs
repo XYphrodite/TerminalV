@@ -33,13 +33,47 @@ public sealed class AndroidTsnetConnector : ITailscaleConnector
         {
             try
             {
-                var tsnetClass = Java.Lang.Class.ForName("tsnet.Tsnet_");
+                // Try multiple class names and class loaders (AAR may use tsnet.Tsnet_ or tsnet.Tsnet, or org.terminalv.tsnet.Tsnet)
+                Java.Lang.Class? tsnetClass = null;
+                string[] tryNames = { "tsnet.Tsnet_", "tsnet.Tsnet", "org.terminalv.tsnet.Tsnet", "org.terminalv.tsnet.Tsnet_" };
+                Exception? lastClassEx = null;
+                foreach (var n in tryNames)
+                {
+                    try { tsnetClass = Java.Lang.Class.ForName(n); if (tsnetClass != null) break; } catch (Java.Lang.ClassNotFoundException ex) { lastClassEx = ex; }
+                    try
+                    {
+                        var ctxTmp = global::Android.App.Application.Context;
+                        var cl = ctxTmp.ClassLoader;
+                        if (cl != null)
+                        {
+                            var c = cl.LoadClass(n);
+                            if (c != null) { tsnetClass = Java.Lang.Class.FromType(c.GetType()); break; }
+                        }
+                    } catch { }
+                }
                 if (tsnetClass is null)
-                    throw new PlatformNotSupportedException("Go AAR tsnet.Tsnet_ не найден. Проверь что tsnet.aar в libs и apk собран с AAR.");
+                {
+                    var ctx2 = global::Android.App.Application.Context;
+                    try
+                    {
+                        var cl = ctx2.ClassLoader;
+                        var c = cl?.LoadClass("tsnet.Tsnet_");
+                        if (c != null) tsnetClass = Java.Lang.Class.FromType(c.GetType());
+                    } catch { }
+                }
+                if (tsnetClass is null)
+                    throw new PlatformNotSupportedException($"Go AAR tsnet.Tsnet_ не найден (пробовали {string.Join(", ", tryNames)}). Проверь что tsnet.aar в libs и apk 68M собран. Last: {lastClassEx?.Message}");
 
                 var clazz = JNIEnv.FindClass("tsnet/Tsnet_");
                 if (clazz == 0)
-                    throw new PlatformNotSupportedException("JNI FindClass tsnet/Tsnet_ failed. AAR не подключён.");
+                {
+                    // try alternative JNI names
+                    clazz = JNIEnv.FindClass("tsnet/Tsnet");
+                    if (clazz == 0) clazz = JNIEnv.FindClass("org/terminalv/tsnet/Tsnet");
+                    if (clazz == 0) clazz = JNIEnv.FindClass("org/terminalv/tsnet/Tsnet_");
+                }
+                if (clazz == 0)
+                    throw new PlatformNotSupportedException("JNI FindClass tsnet/Tsnet_ failed (пробовали tsnet/Tsnet_, tsnet/Tsnet, org/terminalv/tsnet/*). AAR не подключён или ProGuard вырезал.");
 
                 var ctor = JNIEnv.GetMethodID(clazz, "<init>", "()V");
                 if (ctor == 0)
