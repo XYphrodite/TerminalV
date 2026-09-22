@@ -204,6 +204,10 @@ dotnet run --project tests/TerminalV.Data.Tests -c Release
 
 Рваный верх `muse` после ресайза — теперь `WebGL` текстура чистится `hard refresh` только для `alternate buffer`, история сверху не удаляется. Подробности — [заметки к релизу](docs/releases/v0.6.7.md).
 
+## Новое в v0.6.8
+
+Медленная вставка большого текста — `postWrite` теперь один `queueMicrotask`/один `Task.Run` батч вместо `N` пауз между чанками. Подробности — [заметки к релизу](docs/releases/v0.6.8.md).
+
 ## Лицензия
 
 [MIT](LICENSE)
