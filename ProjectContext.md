@@ -298,8 +298,14 @@ TUI v0.6.7: рваный верх `muse` после ресайза — `applyFit
 
 Окно v0.6.11: `WebView2` (дочерний `HWND`, airspace) съедал `WM_NCHITTEST` на краях — контент вставлен на `6px` (`ContentRoot` `Margin="6,0,6,6"`, в `maximized` `0`), полоса WPF для ресайза открыта, `Pty` новый `airspace fix` тест. Подробности — `docs/releases/v0.6.11.md`.
 
+Диагностика v0.6.12: `ConPtySession.Resize` логирует `HRESULT` отказа (`pty: Resize failed ... hr=...`) — был немой игнор, из-за чего отказ ConPTY на маленьких размерах неотличим от бага рендера. Подробности — `docs/releases/v0.6.12.md`.
+
+Окно v0.6.13: хук `WM_GETMINMAXINFO` ронял `MinWidth/MinHeight` — добавлен `ptMinTrackSize` из `MinWidth/MinHeight × DPI` (`ComputeMinTrackSize`, `internal`, масштаб свежий на каждый вызов). Подробности — `docs/releases/v0.6.13.md`.
+
+Окно v0.6.14: минимум опущен до 560×360 (только `MinWidth`/`MinHeight` в XAML, хук v0.6.13 подхватил сам). Подробности — `docs/releases/v0.6.14.md`.
+
 **Last Updated**: 2026-09-22
-**Version**: 0.6.11
+**Version**: 0.6.14
 **Status**: Active  
 **Repository**: `https://github.com/XYphrodite/TerminalV`  
 **Workspace**: `C:\Repos\TerminalV`

@@ -230,7 +230,11 @@ internal sealed class ConPtySession : IDisposable
             X = (short)Math.Clamp(cols, 1, short.MaxValue),
             Y = (short)Math.Clamp(rows, 1, short.MaxValue)
         };
-        _ = NativeMethods.ResizePseudoConsole(_pseudoConsole, size);
+        var hr = NativeMethods.ResizePseudoConsole(_pseudoConsole, size);
+        if (hr != 0)
+        {
+            Diag.Log("pty", $"Resize failed id={Id} cols={cols} rows={rows} hr=0x{hr:X8}", null);
+        }
     }
 
     public void Dispose()

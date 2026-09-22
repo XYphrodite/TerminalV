@@ -25,13 +25,24 @@ internal static class WindowFrame
     private const int ResizeBorder = 6;
     private const int CaptionHeight = 36;
 
+    private static Window? s_window;
+
     public static void Hook(Window window)
     {
+        s_window = window;
         window.SourceInitialized += (_, _) =>
         {
             var hwnd = new WindowInteropHelper(window).Handle;
             HwndSource.FromHwnd(hwnd)?.AddHook(WndProc);
         };
+    }
+
+    internal static (int Width, int Height) ComputeMinTrackSize(double minWidthDip, double minHeightDip, double dpiScale)
+    {
+        var scale = double.IsFinite(dpiScale) && dpiScale > 0.0 ? dpiScale : 1.0;
+        var w = double.IsFinite(minWidthDip) ? minWidthDip : 0.0;
+        var h = double.IsFinite(minHeightDip) ? minHeightDip : 0.0;
+        return (Math.Max(0, (int)Math.Round(w * scale)), Math.Max(0, (int)Math.Round(h * scale)));
     }
 
     private static IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
@@ -117,6 +128,14 @@ internal static class WindowFrame
         info.ptMaxPosition.Y = Math.Abs(work.Top - display.Top);
         info.ptMaxSize.X = Math.Abs(work.Right - work.Left);
         info.ptMaxSize.Y = Math.Abs(work.Bottom - work.Top);
+        // Handling WM_GETMINMAXINFO ourselves would otherwise drop the WPF
+        // MinWidth/MinHeight and let the window shrink below usable layout
+        // (fixed sidebar + terminal grid). Scale is read fresh on every call
+        // so monitor moves keep working.
+        var scale = HwndSource.FromHwnd(hwnd)?.CompositionTarget?.TransformToDevice.M11 ?? 1.0;
+        var min = ComputeMinTrackSize(s_window?.MinWidth ?? 0.0, s_window?.MinHeight ?? 0.0, scale);
+        info.ptMinTrackSize.X = min.Width;
+        info.ptMinTrackSize.Y = min.Height;
         Marshal.StructureToPtr(info, lParam, true);
     }
 
