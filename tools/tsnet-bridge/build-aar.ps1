@@ -32,12 +32,25 @@ if (-not (Test-Path $AndroidSdk)) {
 $oldLoc = Get-Location
 Set-Location $PSScriptRoot
     if ($AndroidSdk) { $env:ANDROID_HOME = $AndroidSdk; $env:ANDROID_SDK_ROOT = $AndroidSdk; Write-Host "==> ANDROID_HOME=$env:ANDROID_HOME" }
+    # NDK: gomobile requires ndk-bundle or ANDROID_NDK_HOME, prefer 26.x
+    if (-not $env:ANDROID_NDK_HOME) {
+        $ndkRoot = Join-Path $AndroidSdk "ndk"
+        if (Test-Path $ndkRoot) {
+            $latestNdk = Get-ChildItem $ndkRoot -Directory | Sort-Object Name -Descending | Select-Object -First 1
+            if ($latestNdk) { $env:ANDROID_NDK_HOME = $latestNdk.FullName; Write-Host "==> ANDROID_NDK_HOME=$env:ANDROID_NDK_HOME" }
+        }
+        # ensure ndk-bundle symlink for gomobile fallback
+        $bundle = Join-Path $AndroidSdk "ndk-bundle"
+        if (-not (Test-Path $bundle) -and $env:ANDROID_NDK_HOME -and (Test-Path $env:ANDROID_NDK_HOME)) {
+            try { cmd /c mklink /D "$bundle" "$env:ANDROID_NDK_HOME" 2>$null | Out-Null; Write-Host "==> ndk-bundle -> $env:ANDROID_NDK_HOME" } catch {}
+        }
+    }
     Write-Host "==> go mod tidy"
     go mod tidy
 
-    Write-Host "==> gomobile bind -target android -o $OutputAAR org.terminalv.tsnet"
+    Write-Host "==> gomobile bind -target android -androidapi 21 -o $OutputAAR org.terminalv.tsnet"
     # gomobile bind собирает AAR с Java классом org.terminalv.tsnet.Tsnet
-    gomobile bind -target android -o $OutputAAR ./...
+    gomobile bind -target android -androidapi 21 -o $OutputAAR ./...
 
     if (-not (Test-Path $OutputAAR)) { throw "AAR не создан: $OutputAAR" }
     $size = (Get-Item $OutputAAR).Length
