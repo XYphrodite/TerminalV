@@ -29,7 +29,8 @@ if (-not (Test-Path $AndroidSdk)) {
     Write-Host "Установи: Visual Studio Installer → Mobile development with .NET → Android SDK, или dotnet workload install android"
 }
 
-Push-Location $PSScriptRoot
+$oldLoc = Get-Location
+Set-Location $PSScriptRoot
 try {
     Write-Host "==> go mod tidy"
     go mod tidy
@@ -55,4 +56,4 @@ try {
     } else {
         Write-Host "==> iOS пропускаем (требует macOS)"
     }
-} finally { Pop-Location }
+} finally { Set-Location $oldLoc }
