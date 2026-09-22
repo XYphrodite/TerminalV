@@ -77,11 +77,11 @@ public sealed class AndroidTsnetConnector : ITailscaleConnector
                         new JValue((long)(options.LogVerbosity))
                     };
                     JNIEnv.CallVoidMethod(instance, mid, args);
-                    if (JNIEnv.ExceptionOccurred())
+                    if (JNIEnv.ExceptionOccurred() != IntPtr.Zero)
                     {
                         var ex = JNIEnv.ExceptionOccurred();
                         JNIEnv.ExceptionClear();
-                        var msg = ex?.ToString() ?? "tsnet start failed";
+                        var msg = ex.ToString() ?? "tsnet start failed";
                         throw new InvalidOperationException(msg);
                     }
                 }
@@ -122,7 +122,7 @@ public sealed class AndroidTsnetConnector : ITailscaleConnector
                     if (mid != IntPtr.Zero)
                     {
                         JNIEnv.CallVoidMethod(_instanceHandle, mid);
-                        if (JNIEnv.ExceptionOccurred()) JNIEnv.ExceptionClear();
+                        if (JNIEnv.ExceptionOccurred() != IntPtr.Zero) JNIEnv.ExceptionClear();
                     }
                 }
             }
@@ -142,7 +142,7 @@ public sealed class AndroidTsnetConnector : ITailscaleConnector
         if (!_running || _instanceHandle == IntPtr.Zero || _classHandle == IntPtr.Zero)
             throw new InvalidOperationException("Tailscale не запущен. Сначала StartAsync с auth key.");
 
-        return Task.Run(() =>
+        return Task.Run<Stream>(() =>
         {
             try
             {
@@ -154,7 +154,7 @@ public sealed class AndroidTsnetConnector : ITailscaleConnector
                 try
                 {
                     var fdLong = JNIEnv.CallLongMethod(_instanceHandle, mid, new JValue(jHost), new JValue((long)port));
-                    if (JNIEnv.ExceptionOccurred())
+                    if (JNIEnv.ExceptionOccurred() != IntPtr.Zero)
                     {
                         var ex = JNIEnv.ExceptionOccurred();
                         JNIEnv.ExceptionClear();
