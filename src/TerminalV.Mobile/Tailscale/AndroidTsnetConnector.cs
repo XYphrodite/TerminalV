@@ -14,8 +14,8 @@ namespace TerminalV.Mobile.Tailscale;
 /// </summary>
 public sealed class AndroidTsnetConnector : ITailscaleConnector
 {
-    private nint _classHandle;
-    private nint _instanceHandle;
+    private IntPtr _classHandle;
+    private IntPtr _instanceHandle;
     private bool _running;
     private string? _lastError;
     private bool _disposed;
@@ -33,54 +33,21 @@ public sealed class AndroidTsnetConnector : ITailscaleConnector
         {
             try
             {
-                // Try multiple class names and class loaders (AAR may use tsnet.Tsnet_ or tsnet.Tsnet, or org.terminalv.tsnet.Tsnet)
-                Java.Lang.Class? tsnetClass = null;
-                string[] tryNames = { "tsnet.Tsnet_", "tsnet.Tsnet", "org.terminalv.tsnet.Tsnet", "org.terminalv.tsnet.Tsnet_" };
-                Exception? lastClassEx = null;
-                foreach (var n in tryNames)
-                {
-                    try { tsnetClass = Java.Lang.Class.ForName(n); if (tsnetClass != null) break; } catch (Java.Lang.ClassNotFoundException ex) { lastClassEx = ex; }
-                    try
-                    {
-                        var ctxTmp = global::Android.App.Application.Context;
-                        var cl = ctxTmp.ClassLoader;
-                        if (cl != null)
-                        {
-                            var c = cl.LoadClass(n);
-                            if (c != null) { tsnetClass = Java.Lang.Class.FromType(c.GetType()); break; }
-                        }
-                    } catch { }
-                }
+                var tsnetClass = Java.Lang.Class.ForName("tsnet.Tsnet_");
                 if (tsnetClass is null)
-                {
-                    var ctx2 = global::Android.App.Application.Context;
-                    try
-                    {
-                        var cl = ctx2.ClassLoader;
-                        var c = cl?.LoadClass("tsnet.Tsnet_");
-                        if (c != null) tsnetClass = Java.Lang.Class.FromType(c.GetType());
-                    } catch { }
-                }
-                if (tsnetClass is null)
-                    throw new PlatformNotSupportedException($"Go AAR tsnet.Tsnet_ не найден (пробовали {string.Join(", ", tryNames)}). Проверь что tsnet.aar в libs и apk 68M собран. Last: {lastClassEx?.Message}");
+                    throw new PlatformNotSupportedException("Go AAR tsnet.Tsnet_ не найден. Проверь что tsnet.aar в libs и apk собран с AAR.");
 
+                // tsnet.Tsnet_ has public Tsnet_() and methods: start(String,String,String,String,long), stop(), dialFD(String,long)
                 var clazz = JNIEnv.FindClass("tsnet/Tsnet_");
-                if (clazz == 0)
-                {
-                    // try alternative JNI names
-                    clazz = JNIEnv.FindClass("tsnet/Tsnet");
-                    if (clazz == 0) clazz = JNIEnv.FindClass("org/terminalv/tsnet/Tsnet");
-                    if (clazz == 0) clazz = JNIEnv.FindClass("org/terminalv/tsnet/Tsnet_");
-                }
-                if (clazz == 0)
-                    throw new PlatformNotSupportedException("JNI FindClass tsnet/Tsnet_ failed (пробовали tsnet/Tsnet_, tsnet/Tsnet, org/terminalv/tsnet/*). AAR не подключён или ProGuard вырезал.");
+                if (clazz == IntPtr.Zero)
+                    throw new PlatformNotSupportedException("JNI FindClass tsnet/Tsnet_ failed. AAR не подключён.");
 
                 var ctor = JNIEnv.GetMethodID(clazz, "<init>", "()V");
-                if (ctor == 0)
+                if (ctor == IntPtr.Zero)
                     throw new MissingMethodException("tsnet.Tsnet_::<init> not found");
 
                 var instance = JNIEnv.NewObject(clazz, ctor);
-                if (instance == 0)
+                if (instance == IntPtr.Zero)
                     throw new InvalidOperationException("Failed to create tsnet.Tsnet_ instance");
 
                 _classHandle = clazz;
@@ -92,7 +59,7 @@ public sealed class AndroidTsnetConnector : ITailscaleConnector
                 Directory.CreateDirectory(stateDir);
 
                 var mid = JNIEnv.GetMethodID(clazz, "start", "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;J)V");
-                if (mid == 0)
+                if (mid == IntPtr.Zero)
                     throw new MissingMethodException("tsnet.Tsnet_.start not found");
 
                 var jAuthKey = JNIEnv.NewString(options.AuthKey ?? "");
@@ -110,12 +77,11 @@ public sealed class AndroidTsnetConnector : ITailscaleConnector
                         new JValue((long)(options.LogVerbosity))
                     };
                     JNIEnv.CallVoidMethod(instance, mid, args);
-                    if (JNIEnv.ExceptionOccurred() != 0)
+                    if (JNIEnv.ExceptionOccurred())
                     {
                         var ex = JNIEnv.ExceptionOccurred();
                         JNIEnv.ExceptionClear();
-                        var msg = ex.ToString() ?? "tsnet start failed";
-                        JNIEnv.DeleteLocalRef(ex);
+                        var msg = ex?.ToString() ?? "tsnet start failed";
                         throw new InvalidOperationException(msg);
                     }
                 }
@@ -150,22 +116,22 @@ public sealed class AndroidTsnetConnector : ITailscaleConnector
         {
             try
             {
-                if (_instanceHandle != 0 && _classHandle != 0)
+                if (_instanceHandle != IntPtr.Zero && _classHandle != IntPtr.Zero)
                 {
                     var mid = JNIEnv.GetMethodID(_classHandle, "stop", "()V");
-                    if (mid != 0)
+                    if (mid != IntPtr.Zero)
                     {
                         JNIEnv.CallVoidMethod(_instanceHandle, mid);
-                        if (JNIEnv.ExceptionOccurred() != 0) JNIEnv.ExceptionClear();
+                        if (JNIEnv.ExceptionOccurred()) JNIEnv.ExceptionClear();
                     }
                 }
             }
             catch { }
             finally
             {
-                if (_instanceHandle != 0) JNIEnv.DeleteGlobalRef(_instanceHandle);
-                _instanceHandle = 0;
-                _classHandle = 0;
+                if (_instanceHandle != IntPtr.Zero) JNIEnv.DeleteGlobalRef(_instanceHandle);
+                _instanceHandle = IntPtr.Zero;
+                _classHandle = IntPtr.Zero;
                 _running = false;
             }
         });
@@ -173,29 +139,30 @@ public sealed class AndroidTsnetConnector : ITailscaleConnector
 
     public Task<Stream> DialAsync(string host, int port, CancellationToken ct = default)
     {
-        if (!_running || _instanceHandle == 0 || _classHandle == 0)
+        if (!_running || _instanceHandle == IntPtr.Zero || _classHandle == IntPtr.Zero)
             throw new InvalidOperationException("Tailscale не запущен. Сначала StartAsync с auth key.");
 
-        return Task.Run<Stream>(() =>
+        return Task.Run(() =>
         {
             try
             {
-                var mid = JNIEnv.GetMethodID(_classHandle, "dialFD", "(Ljava/lang/String;J)I");
-                if (mid == 0)
+                var mid = JNIEnv.GetMethodID(_classHandle, "dialFD", "(Ljava/lang/String;J)J");
+                if (mid == IntPtr.Zero)
                     throw new MissingMethodException("tsnet.Tsnet_.dialFD not found");
 
                 var jHost = JNIEnv.NewString(host);
                 try
                 {
-                    var fd = JNIEnv.CallIntMethod(_instanceHandle, mid, new JValue(jHost), new JValue((long)port));
-                    if (JNIEnv.ExceptionOccurred() != 0)
+                    var fdLong = JNIEnv.CallLongMethod(_instanceHandle, mid, new JValue(jHost), new JValue((long)port));
+                    if (JNIEnv.ExceptionOccurred())
                     {
                         var ex = JNIEnv.ExceptionOccurred();
                         JNIEnv.ExceptionClear();
                         throw new InvalidOperationException($"tsnet dial {host}:{port} failed: {ex}");
                     }
-                    if (fd < 0)
-                        throw new IOException($"tsnet dial {host}:{port} returned fd {fd}");
+                    if (fdLong < 0)
+                        throw new IOException($"tsnet dial {host}:{port} returned fd {fdLong}");
+                    var fd = (int)fdLong;
 
                     // Use SafeFileHandle directly on the fd returned by Go (dup'd fd) — avoids ParcelFileDescriptor JNI complexity
                     var safeHandle = new Microsoft.Win32.SafeHandles.SafeFileHandle(new IntPtr(fd), ownsHandle: true);
@@ -214,15 +181,13 @@ public sealed class AndroidTsnetConnector : ITailscaleConnector
         }, ct);
     }
 
-
-
     public void Dispose()
     {
         if (_disposed) return;
         _disposed = true;
         try { StopAsync().GetAwaiter().GetResult(); } catch { }
-        if (_instanceHandle != 0) JNIEnv.DeleteGlobalRef(_instanceHandle);
-        _instanceHandle = 0;
+        if (_instanceHandle != IntPtr.Zero) JNIEnv.DeleteGlobalRef(_instanceHandle);
+        _instanceHandle = IntPtr.Zero;
     }
 }
 #endif
