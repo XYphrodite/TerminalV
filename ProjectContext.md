@@ -294,8 +294,10 @@ TUI v0.6.7: рваный верх `muse` после ресайза — `applyFit
 
 Окно v0.6.9: `WebView2` блокировал `WM_NCHITTEST` — добавлен `WindowFrame` хит-тест 6px/36px, все 4 стороны + углы + `maximized` без ресайза, `Pty 25/25` новый `hit-test`. Подробности — `docs/releases/v0.6.9.md`.
 
+Сайдбар v0.6.10: в `collapsed` `×` скрыт `display:none !important`, только `⋯`. Подробности — `docs/releases/v0.6.10.md`.
+
 **Last Updated**: 2026-09-21
-**Version**: 0.6.9
+**Version**: 0.6.10
 **Status**: Active  
 **Repository**: `https://github.com/XYphrodite/TerminalV`  
 **Workspace**: `C:\Repos\TerminalV`
