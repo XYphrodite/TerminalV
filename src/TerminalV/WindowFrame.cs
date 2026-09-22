@@ -85,7 +85,11 @@ internal static class WindowFrame
         if (onTop) return HtTop;
         if (onBottom) return HtBottom;
 
-        // Caption drag area (below resize border, above content)
+        // Caption drag area (below resize border, above content) — exclude caption buttons (IsHitTestVisibleInChrome)
+        // Buttons: 3 × 46 = 138px at top-right, WindowChrome needs HTCLIENT there to route to Button
+        const int CaptionButtonsWidth = 138;
+        var inCaptionButtons = (right - x) < CaptionButtonsWidth && (y - top) < CaptionHeight;
+        if (inCaptionButtons) return HtClient;
         if (y - top < CaptionHeight && !onLeft && !onRight && !onBottom)
             return HtCaption;
 

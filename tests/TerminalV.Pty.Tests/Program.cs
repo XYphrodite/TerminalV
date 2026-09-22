@@ -312,6 +312,9 @@ Check("WindowChrome hit-test: all four edges, corners, caption and maximized", (
         var onL = x - l < B; var onR = r - x < B; var onT = y - t < B; var onB = b - y < B;
         if (onT && onL) return TL; if (onT && onR) return TR; if (onB && onL) return BL; if (onB && onR) return BR;
         if (onL) return L; if (onR) return R; if (onT) return Top; if (onB) return Bot;
+        const int Buttons = 138;
+        var inButtons = (r - x) < Buttons && (y - t) < H;
+        if (inButtons) return C;
         if (y - t < H && !onL && !onR && !onB) return Cap; return C;
     }
     int l = 100, t = 100, r = 1320, b = 880;
@@ -323,6 +326,10 @@ Check("WindowChrome hit-test: all four edges, corners, caption and maximized", (
     Equal(Hit(0, 0, 800, 600, 2, 598), 16); Equal(Hit(0, 0, 800, 600, 798, 598), 17);
     Equal(Hit(l, t, r, b, (l + r) / 2, t + 10), 2); // caption
     Equal(Hit(0, 0, 1920, 1080, 2, 200, true), 1); // maximized no resize
+    // Caption buttons must be HTCLIENT, not HTCAPTION, so Min/Max/Close work
+    Equal(Hit(l, t, r, b, r - 20, t + 10), 1); // over close button
+    Equal(Hit(l, t, r, b, r - 70, t + 10), 1); // over maximize
+    Equal(Hit(l, t, r, b, r - 120, t + 10), 1); // over minimize
 });
 
 // Opt-in to a known installed distribution. No Linux profile, file writes or distro shutdown.

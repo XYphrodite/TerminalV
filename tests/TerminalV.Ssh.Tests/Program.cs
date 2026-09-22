@@ -292,5 +292,43 @@ Check("Gateway and Tailscale mutually exclusive priority (Tailscale wins)", () =
     svc.Dispose();
 });
 
+// Regression for Android dialFD JNI signature: Go int -> Java long (J), not int (I)
+// Previously AndroidTsnetConnector used (Ljava/lang/String;J)I and CallIntMethod, but tsnet.Tsnet_.dialFD is (String,long)->long (J return)
+// See tsnet.aar javap: public native long dialFD(String,long)
+Check("AndroidTsnetConnector dialFD JNI uses (String,J)J and CallLongMethod", () =>
+{
+    var csPath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "src", "TerminalV.Mobile", "Tailscale", "AndroidTsnetConnector.cs"));
+    // Fallback for dotnet run from repo root
+    if (!File.Exists(csPath))
+        csPath = Path.GetFullPath("src/TerminalV.Mobile/Tailscale/AndroidTsnetConnector.cs");
+    if (!File.Exists(csPath))
+        throw new FileNotFoundException($"AndroidTsnetConnector.cs not found at {csPath}");
+    var txt = File.ReadAllText(csPath);
+    if (!txt.Contains("(Ljava/lang/String;J)J"))
+        throw new Exception("AndroidTsnetConnector.cs must contain dialFD signature (Ljava/lang/String;J)J (long return), not I");
+    if (txt.Contains("(Ljava/lang/String;J)I"))
+        throw new Exception("AndroidTsnetConnector.cs still contains old dialFD signature (Ljava/lang/String;J)I (int return) - should be J");
+    if (!txt.Contains("CallLongMethod"))
+        throw new Exception("AndroidTsnetConnector.cs must use CallLongMethod for dialFD (long return)");
+    if (txt.Contains("CallIntMethod") && txt.Contains("dialFD"))
+        throw new Exception("AndroidTsnetConnector.cs must not use CallIntMethod for dialFD after fix");
+});
+
+Check("Android tsnet anet interfaces fix present", () =>
+{
+    var goPath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "tools", "tsnet-bridge", "interfaces_android.go"));
+    if (!File.Exists(goPath))
+        goPath = Path.GetFullPath("tools/tsnet-bridge/interfaces_android.go");
+    if (!File.Exists(goPath))
+        throw new FileNotFoundException($"interfaces_android.go not found at {goPath}");
+    var txt = File.ReadAllText(goPath);
+    if (!txt.Contains("RegisterInterfaceGetter"))
+        throw new Exception("interfaces_android.go must contain netmon.RegisterInterfaceGetter for Android netlink fix");
+    if (!txt.Contains("anet.Interfaces"))
+        throw new Exception("interfaces_android.go must use anet.Interfaces (wlynxg/anet) for getifaddrs");
+    if (!txt.Contains("//go:build android"))
+        throw new Exception("interfaces_android.go must have //go:build android tag");
+});
+
 Console.WriteLine($"Ssh checks: {passed} passed, {failed} failed.");
 if (failed > 0) Environment.Exit(1);
