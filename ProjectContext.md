@@ -292,8 +292,10 @@ TUI v0.6.7: рваный верх `muse` после ресайза — `applyFit
 
 Вставка v0.6.8: точная причина — `N` `queueMicrotask`+`Task.Run`+`Send` на чанк 4000 давали секунды на 60К; теперь 1 батч. `write-chunk 7/7`, `Pty 25/25` 5К `1ms`. Подробности — `docs/releases/v0.6.8.md`.
 
+Окно v0.6.9: `WebView2` блокировал `WM_NCHITTEST` — добавлен `WindowFrame` хит-тест 6px/36px, все 4 стороны + углы + `maximized` без ресайза, `Pty 25/25` новый `hit-test`. Подробности — `docs/releases/v0.6.9.md`.
+
 **Last Updated**: 2026-09-21
-**Version**: 0.6.8
+**Version**: 0.6.9
 **Status**: Active  
 **Repository**: `https://github.com/XYphrodite/TerminalV`  
 **Workspace**: `C:\Repos\TerminalV`

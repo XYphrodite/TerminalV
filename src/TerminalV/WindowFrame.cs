@@ -7,7 +7,23 @@ namespace TerminalV;
 internal static class WindowFrame
 {
     private const int WmGetMinMaxInfoMessage = 0x0024;
+    private const int WmNcHitTestMessage = 0x0084;
     private const int MonitorDefaultToNearest = 2;
+
+    // HitTest values
+    private const int HtClient = 1;
+    private const int HtCaption = 2;
+    private const int HtLeft = 10;
+    private const int HtRight = 11;
+    private const int HtTop = 12;
+    private const int HtTopLeft = 13;
+    private const int HtTopRight = 14;
+    private const int HtBottom = 15;
+    private const int HtBottomLeft = 16;
+    private const int HtBottomRight = 17;
+
+    private const int ResizeBorder = 6;
+    private const int CaptionHeight = 36;
 
     public static void Hook(Window window)
     {
@@ -24,9 +40,56 @@ internal static class WindowFrame
         {
             WmGetMinMaxInfo(hwnd, lParam);
             handled = true;
+            return IntPtr.Zero;
+        }
+        if (msg == WmNcHitTestMessage)
+        {
+            var hit = HitTest(hwnd, lParam);
+            if (hit != HtClient)
+            {
+                handled = true;
+                return (IntPtr)hit;
+            }
         }
 
         return IntPtr.Zero;
+    }
+
+    internal static int HitTest(IntPtr hwnd, IntPtr lParam)
+    {
+        // lParam low/high = cursor x/y in screen coords
+        var x = (short)(lParam.ToInt32() & 0xFFFF);
+        var y = (short)((lParam.ToInt32() >> 16) & 0xFFFF);
+        if (!GetWindowRect(hwnd, out var rect)) return HtClient;
+        // Ignore maximized — no resize
+        var style = GetWindowLong(hwnd, -16); // GWL_STYLE
+        const int WsMaximize = 0x01000000;
+        if ((style & WsMaximize) != 0) return HtClient;
+
+        var left = rect.Left;
+        var top = rect.Top;
+        var right = rect.Right;
+        var bottom = rect.Bottom;
+
+        var onLeft = x - left < ResizeBorder;
+        var onRight = right - x < ResizeBorder;
+        var onTop = y - top < ResizeBorder;
+        var onBottom = bottom - y < ResizeBorder;
+
+        if (onTop && onLeft) return HtTopLeft;
+        if (onTop && onRight) return HtTopRight;
+        if (onBottom && onLeft) return HtBottomLeft;
+        if (onBottom && onRight) return HtBottomRight;
+        if (onLeft) return HtLeft;
+        if (onRight) return HtRight;
+        if (onTop) return HtTop;
+        if (onBottom) return HtBottom;
+
+        // Caption drag area (below resize border, above content)
+        if (y - top < CaptionHeight && !onLeft && !onRight && !onBottom)
+            return HtCaption;
+
+        return HtClient;
     }
 
     private static void WmGetMinMaxInfo(IntPtr hwnd, IntPtr lParam)
@@ -58,6 +121,12 @@ internal static class WindowFrame
 
     [DllImport("user32.dll", CharSet = CharSet.Auto)]
     private static extern bool GetMonitorInfo(IntPtr hMonitor, ref MonitorInfo lpmi);
+
+    [DllImport("user32.dll")]
+    private static extern bool GetWindowRect(IntPtr hwnd, out Rect rect);
+
+    [DllImport("user32.dll")]
+    private static extern int GetWindowLong(IntPtr hwnd, int index);
 
     [StructLayout(LayoutKind.Sequential)]
     private struct Point

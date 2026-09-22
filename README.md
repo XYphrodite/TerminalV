@@ -208,6 +208,10 @@ dotnet run --project tests/TerminalV.Data.Tests -c Release
 
 Медленная вставка большого текста — `postWrite` теперь один `queueMicrotask`/один `Task.Run` батч вместо `N` пауз между чанками. Подробности — [заметки к релизу](docs/releases/v0.6.8.md).
 
+## Новое в v0.6.9
+
+Окно снова тянется со всех 4 сторон — `WebView2` больше не блокирует `WM_NCHITTEST`. Подробности — [заметки к релизу](docs/releases/v0.6.9.md).
+
 ## Лицензия
 
 [MIT](LICENSE)

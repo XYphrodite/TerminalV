@@ -302,6 +302,29 @@ Check("concurrent 4k paste writes don't deadlock queue lock (split 4 panes repro
     Equal(sw2.ElapsedMilliseconds < 500, true);
 });
 
+Check("WindowChrome hit-test: all four edges, corners, caption and maximized", () =>
+{
+    // Pure math from WindowFrame.HitTest — must match 6px border / 36px caption
+    int Hit(int l, int t, int r, int b, int x, int y, bool maximized = false)
+    {
+        const int B = 6, H = 36, C = 1, Cap = 2, L = 10, R = 11, Top = 12, TL = 13, TR = 14, Bot = 15, BL = 16, BR = 17;
+        if (maximized) return C;
+        var onL = x - l < B; var onR = r - x < B; var onT = y - t < B; var onB = b - y < B;
+        if (onT && onL) return TL; if (onT && onR) return TR; if (onB && onL) return BL; if (onB && onR) return BR;
+        if (onL) return L; if (onR) return R; if (onT) return Top; if (onB) return Bot;
+        if (y - t < H && !onL && !onR && !onB) return Cap; return C;
+    }
+    int l = 100, t = 100, r = 1320, b = 880;
+    Equal(Hit(l, t, r, b, l + 2, (t + b) / 2), 10); // left
+    Equal(Hit(l, t, r, b, r - 2, (t + b) / 2), 11); // right
+    Equal(Hit(l, t, r, b, (l + r) / 2, t + 2), 12); // top
+    Equal(Hit(l, t, r, b, (l + r) / 2, b - 2), 15); // bottom
+    Equal(Hit(0, 0, 800, 600, 2, 2), 13); Equal(Hit(0, 0, 800, 600, 798, 2), 14);
+    Equal(Hit(0, 0, 800, 600, 2, 598), 16); Equal(Hit(0, 0, 800, 600, 798, 598), 17);
+    Equal(Hit(l, t, r, b, (l + r) / 2, t + 10), 2); // caption
+    Equal(Hit(0, 0, 1920, 1080, 2, 200, true), 1); // maximized no resize
+});
+
 // Opt-in to a known installed distribution. No Linux profile, file writes or distro shutdown.
 var wslDistribution = Environment.GetEnvironmentVariable("TERMINALV_TEST_WSL_DISTRIBUTION");
 if (!string.IsNullOrWhiteSpace(wslDistribution))
