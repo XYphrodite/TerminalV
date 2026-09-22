@@ -48,9 +48,10 @@ Set-Location $PSScriptRoot
     Write-Host "==> go mod tidy"
     go mod tidy
 
-    Write-Host "==> gomobile bind -target android -androidapi 21 -o $OutputAAR org.terminalv.tsnet"
+    Write-Host "==> gomobile bind -target android -androidapi 21 -ldflags=-checklinkname=0 -o $OutputAAR org.terminalv.tsnet"
     # gomobile bind собирает AAR с Java классом org.terminalv.tsnet.Tsnet
-    gomobile bind -target android -androidapi 21 -o $OutputAAR ./...
+    # anet (Android net.Interfaces fix) requires -checklinkname=0 on Go 1.23+
+    gomobile bind -target android -androidapi 21 -ldflags="-checklinkname=0" -o $OutputAAR ./...
 
     if (-not (Test-Path $OutputAAR)) { throw "AAR не создан: $OutputAAR" }
     $size = (Get-Item $OutputAAR).Length

@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"path/filepath"
 	"sync"
 
 	"tailscale.com/tsnet"
@@ -36,6 +37,18 @@ func (t *Tsnet) Start(authKey, hostname, controlURL, stateDir string, logVerbosi
 	}
 	if err := os.MkdirAll(stateDir, 0700); err != nil {
 		return fmt.Errorf("mkdir stateDir: %w", err)
+	}
+	// Android fix: no HOME/TMPDIR, wd is /, tsnet panics trying to find log/cache dir.
+	// Должно быть os.Setenv из Go (C setenv не видит Go runtime).
+	filesDir := filepath.Dir(stateDir)
+	if filesDir != "" && filesDir != "." && filesDir != "/" {
+		_ = os.Setenv("HOME", filesDir)
+		_ = os.Setenv("TMPDIR", filesDir)
+		_ = os.Setenv("XDG_CACHE_HOME", filepath.Join(filesDir, "cache"))
+		_ = os.Setenv("XDG_CONFIG_HOME", filesDir)
+		_ = os.Setenv("XDG_DATA_HOME", filepath.Join(filesDir, "data"))
+		_ = os.MkdirAll(filepath.Join(filesDir, "cache"), 0700)
+		_ = os.MkdirAll(filepath.Join(filesDir, "data"), 0700)
 	}
 	srv := &tsnet.Server{
 		Dir:        stateDir,
