@@ -18,6 +18,12 @@ test("minimal session density compacts rows", () => {
   assert.match(css, /#app\.session-minimal\s*\.tab-meta\s*\{[^}]*display:\s*none/, "minimal should hide meta line");
 });
 
+test("nested splits indent by depth", () => {
+  assert.match(css, /\.tab\.split-depth-2\s*\{[^}]*margin-left:\s*32px/, "depth-2 should indent 32px");
+  assert.match(css, /\.tab\.split-depth-3\s*\{[^}]*margin-left:\s*48px/, "depth-3 should indent 48px");
+  assert.match(css, /\.tab\.split-depth-4\s*\{[^}]*margin-left:\s*64px/, "depth-4 should indent 64px");
+});
+
 test("collapsed sidebar never shows session options", () => {
   assert.match(css, /#app\.collapsed\s*\.tab\s*\.tab-options\s*\{[^}]*display:\s*none/, "collapsed should hide tab-options");
   assert.doesNotMatch(css, /#app\.collapsed[^{]*\.tab-options\s*\{[^}]*display:\s*grid/, "collapsed must not re-show tab-options");

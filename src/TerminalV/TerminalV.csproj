@@ -11,8 +11,8 @@
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <Product>TerminalV</Product>
     <AssemblyTitle>TerminalV</AssemblyTitle>
-    <Version>0.7.0</Version>
-    <InformationalVersion>0.6.15</InformationalVersion>
+    <Version>0.7.1</Version>
+    <InformationalVersion>0.7.1</InformationalVersion>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\TerminalV.ico</ApplicationIcon>
   </PropertyGroup>

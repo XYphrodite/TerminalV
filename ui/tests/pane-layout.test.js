@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { normalizeLayouts, leafIds, layoutFor, layoutGeometry, splitSession, detachSession,
-  neighborPane, paneShortcut, MAX_PANES, isSplitChild, isSplitParent } from "../src/pane-layout.js";
+  neighborPane, paneShortcut, MAX_PANES, MAX_SPLIT_LEVEL, isSplitChild, isSplitParent, splitIndentLevel } from "../src/pane-layout.js";
 
 const leaf = (sessionId) => ({ sessionId });
 const branch = (first, second, axis = "columns", ratio = .5) => ({ axis, ratio, first, second });
@@ -25,13 +25,16 @@ test("malformed, deep and oversized trees cannot drop a session or recurse indef
   const cyclic = { axis: "columns", second: leaf("a") }; cyclic.first = cyclic;
   assert.deepEqual(normalizeLayouts([cyclic], records("a")), [leaf("a")]);
 });
-test("nested splitting creates only the new leaf and keeps other views intact", () => {
+test("splitting grows only flat layouts and keeps other views intact", () => {
   const initial = [leaf("a"), leaf("other")];
   const two = splitSession(initial, "a", "b", "columns");
-  const three = splitSession(two, "b", "c", "rows");
-  assert.deepEqual(three[0], branch(leaf("a"), branch(leaf("b"), leaf("c"), "rows")));
+  // splitting the child b would nest: refused with views untouched
+  assert.equal(splitSession(two, "b", "c", "rows"), two);
   assert.deepEqual(initial, [leaf("a"), leaf("other")]);
-  assert.equal(three[1], initial[1]);
+  assert.equal(two[1], initial[1]);
+  // splitting the root-first a stays flat
+  const three = splitSession(two, "a", "c", "columns");
+  assert.deepEqual(three[0], branch(branch(leaf("a"), leaf("c")), leaf("b")));
   assert.equal(splitSession(three, "a", "c", "columns"), three);
   assert.equal(splitSession(three, "missing", "d", "columns"), three);
 });
@@ -78,10 +81,12 @@ test("split child/parent are detectable for sidebar rendering", () => {
   assert.equal(isSplitChild(split, "a"), false);
   assert.equal(isSplitParent(split, "b"), false);
   assert.equal(isSplitChild(split, "other"), false);
-  // nested split: b is parent of c
-  const nested = splitSession(split, "b", "c", "rows");
+  // legacy nested tree (no longer creatable): b keeps child indent,
+  // parent dot stays on a only
+  const nested = [{ axis: "columns", ratio: .5, first: leaf("a"),
+    second: { axis: "rows", ratio: .5, first: leaf("b"), second: leaf("c") } }];
   assert.equal(isSplitChild(nested, "c"), true);
-  assert.equal(isSplitParent(nested, "b"), true);
+  assert.equal(isSplitParent(nested, "b"), false);
   // a remains parent of b, not of c directly
   assert.equal(isSplitParent(nested, "a"), true);
   assert.equal(isSplitChild(nested, "a"), false);
@@ -91,4 +96,44 @@ test("split child/parent are detectable for sidebar rendering", () => {
   assert.equal(isSplitParent(detached, "b"), false);
   assert.equal(isSplitChild(detached, "c"), true);
   assert.equal(isSplitParent(detached, "a"), true);
+});
+
+test("second-degree splits are refused, all children stay top-level", () => {
+  const base = [leaf("a"), leaf("other")];
+  const split = splitSession(base, "a", "b", "columns");
+  assert.equal(leafIds(split[0]).join(","), "a,b");
+  // splitting the child b would nest c at level 2: refused unchanged
+  const refused = splitSession(split, "b", "c", "rows");
+  assert.equal(refused, split);
+  // splitting the root-first a stays flat: c lands at level 1
+  const flat = splitSession(split, "a", "c", "rows");
+  assert.notEqual(flat, split);
+  for (const id of ["a", "b", "c"]) {
+    assert.ok(splitIndentLevel(flat, id) <= MAX_SPLIT_LEVEL, `${id} stays top-level`);
+  }
+  assert.equal(isSplitParent(flat, "a"), false);
+  assert.equal(isSplitChild(flat, "c"), true);
+});
+
+test("split indent level follows generations, not tree depth", () => {
+  const base = [leaf("a"), leaf("other")];
+  assert.equal(splitIndentLevel(base, "a"), 0);
+  assert.equal(splitIndentLevel(base, "missing"), 0);
+  assert.equal(splitIndentLevel(null, "a"), 0);
+  const split = splitSession(base, "a", "b", "columns");
+  assert.equal(splitIndentLevel(split, "a"), 0);
+  assert.equal(splitIndentLevel(split, "b"), 1);
+  assert.equal(splitIndentLevel(split, "other"), 0);
+  // nested splits are refused; legacy trees still measure by generation
+  assert.equal(splitSession(split, "b", "c", "rows"), split);
+  const nested = [{ axis: "columns", ratio: .5, first: leaf("a"),
+    second: { axis: "rows", ratio: .5, first: leaf("b"), second: leaf("c") } }];
+  assert.equal(splitIndentLevel(nested, "a"), 0);
+  assert.equal(splitIndentLevel(nested, "b"), 1);
+  assert.equal(splitIndentLevel(nested, "c"), 2);
+  const deeper = [{ axis: "columns", ratio: .5, first: leaf("a"),
+    second: { axis: "rows", ratio: .5, first: leaf("b"),
+      second: { axis: "columns", ratio: .5, first: leaf("c"), second: leaf("d") } } }];
+  assert.equal(splitIndentLevel(deeper, "c"), 2);
+  assert.equal(splitIndentLevel(deeper, "d"), 3);
 });

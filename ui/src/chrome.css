@@ -65,6 +65,9 @@ kbd { font: 10px var(--font-ui); letter-spacing: .02em; white-space: nowrap; }
 .tab.in-view:not(.active) .tab-title { text-decoration: none; }
 .tab.in-view:not(.active) { border-color: var(--border-soft); }
 .tab.split-child { margin-left: 16px; width: calc(100% - 16px); }
+.tab.split-depth-2 { margin-left: 32px; width: calc(100% - 32px); }
+.tab.split-depth-3 { margin-left: 48px; width: calc(100% - 48px); }
+.tab.split-depth-4 { margin-left: 64px; width: calc(100% - 64px); }
 .tab.split-child::before {
   content: "";
   position: absolute;
@@ -98,7 +101,10 @@ kbd { font: 10px var(--font-ui); letter-spacing: .02em; white-space: nowrap; }
   background: var(--accent);
   opacity: .55;
 }
-#app.collapsed .tab.split-child { margin-left: 0; width: 100%; }
+#app.collapsed .tab.split-child,
+#app.collapsed .tab.split-depth-2,
+#app.collapsed .tab.split-depth-3,
+#app.collapsed .tab.split-depth-4 { margin-left: 0; width: 100%; }
 #app.collapsed .tab.split-child::before,
 #app.collapsed .tab.split-child::after,
 #app.collapsed .tab.split-parent .tab-symbol::after { display: none; }

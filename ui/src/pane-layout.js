@@ -32,6 +32,8 @@ export function normalizeLayouts(layouts, sessions) {
 
 export const layoutFor = (layouts, id) => layouts.find((root) => leafIds(root).includes(id));
 
+export const MAX_SPLIT_LEVEL = 1;
+
 export function splitSession(layouts, id, newId, axis) {
   const root = layoutFor(layouts, id);
   if (!root || !["columns", "rows"].includes(axis) || leafIds(root).length >= MAX_PANES || layoutFor(layouts, newId)) return layouts;
@@ -39,7 +41,11 @@ export function splitSession(layouts, id, newId, axis) {
     if (node.sessionId === id) return { axis, ratio: .5, first: node, second: { sessionId: newId } };
     return node.sessionId ? node : { ...node, first: split(node.first), second: split(node.second) };
   }
-  return layouts.map((item) => item === root ? split(item) : item);
+  const next = layouts.map((item) => item === root ? split(item) : item);
+  // No second-degree children: every session stays a direct child of one
+  // top-level split. A split that would nest deeper is refused entirely.
+  const flat = next.every((item) => leafIds(item).every((leafId) => splitIndentLevel(next, leafId) <= MAX_SPLIT_LEVEL));
+  return flat ? next : layouts;
 }
 
 export function detachSession(layouts, id) {
@@ -93,18 +99,37 @@ export function isSplitChild(layouts, id) {
   return false;
 }
 
+// Indent level of a session leaf: how many enclosing splits hold it in
+// their second branch. A pane split off another pane indents one step
+// deeper than its source, so generations read correctly: splitting b off
+// a, then c off b, renders a, b indented once, c twice. The first pane of
+// a split stays level with its source.
+export function splitIndentLevel(layouts, id) {
+  if (!Array.isArray(layouts) || !id) return 0;
+  for (const root of layouts) {
+    const stack = [{ node: root, level: 0 }];
+    while (stack.length) {
+      const { node, level } = stack.pop();
+      if (!node || typeof node !== "object") continue;
+      if (node.sessionId) {
+        if (node.sessionId === id) return level;
+        continue;
+      }
+      if (node.first) stack.push({ node: node.first, level });
+      if (node.second) stack.push({ node: node.second, level: level + 1 });
+    }
+  }
+  return 0;
+}
+
+// Visual parent marker: only the first pane of a top-level split.
+// A nested first (e.g. b split into b+c) keeps its child indent and must
+// not read as a parent of its own sibling.
 export function isSplitParent(layouts, id) {
   if (!Array.isArray(layouts) || !id) return false;
-  const stack = [...layouts];
-  while (stack.length) {
-    const n = stack.pop();
-    if (!n || typeof n !== "object") continue;
-    if (n.sessionId) continue;
-    if (n.first?.sessionId === id && n.second) return true;
-    if (n.first) stack.push(n.first);
-    if (n.second) stack.push(n.second);
-  }
-  return false;
+  return layouts.some((root) =>
+    root && typeof root === "object" && !root.sessionId &&
+    root.first?.sessionId === id && root.second);
 }
 
 export function paneShortcut(event) {

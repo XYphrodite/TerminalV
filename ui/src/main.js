@@ -18,7 +18,7 @@ import { createNotifications, createNotificationOutput } from "./notifications.j
 import { createLaunchProfiles, PROFILE_SHELLS } from "./launch-profiles.js";
 import { createLaunchMenu } from "./launch-menu.js";
 import { normalizeLayouts, layoutFor, leafIds, splitSession, detachSession, layoutGeometry,
-  neighborPane, paneShortcut, MAX_PANES, MIN_PANE_WIDTH, MIN_PANE_HEIGHT, isSplitChild, isSplitParent } from "./pane-layout.js";
+  neighborPane, paneShortcut, MAX_PANES, MIN_PANE_WIDTH, MIN_PANE_HEIGHT, isSplitChild, isSplitParent, splitIndentLevel } from "./pane-layout.js";
 import { createPaneView } from "./pane-view.js";
 import { createShortcuts } from "./shortcuts.js";
 import { WRITE_CHUNK, chunkText } from "./write-chunk.js";
@@ -183,6 +183,11 @@ function isPaneVisible(tab) {
 function canSplit(axis) {
   const tab = currentTab(), count = visibleTabs().length;
   if (!tab || !count || count >= MAX_PANES) return false;
+  // Only a lone pane or the first pane of a top-level split may split:
+  // splitting anything else would nest a second-degree child.
+  const root = layoutFor(layouts, tab.id);
+  const lone = root && root.sessionId === tab.id;
+  if (!lone && !isSplitParent(layouts, tab.id)) return false;
   const box = tab.pane.getBoundingClientRect();
   return axis === "columns" ? box.width >= MIN_PANE_WIDTH * 2 + 6 : box.height >= MIN_PANE_HEIGHT * 2 + 6;
 }
@@ -407,6 +412,14 @@ function applyBackground(pane) {
   } else {
     bg.style.backgroundImage = "none";
     bg.style.display = "none";
+  }
+}
+
+function applySplitDepth(row, id) {
+  const level = Math.min(splitIndentLevel(layouts, id), 4);
+  row.classList.remove("split-depth-2", "split-depth-3", "split-depth-4");
+  if (level >= 2) {
+    row.classList.add(`split-depth-${level}`);
   }
 }
 
@@ -669,6 +682,7 @@ function renderTabs() {
       row.classList.toggle("in-view", isPaneVisible(tab));
       row.classList.toggle("split-child", isSplitChild(layouts, tab.id));
       row.classList.toggle("split-parent", isSplitParent(layouts, tab.id));
+      applySplitDepth(row, tab.id);
       if (tab.color) row.style.setProperty("--session-color", SESSION_COLORS[tab.color].value);
 
       const accent = document.createElement("span");
@@ -892,6 +906,7 @@ function patchTabRow(tab) {
   row.classList.toggle("unread", Boolean(tab.unread));
   row.classList.toggle("split-child", isSplitChild(layouts, tab.id));
   row.classList.toggle("split-parent", isSplitParent(layouts, tab.id));
+  applySplitDepth(row, tab.id);
   const title = row.querySelector(".tab-title");
   if (title && !tab.renaming) {
     title.textContent = tab.customTitle || tab.title;
