@@ -129,7 +129,6 @@ dotnet publish $comProject `
     -r $Runtime `
     --self-contained false `
     -p:PublishSingleFile=true `
-    -p:PublishTrimmed=true `
     -p:DebugType=none `
     -p:DebugSymbols=false `
     -o $lightComDir
