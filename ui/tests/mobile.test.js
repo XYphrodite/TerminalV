@@ -129,3 +129,22 @@ test("Connection overlay scrolls and FAB respects safe-area", () => {
   assert.match(home, /bottom:calc\(.*safe-area-inset-bottom/, "FAB bottom safe-area");
   assert.match(home, /right:calc\(.*safe-area-inset-right/, "FAB right safe-area");
 });
+
+test("Mobile fixes: scale default, black bar, collapsed swipe, sync empty, write error", () => {
+  const store = readFileSync(r("src/TerminalV.Mobile/Host/MobileDataStore.cs"), "utf8");
+  assert.match(store, /FontSize = 12/, "mobile default FontSize 12");
+  const main = readFileSync(r("src/TerminalV.Mobile/Platforms/Android/MainActivity.cs"), "utf8");
+  assert.match(main, /SetStatusBarColor.*Transparent/, "status bar transparent");
+  assert.match(main, /SetNavigationBarColor.*Transparent/, "nav bar transparent");
+  assert.match(main, /LayoutInDisplayCutoutMode\.ShortEdges/, "cutout ShortEdges");
+  const html = readFileSync(r("src/TerminalV.Mobile/wwwroot/index.html"), "utf8");
+  assert.match(html, /sidebar-swipe-handle/, "swipe handle");
+  assert.match(html, /@media.*max-width: 700px/, "collapsed drawer CSS");
+  assert.match(html, /translateX\(-100%\)/, "hidden when collapsed");
+  const bridge = readFileSync(r("src/TerminalV.Mobile/Host/MobileBridge.cs"), "utf8");
+  assert.match(bridge, /Where\(s => liveSet\.Contains/, "filters dead empty sessions");
+  assert.match(bridge, /PaneLayout\.Normalize/, "normalizes layouts");
+  assert.match(bridge, /Ошибка подключения/, "posts data on connect error");
+  assert.match(bridge, /WriteAsync/, "WriteAsync");
+  assert.match(bridge, /ResizeAsync/, "ResizeAsync");
+});

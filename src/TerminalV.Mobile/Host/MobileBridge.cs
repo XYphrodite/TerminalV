@@ -180,11 +180,20 @@ internal sealed class MobileBridge : IDisposable
             var opts = BuildOptions(message.Cols, message.Rows, message.Cwd, message.Shell, message.StartupCommand);
             var session = _ssh.Create(message.Id!, opts);
             HookSession(session);
-            _ = session.ConnectAsync();
+            _ = session.ConnectAsync().ContinueWith(t =>
+            {
+                if (t.IsFaulted && t.Exception != null)
+                {
+                    var msg = t.Exception.GetBaseException().Message;
+                    Post(new { type = "error", id = message.Id, message = msg });
+                    Post(new { type = "data", id = message.Id, data = $"\r\n\x1b[31mОшибка подключения: {msg}\x1b[0m\r\nПроверьте \u2699 Подключение (хост/порт/токен шлюза).\r\n" });
+                }
+            }, TaskContinuationOptions.OnlyOnFaulted);
         }
         catch (Exception ex)
         {
             Post(new { type = "error", id = message.Id, message = ex.Message });
+            Post(new { type = "data", id = message.Id, data = $"\r\n\x1b[31m{ex.Message}\x1b[0m\r\n" });
         }
     }
 

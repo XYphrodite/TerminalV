@@ -21,10 +21,17 @@ internal sealed class MobileDataStore
         try
         {
             var raw = Microsoft.Maui.Storage.Preferences.Default.Get(KeySettings, "");
-            if (string.IsNullOrWhiteSpace(raw)) return new AppSettings();
-            return JsonSerializer.Deserialize<AppSettings>(raw, Json) ?? new AppSettings();
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                // Smaller default for phone (desktop is 14)
+                return new AppSettings { FontSize = 12, Zoom = 0 };
+            }
+            var s = JsonSerializer.Deserialize<AppSettings>(raw, Json) ?? new AppSettings();
+            // Clamp zoom that may have been set for desktop to a phone-friendly range
+            if (s.Zoom < -2) s.Zoom = -2;
+            return s;
         }
-        catch { return new AppSettings(); }
+        catch { return new AppSettings { FontSize = 12 }; }
     }
 
     public void SaveSettings(AppSettings settings)

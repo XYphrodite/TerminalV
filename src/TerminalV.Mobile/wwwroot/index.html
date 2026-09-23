@@ -13,14 +13,27 @@
     <script src="js/mobile-bridge.js"></script>
     <link rel="stylesheet" href="css/app.css" />
     <style>
-        /* Blazor Hybrid host — desktop UI is #app, Blazor overlay is on top */
         html, body { margin:0; padding:0; height:100%; background:#0B0D10; overflow:hidden; }
-        #app { position:relative; z-index:1; }
+        #app { position:relative; z-index:1; display:flex; min-height:100vh; min-height:100dvh; }
+        #app #sidebar { flex-shrink:0; }
+        #app #main { flex:1; min-width:0; }
+        /* Mobile: collapsed = полностью скрыт, свайп от левого края открывает */
+        @media (max-width: 700px) {
+          #app.collapsed #sidebar { position:fixed; inset:0 auto 0 0; width:min(86vw,340px); max-width:86vw; transform:translateX(-100%); transition:transform 0.24s ease; z-index:20; box-shadow: 16px 0 32px rgba(0,0,0,0.5); }
+          #app:not(.collapsed) #sidebar { position:fixed; inset:0 auto 0 0; width:min(86vw,340px); max-width:86vw; z-index:20; box-shadow: 16px 0 32px rgba(0,0,0,0.5); }
+          #app.collapsed::after { content:""; position:fixed; inset:0; background:transparent; pointer-events:none; z-index:19; }
+          #app:not(.collapsed)::after { content:""; position:fixed; inset:0; background:rgba(0,0,0,0.4); z-index:19; }
+          #app.collapsed #main { margin-left:0; }
+          #app:not(.collapsed) #main { margin-left:0; }
+          #sidebar-swipe-handle { display:block; }
+        }
+        @media (min-width: 701px) { #sidebar-swipe-handle { display:none; } }
         #blazor-root { position:fixed; inset:0; z-index:9998; pointer-events:none; }
         #blazor-root > * { pointer-events:auto; }
         #blazor-error-ui { display:none; background:#2a3340; color:#E8EEF5; padding:8px; position:fixed; bottom:0; left:0; right:0; z-index:10000; }
         #blazor-error-ui.show { display:block; }
         #mobile-config-fab { pointer-events:auto; }
+        #sidebar-swipe-handle { position:fixed; left:0; top:0; bottom:0; width:16px; z-index:30; display:none; touch-action:pan-y; }
     </style>
 </head>
 <body>
@@ -154,6 +167,7 @@
       <form><div class="confirmation-content"><h2 id="launch-profiles-title">Создать профиль</h2><fieldset><legend class="sr-only">Параметры запуска</legend><label class="field-label" for="profile-title">Название вкладки</label><input id="profile-title" data-profile-title type="text" maxlength="80" required autocomplete="off" /><div class="profile-columns"><div><label class="field-label" for="profile-shell">Оболочка</label><select id="profile-shell" data-profile-shell></select></div><div><label class="field-label" for="profile-color">Цветовая метка</label><select id="profile-color" data-profile-color><option value="">Без метки</option></select></div></div><label class="field-label" for="profile-cwd">Стартовая папка</label><input id="profile-cwd" data-profile-cwd type="text" maxlength="2048" placeholder="Домашняя папка" autocomplete="off" spellcheck="false" /><label class="field-label" for="profile-command">Стартовая команда (необязательно)</label><textarea id="profile-command" data-profile-command rows="3" maxlength="4096" spellcheck="false" placeholder="Например: muse"></textarea><p class="notification-hint">Команда выполняется при явном запуске или перезапуске сессии, но не при подключении к работающей. Вводите только команды, которым доверяете. Для cmd — одна строка.</p><div class="profile-actions"><button type="submit" class="ghost" data-profile-save>Сохранить</button><button type="submit" class="paste-confirm" data-profile-launch>Создать и запустить</button><button type="button" class="ghost" data-profile-delete>Удалить…</button></div><div class="profile-delete-confirm" data-profile-delete-confirm hidden><p>Удалить профиль «<span data-profile-delete-name></span>»? Работающие сессии не изменятся.</p><button type="button" class="close-confirm" data-profile-confirm-delete>Удалить профиль</button><button type="button" class="ghost" data-profile-keep>Отмена</button></div></fieldset><p class="profile-status" data-profile-error role="status" aria-live="polite"></p><button type="button" class="paste-cancel profile-close" data-profile-cancel>Закрыть без изменений</button></div></form>
     </dialog>
 
+    <div id="sidebar-swipe-handle" aria-hidden="true"></div>
     <!-- Blazor Hybrid host (hidden) — hosts MobileBridge via DotNet interop -->
     <div id="blazor-root"></div>
     <div id="blazor-error-ui"><span>An unhandled error has occurred.</span><a href="" class="reload">Reload</a><a class="dismiss">🗙</a></div>

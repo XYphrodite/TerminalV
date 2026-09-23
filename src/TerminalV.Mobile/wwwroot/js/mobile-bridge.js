@@ -65,6 +65,76 @@
   }
 
   ensureChrome();
+
+  // Mobile collapsed sidebar: completely hidden + swipe from left edge
+  (function setupSwipe() {
+    const EDGE = 24;
+    let startX = 0, startY = 0, tracking = false;
+    const app = () => document.getElementById('app');
+    const handle = () => document.getElementById('sidebar-swipe-handle');
+    function isMobile() { return window.matchMedia('(max-width: 700px)').matches; }
+    function setCollapsed(v) {
+      const a = app(); if (!a) return;
+      a.classList.toggle('collapsed', !!v);
+      try { localStorage.setItem('terminalv.sidebarCollapsed', v ? '1' : '0'); } catch {}
+      // Close overlay when opening sidebar
+      if (!v) { a.addEventListener('click', onOverlayClick, { once: true }); }
+    }
+    function onOverlayClick(e) {
+      const a = app(); if (!a || a.classList.contains('collapsed')) return;
+      // Click on dimmed overlay (pseudo ::after) is not directly targetable, so detect click on #main when sidebar open
+      const sidebar = document.getElementById('sidebar');
+      if (sidebar && !sidebar.contains(e.target) && !e.target.closest('#sidebar')) setCollapsed(true);
+    }
+    document.addEventListener('click', (e) => {
+      if (!isMobile()) return;
+      const a = app(); if (!a || a.classList.contains('collapsed')) return;
+      if (e.target.closest('#collapse-btn')) { setCollapsed(true); }
+    });
+    // Also hook collapse button to use our drawer logic on mobile
+    document.addEventListener('DOMContentLoaded', () => {
+      const btn = document.getElementById('collapse-btn');
+      if (btn) btn.addEventListener('click', (e) => {
+        if (!isMobile()) return;
+        e.preventDefault(); e.stopPropagation();
+        const a = app(); setCollapsed(!a.classList.contains('collapsed'));
+      });
+    });
+    window.addEventListener('touchstart', (e) => {
+      if (!isMobile()) return;
+      const t = e.touches[0]; if (!t) return;
+      const a = app(); const h = handle();
+      const collapsed = a && a.classList.contains('collapsed');
+      // Start tracking only from left edge when collapsed, or anywhere on sidebar/main when open
+      if (collapsed) {
+        if (t.clientX > EDGE) return;
+      } else {
+        // When open, allow swipe to close from anywhere on sidebar
+        const sb = document.getElementById('sidebar');
+        if (!sb || (!sb.contains(e.target) && t.clientX > sb.getBoundingClientRect().right + 20)) return;
+      }
+      startX = t.clientX; startY = t.clientY; tracking = true;
+    }, { passive: true });
+    window.addEventListener('touchmove', (e) => {
+      if (!tracking || !isMobile()) return;
+      const t = e.touches[0]; if (!t) return;
+      const dx = t.clientX - startX; const dy = Math.abs(t.clientY - startY);
+      if (dy > 40 && Math.abs(dx) < 20) { tracking = false; return; }
+    }, { passive: true });
+    window.addEventListener('touchend', (e) => {
+      if (!tracking || !isMobile()) { tracking = false; return; }
+      const t = e.changedTouches[0]; if (!t) { tracking = false; return; }
+      const dx = t.clientX - startX;
+      const a = app();
+      if (a && a.classList.contains('collapsed') && dx > 60) setCollapsed(false);
+      else if (a && !a.classList.contains('collapsed') && dx < -60) setCollapsed(true);
+      tracking = false;
+    }, { passive: true });
+    // Expose for manual toggle
+    window.__terminalvToggleSidebar = () => { const a = app(); if (a) setCollapsed(!a.classList.contains('collapsed')); };
+  })();
+
+  ensureChrome();
   // Expose helper for C# to set DotNet ref if needed
   window.__mobileBridgeReady = true;
 })();

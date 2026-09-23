@@ -25,6 +25,13 @@ public class MainActivity : MauiAppCompatActivity
         if (Build.VERSION.SdkInt >= BuildVersionCodes.R)
         {
             Window?.SetDecorFitsSystemWindows(false);
+            if (Window != null)
+            {
+                Window.Attributes!.LayoutInDisplayCutoutMode = LayoutInDisplayCutoutMode.ShortEdges;
+                Window.SetStatusBarColor(Android.Graphics.Color.Transparent);
+                Window.SetNavigationBarColor(Android.Graphics.Color.Transparent);
+                Window.SetNavigationBarDividerColor(Android.Graphics.Color.Transparent);
+            }
             var controller = Window?.InsetsController;
             if (controller != null)
             {
