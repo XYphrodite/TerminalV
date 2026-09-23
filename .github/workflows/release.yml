@@ -28,7 +28,13 @@ jobs:
         with:
           repository: XYphrodite/self-update-kit
           ref: v0.3.0
-          path: ../self-update-kit
+          path: kit-tmp
+
+      - name: Move self-update-kit next to the repo
+        shell: pwsh
+        run: |
+          if (Test-Path ../self-update-kit) { Remove-Item -Recurse -Force ../self-update-kit }
+          Move-Item -Path kit-tmp -Destination ../self-update-kit
 
       - uses: actions/setup-dotnet@v4
         with:
