@@ -28,7 +28,7 @@ jobs:
         with:
           repository: XYphrodite/self-update-kit
           ref: v0.3.0
-          path: self-update-kit
+          path: ../self-update-kit
 
       - uses: actions/setup-dotnet@v4
         with:
