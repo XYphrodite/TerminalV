@@ -3,11 +3,13 @@ package tsnet
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"net/netip"
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"tailscale.com/tsnet"
 )
@@ -122,31 +124,43 @@ func (t *Tsnet) Dial(host string, port int) (net.Conn, error) {
 	return conn, nil
 }
 
-// DialConn возвращает fd для Java (Socket). gomobile не умеет net.Conn напрямую — оборачиваем в TCPConn.
-// Для Android биндинга используем DialFD.
-func (t *Tsnet) DialFD(host string, port int) (int, error) {
-	conn, err := t.Dial(host, port)
+// DialLoopback dials host:port over the tailnet and bridges it to a localhost
+// TCP listener, returning its "127.0.0.1:port" address. The caller connects
+// there with a plain socket. A loopback bridge is required because tsnet
+// connections live in userspace: there is no OS fd to pass.
+func (t *Tsnet) DialLoopback(host string, port int) (string, error) {
+	up, err := t.Dial(host, port)
 	if err != nil {
-		return -1, err
+		return "", err
 	}
-	// Извлекаем fd через syscall (только для TCP)
-	if tc, ok := conn.(*net.TCPConn); ok {
-		f, err := tc.File()
-		if err != nil {
-			conn.Close()
-			return -1, err
-		}
-		fd := int(f.Fd())
-		// Дублируем fd чтобы не закрыть при Close(f)
-		dup, err := net.FileConn(f)
-		if err != nil {
-			f.Close()
-			return fd, nil
-		}
-		_ = dup
-		f.Close()
-		return fd, nil
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		up.Close()
+		return "", fmt.Errorf("loopback listen: %w", err)
 	}
-	// fallback: вернуть -1 и пусть Java использует DialStream
-	return -1, fmt.Errorf("DialFD only for TCPConn, use DialStream")
+	tcpLn, ok := ln.(*net.TCPListener)
+	if !ok {
+		ln.Close()
+		up.Close()
+		return "", fmt.Errorf("loopback listen: not a TCP listener")
+	}
+	_ = tcpLn.SetDeadline(time.Now().Add(30 * time.Second))
+	go func() {
+		defer tcpLn.Close()
+		down, err := tcpLn.Accept()
+		if err != nil {
+			up.Close()
+			return
+		}
+		_ = tcpLn.Close()
+		go func() {
+			_, _ = io.Copy(up, down)
+			up.Close()
+			down.Close()
+		}()
+		_, _ = io.Copy(down, up)
+		up.Close()
+		down.Close()
+	}()
+	return ln.Addr().String(), nil
 }

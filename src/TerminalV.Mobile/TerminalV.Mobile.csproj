@@ -51,6 +51,7 @@
   </ItemGroup>
 
   <ItemGroup>
+        <ProguardConfiguration Include="Platforms\Android\proguard.cfg" />
     <TrimmerRootAssembly Include="Renci.SshNet">
       <RootMode>All</RootMode>
     </TrimmerRootAssembly>

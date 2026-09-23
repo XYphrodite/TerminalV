@@ -1,4 +1,4 @@
-﻿# Собирает Go AAR (Android) для вшитого tsnet - userspace Tailscale без системного VPN.
+# Собирает Go AAR (Android) для вшитого tsnet - userspace Tailscale без системного VPN.
 # Запускать на xeon (Windows) где есть Go + gomobile + Android SDK. На gamer без Go - собирается stub.
 # Результат: tools/tsnet-bridge/tsnet.aar -> копируется в src/TerminalV.Mobile/Platforms/Android/libs/
 param(
@@ -51,7 +51,9 @@ Set-Location $PSScriptRoot
     Write-Host "==> gomobile bind -target android -androidapi 21 -ldflags=-checklinkname=0 -o $OutputAAR org.terminalv.tsnet"
     # gomobile bind собирает AAR с Java классом org.terminalv.tsnet.Tsnet
     # anet (Android net.Interfaces fix) requires -checklinkname=0 on Go 1.23+
+    if (Test-Path $OutputAAR) { Remove-Item $OutputAAR -Force }
     gomobile bind -target android -androidapi 21 -ldflags="-checklinkname=0" -o $OutputAAR ./...
+    if ($LASTEXITCODE -ne 0) { throw "gomobile bind failed" }
 
     if (-not (Test-Path $OutputAAR)) { throw "AAR не создан: $OutputAAR" }
     $size = (Get-Item $OutputAAR).Length
