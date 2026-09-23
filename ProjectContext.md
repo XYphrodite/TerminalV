@@ -306,8 +306,10 @@ TUI v0.6.7: рваный верх `muse` после ресайза — `applyFit
 
 Вставка v0.6.15: тексты длиннее 4000 символов сохраняются хостом в `%TEMP%\TerminalV\pastes\`, в терминал вставляется путь (`paste-file-store`/`paste-file-stored`, фолбэк на текст при ошибке/таймауте, чистка в `Closed`). Подробности — `docs/releases/v0.6.15.md`.
 
+Сайдбар v0.6.16: в свёрнутом режиме `.tab-options` скрыт всегда (`display:none !important`, без re-show на hover/active/focus). Подробности — `docs/releases/v0.6.16.md`.
+
 **Last Updated**: 2026-09-23
-**Version**: 0.6.15
+**Version**: 0.6.16
 **Status**: Active  
 **Repository**: `https://github.com/XYphrodite/TerminalV`  
 **Workspace**: `C:\Repos\TerminalV`

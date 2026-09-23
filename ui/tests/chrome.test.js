@@ -13,7 +13,8 @@ test("session options button is always visible in expanded sidebar", () => {
   assert.match(css, /\.tab-close,\s*\.tab-options\s*\{[^}]*border:\s*1px solid var\(--border-soft\)/, "tab-options should have border");
 });
 
-test("collapsed sidebar shows options on hover", () => {
-  assert.match(css, /#app\.collapsed\s*\.tab:hover\s*\.tab-options/, "collapsed hover should show tab-options");
+test("collapsed sidebar never shows session options", () => {
+  assert.match(css, /#app\.collapsed\s*\.tab\s*\.tab-options\s*\{[^}]*display:\s*none/, "collapsed should hide tab-options");
+  assert.doesNotMatch(css, /#app\.collapsed[^{]*\.tab-options\s*\{[^}]*display:\s*grid/, "collapsed must not re-show tab-options");
   assert.match(css, /#app\.collapsed\s*\.tab\.split-child/, "collapsed split-child should be handled");
 });

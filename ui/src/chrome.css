@@ -131,11 +131,8 @@ kbd { font: 10px var(--font-ui); letter-spacing: .02em; white-space: nowrap; }
 #app.collapsed .tabs { padding: 5px 6px; gap: 5px; scrollbar-gutter: auto; }
 #app.collapsed .tab { grid-template-columns: minmax(0, 1fr); min-height: 40px; padding: 4px; justify-items: center; position: relative; }
 #app.collapsed .tab-accent { top: 9px; height: 20px; }
-#app.collapsed .tab .tab-options { display: none; position: absolute; right: 3px; top: 50%; transform: translateY(-50%); z-index: 2; }
+#app.collapsed .tab .tab-options { display: none !important; }
 #app.collapsed .tab .tab-close { display: none !important; }
-#app.collapsed .tab:hover .tab-options,
-#app.collapsed .tab.active .tab-options,
-#app.collapsed .tab:focus-within .tab-options { display: grid; opacity: 1; }
 #app.collapsed .sidebar-foot { padding: 10px; }
 #app.collapsed #new-tab, #app.collapsed #launch-profiles-btn { width: 36px; height: 36px; padding: 0; justify-content: center; margin-left: auto; margin-right: auto; }
 
