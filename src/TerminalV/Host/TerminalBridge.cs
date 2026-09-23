@@ -9,6 +9,7 @@ using System.Windows.Media;
 using System.Windows.Threading;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Win32;
+using SelfUpdateKit;
 using TerminalV.Data;
 using TerminalV.Diagnostics;
 using TerminalV.Pty;
@@ -350,8 +351,9 @@ internal sealed class TerminalBridge : IDisposable
 
         try
         {
-            using var source = new GitHubReleaseSource();
-            var service = new SelfUpdateService(Environment.ProcessPath!, AppVersion.Current, source);
+            var options = TerminalVUpdate.Options(TerminalVUpdate.InstalledVariant(Environment.ProcessPath));
+            using var source = new GitHubReleaseSource(options);
+            var service = new SelfUpdateService(Environment.ProcessPath!, AppVersion.Current, source, options);
             var report = await service.CheckAsync(_updateCts.Token).ConfigureAwait(false);
             if (report.Status == SelfUpdateStatus.AlreadyCurrent)
             {
@@ -399,9 +401,10 @@ internal sealed class TerminalBridge : IDisposable
         Post(new { type = "update", status = "downloading", current = AppVersion.Informational });
         try
         {
-            using var source = new GitHubReleaseSource();
-            var service = new SelfUpdateService(Environment.ProcessPath!, AppVersion.Current, source);
-            var report = await service.ApplyAsync(_updateCts.Token).ConfigureAwait(false);
+            var options = TerminalVUpdate.Options(TerminalVUpdate.InstalledVariant(Environment.ProcessPath));
+            using var source = new GitHubReleaseSource(options);
+            var service = new SelfUpdateService(Environment.ProcessPath!, AppVersion.Current, source, options);
+            var report = await service.UpdateAsync(new SelfUpdateRequest(), _updateCts.Token).ConfigureAwait(false);
             if (report.Status == SelfUpdateStatus.AlreadyCurrent)
             {
                 PostUpdate("current", report);

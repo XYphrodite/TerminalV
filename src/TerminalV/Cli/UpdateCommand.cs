@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
+using SelfUpdateKit;
 using TerminalV.Update;
 
 namespace TerminalV.Cli;
@@ -39,8 +40,9 @@ internal static class UpdateCommand
 
         try
         {
-            using var source = new GitHubReleaseSource();
-            var service = new SelfUpdateService(Environment.ProcessPath!, AppVersion.Current, source);
+            var options = TerminalVUpdate.Options(TerminalVUpdate.InstalledVariant(Environment.ProcessPath));
+            using var source = new GitHubReleaseSource(options);
+            var service = new SelfUpdateService(Environment.ProcessPath!, AppVersion.Current, source, options);
             if (checkOnly)
             {
                 var report = service.CheckAsync(CancellationToken.None).GetAwaiter().GetResult();
@@ -62,8 +64,15 @@ internal static class UpdateCommand
             var lastPaint = Stopwatch.StartNew();
             var started = Stopwatch.StartNew();
             var painted = false;
-            var applied = service.ApplyAsync(CancellationToken.None, (received, total) =>
+            var applied = service.UpdateAsync(new SelfUpdateRequest(), CancellationToken.None, progress =>
             {
+                if (progress.Phase != SelfUpdatePhase.Downloading)
+                {
+                    return;
+                }
+
+                var received = progress.ReceivedBytes ?? 0;
+                var total = progress.TotalBytes;
                 if (lastPaint.ElapsedMilliseconds < 150 && total is long size && received < size)
                 {
                     return;
@@ -93,7 +102,7 @@ internal static class UpdateCommand
             var guiOpen = OtherTerminalVRunning();
             if (!guiOpen)
             {
-                PendingUpdateApplier.Apply(exe);
+                PendingUpdateApplier.Apply(exe, options);
             }
 
             CliConsole.WriteLine($"Installed {applied.Tag}.");

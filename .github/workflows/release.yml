@@ -24,6 +24,12 @@ jobs:
         with:
           ref: ${{ github.event.inputs.tag || github.ref_name }}
 
+      - uses: actions/checkout@v4
+        with:
+          repository: XYphrodite/self-update-kit
+          ref: v0.3.0
+          path: self-update-kit
+
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
@@ -51,4 +57,6 @@ jobs:
           $notes = "docs/releases/$env:TAG.md"
           gh release create $env:TAG --title "TerminalV $env:TAG" --notes-file $notes `
             "artifacts/release-$env:TAG/TerminalV-win-x64.zip" `
-            "artifacts/release-$env:TAG/TerminalV-win-x64.zip.sha256"
+            "artifacts/release-$env:TAG/TerminalV-win-x64.zip.sha256" `
+            "artifacts/release-$env:TAG/TerminalV-win-x64-light.zip" `
+            "artifacts/release-$env:TAG/TerminalV-win-x64-light.zip.sha256"

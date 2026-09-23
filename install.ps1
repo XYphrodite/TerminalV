@@ -7,6 +7,11 @@
     URLs, not the REST API), verifies the SHA-256 asset, extracts it and adds
     the install directory to the user PATH.
 
+    When the .NET desktop runtime is installed, the smaller framework-dependent
+    TerminalV-win-x64-light.zip is used instead; -Variant overrides the choice.
+    The chosen variant is recorded next to the executable so `TerminalV update`
+    keeps installing the same kind of build.
+
     This file is intentionally ASCII-only: Windows PowerShell 5.1 reads a BOM-less
     script as ANSI, while `irm | iex` chokes on a leading BOM. ASCII keeps both
     paths working.
@@ -19,6 +24,14 @@
 
 .EXAMPLE
     & ([scriptblock]::Create((irm https://raw.githubusercontent.com/XYphrodite/TerminalV/main/install.ps1))) -DesktopShortcut
+
+.EXAMPLE
+    & ([scriptblock]::Create((irm https://raw.githubusercontent.com/XYphrodite/TerminalV/main/install.ps1))) -Variant full
+
+.PARAMETER Variant
+    auto (default) picks the light package when the .NET desktop runtime is
+    installed, full always installs the self-contained package, light always
+    installs the framework-dependent package (and fails fast without the runtime).
 
 .PARAMETER DesktopShortcut
     Also create a shortcut on the current user's desktop. Off by default.
@@ -33,6 +46,9 @@ param(
 
     [string] $Version = 'latest',
 
+    [ValidateSet('auto', 'full', 'light')]
+    [string] $Variant = 'auto',
+
     [switch] $NoPath,
 
     [switch] $NoShortcut,
@@ -43,6 +59,11 @@ param(
 $ErrorActionPreference = 'Stop'
 $Repository = 'XYphrodite/TerminalV'
 $AssetName = 'TerminalV-win-x64.zip'
+$LightAssetName = 'TerminalV-win-x64-light.zip'
+$VariantMarker = '.terminalv-variant'
+# Major of the .NET desktop runtime the light package targets. Bump together
+# with the app's target framework; must match TerminalVUpdate in the source.
+$DesktopMajor = '10'
 $UserAgent = @{ 'User-Agent' = 'terminalv-installer' }
 
 $previousProgress = $ProgressPreference
@@ -160,6 +181,35 @@ function Get-ResponseUri {
     return $null
 }
 
+function Test-DesktopRuntimeLine {
+    param([string] $Line, [string] $Major = $DesktopMajor)
+    return [bool]($Line -match "^Microsoft\.WindowsDesktop\.App\s+$Major\.")
+}
+
+function Test-WindowsDesktopRuntime {
+    try {
+        $runtimes = & dotnet --list-runtimes 2>$null
+    } catch {
+        return $false
+    }
+    foreach ($line in @($runtimes)) {
+        if (Test-DesktopRuntimeLine -Line ([string]$line)) { return $true }
+    }
+    return $false
+}
+
+function Select-TerminalVAsset {
+    param(
+        [ValidateSet('auto', 'full', 'light')]
+        [string] $Variant = 'auto',
+        [bool] $HasRuntime = $false
+    )
+    if ($Variant -eq 'light') { return $LightAssetName }
+    if ($Variant -eq 'full') { return $AssetName }
+    if ($HasRuntime) { return $LightAssetName }
+    return $AssetName
+}
+
 function Get-ReleaseTag {
     param([string] $Requested)
 
@@ -240,6 +290,12 @@ function Save-ReleaseAsset {
 
 try {
     $tag = Get-ReleaseTag -Requested $Version
+    $hasRuntime = Test-WindowsDesktopRuntime
+    if ($Variant -eq 'light' -and -not $hasRuntime) {
+        throw 'The light package needs the .NET desktop runtime, which was not found. Install the runtime or use -Variant full.'
+    }
+    $AssetName = Select-TerminalVAsset -Variant $Variant -HasRuntime $hasRuntime
+    $variantName = if ($AssetName -eq $LightAssetName) { 'light' } else { 'full' }
     if ($tag -eq 'latest') {
         $zipUrl = "https://github.com/$Repository/releases/latest/download/$AssetName"
         $shaUrl = "https://github.com/$Repository/releases/latest/download/$AssetName.sha256"
@@ -294,6 +350,8 @@ try {
     Write-Step "installing to $InstallDir"
     Expand-Archive -LiteralPath $tempZip -DestinationPath $InstallDir -Force
     Remove-Item $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+    # Records which kind of build this is, so `TerminalV update` keeps the variant.
+    [IO.File]::WriteAllText((Join-Path $InstallDir $VariantMarker), $variantName)
 
     $exe = Join-Path $InstallDir 'TerminalV.exe'
     if (-not (Test-Path -LiteralPath $exe)) {
@@ -324,7 +382,7 @@ try {
     Install-TerminalVShortcuts -Executable $exe -NoShortcut:$NoShortcut -DesktopShortcut:$DesktopShortcut
 
     Write-Host ''
-    Write-Host "TerminalV $tag installed: $exe" -ForegroundColor Green
+    Write-Host "TerminalV $tag ($variantName) installed: $exe" -ForegroundColor Green
     Write-Host ''
     Write-Host 'Launch:' -ForegroundColor White
     Write-Host '  TerminalV' -ForegroundColor Cyan

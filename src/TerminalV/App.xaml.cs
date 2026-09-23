@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Text;
 using System.Windows;
+using SelfUpdateKit;
 using TerminalV.Cli;
 using TerminalV.Pty;
 using TerminalV.Update;
@@ -12,7 +13,8 @@ public partial class App : Application
 {
     protected override void OnStartup(StartupEventArgs e)
     {
-        PendingUpdateApplier.Apply(Environment.ProcessPath);
+        PendingUpdateApplier.Apply(Environment.ProcessPath,
+            TerminalVUpdate.Options(TerminalVUpdate.InstalledVariant(Environment.ProcessPath)));
         base.OnStartup(e);
         new MainWindow().Show();
     }
