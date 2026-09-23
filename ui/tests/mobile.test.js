@@ -148,3 +148,23 @@ test("Mobile fixes: scale default, black bar, collapsed swipe, sync empty, write
   assert.match(bridge, /WriteAsync/, "WriteAsync");
   assert.match(bridge, /ResizeAsync/, "ResizeAsync");
 });
+
+test("Export/import JSON replaces all via Share", () => {
+  const html2 = readFileSync(r("src/TerminalV.Mobile/wwwroot/index.html"), "utf8");
+  assert.match(html2, /id="export-json"/, "export button");
+  assert.match(html2, /id="import-json"/, "import button");
+  assert.match(html2, /id="export-status"/, "export status");
+  const bridge2 = readFileSync(r("src/TerminalV.Mobile/Host/MobileBridge.cs"), "utf8");
+  assert.match(bridge2, /HandleExportAsync/, "export handler");
+  assert.match(bridge2, /HandleImportAsync/, "import handler");
+  assert.match(bridge2, /ExportDto/, "ExportDto");
+  assert.match(bridge2, /ExportConnection/, "ExportConnection");
+  assert.match(bridge2, /Version = 1/, "version 1");
+  assert.match(bridge2, /Share\.Default\.RequestAsync/, "Share sheet");
+  assert.match(bridge2, /FilePicker\.Default\.PickAsync/, "FilePicker import");
+  assert.match(bridge2, /case "export"/, "export case");
+  assert.match(bridge2, /case "import"/, "import case");
+  const shim = readFileSync(r("src/TerminalV.Mobile/wwwroot/js/mobile-bridge.js"), "utf8");
+  assert.match(shim, /export-json/, "shim export");
+  assert.match(shim, /import-json/, "shim import");
+});

@@ -155,6 +155,12 @@ internal sealed class MobileBridge : IDisposable
             case "pick-background":
                 _ = PickBackgroundAsync();
                 break;
+            case "export":
+                _ = HandleExportAsync(message.RequestId);
+                break;
+            case "import":
+                _ = HandleImportAsync(message.RequestId);
+                break;
             case "update-check":
             case "update-apply":
                 Post(new { type = "update", status = "unsupported", message = "Обновление на мобильном через магазин." });
@@ -342,6 +348,107 @@ internal sealed class MobileBridge : IDisposable
         catch { }
     }
 
+    private async Task HandleExportAsync(string? requestId)
+    {
+        try
+        {
+            var dto = new ExportDto
+            {
+                Version = 1,
+                ExportedAt = DateTime.UtcNow,
+                AppSettings = _store.LoadSettings(),
+                Sessions = _store.LoadSessions(),
+                Layouts = _store.LoadLayouts(),
+                Profiles = _store.LoadProfiles(),
+                Connection = new ExportConnection
+                {
+                    Host = Microsoft.Maui.Storage.Preferences.Default.Get("host", "100.119.48.15"),
+                    Port = Microsoft.Maui.Storage.Preferences.Default.Get("port", 22),
+                    Username = Microsoft.Maui.Storage.Preferences.Default.Get("username", "local"),
+                    Password = Microsoft.Maui.Storage.Preferences.Default.Get("password", "5454"),
+                    UseGateway = Microsoft.Maui.Storage.Preferences.Default.Get("useGateway", false),
+                    GatewayUrl = Microsoft.Maui.Storage.Preferences.Default.Get("gatewayUrl", "ws://100.119.48.15:5454"),
+                    GatewayToken = Microsoft.Maui.Storage.Preferences.Default.Get("gatewayToken", ""),
+                    UseTailscale = Microsoft.Maui.Storage.Preferences.Default.Get("useTailscale", false),
+                    TailscaleAuthKey = Microsoft.Maui.Storage.Preferences.Default.Get("tailscaleAuthKey", ""),
+                    TailscaleHostname = Microsoft.Maui.Storage.Preferences.Default.Get("tailscaleHostname", "terminalv-mobile")
+                }
+            };
+            var json = JsonSerializer.Serialize(dto, new JsonSerializerOptions { WriteIndented = true, PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+            var fileName = $"terminalv-export-{DateTime.Now:yyyyMMdd-HHmmss}.json";
+            var filePath = Path.Combine(FileSystem.CacheDirectory, fileName);
+            await File.WriteAllTextAsync(filePath, json);
+            // Share via system share sheet (Save to Downloads / Drive / Telegram)
+            try
+            {
+                await Microsoft.Maui.ApplicationModel.Share.Default.RequestAsync(new Microsoft.Maui.ApplicationModel.ShareFileRequest
+                {
+                    Title = "Экспорт TerminalV",
+                    File = new Microsoft.Maui.ApplicationModel.ShareFile(filePath)
+                });
+            }
+            catch { }
+            Post(new { type = "exported", requestId, path = filePath, message = "Экспорт готов — выбери куда сохранить." });
+        }
+        catch (Exception ex)
+        {
+            Post(new { type = "exported", requestId, error = ex.Message });
+        }
+    }
+
+    private async Task HandleImportAsync(string? requestId)
+    {
+        try
+        {
+            var result = await Microsoft.Maui.Storage.FilePicker.Default.PickAsync(new Microsoft.Maui.Storage.PickOptions
+            {
+                PickerTitle = "Выбери JSON для импорта",
+                FileTypes = new FilePickerFileType(new Dictionary<DevicePlatform, IEnumerable<string>> { [DevicePlatform.Android] = new[] { "application/json", "text/json" }, [DevicePlatform.iOS] = new[] { "public.json" }, [DevicePlatform.WinUI] = new[] { ".json" } })
+            });
+            if (result == null)
+            {
+                Post(new { type = "imported", requestId, error = "Отменено." });
+                return;
+            }
+            string json;
+            using (var stream = await result.OpenReadAsync())
+            using (var reader = new StreamReader(stream))
+                json = await reader.ReadToEndAsync();
+
+            var dto = JsonSerializer.Deserialize<ExportDto>(json, JsonOptions);
+            if (dto == null) throw new InvalidDataException("Пустой файл.");
+            if (dto.Version != 1) throw new InvalidDataException($"Неподдерживаемая версия {dto.Version}.");
+
+            // Replace all (recommended)
+            if (dto.AppSettings != null) _store.SaveSettings(dto.AppSettings);
+            if (dto.Sessions != null) _store.SaveSessions(dto.Sessions);
+            if (dto.Layouts != null) _store.SaveLayouts(dto.Layouts);
+            if (dto.Profiles != null) _store.SaveProfiles(dto.Profiles);
+            if (dto.Connection != null)
+            {
+                var c = dto.Connection;
+                Microsoft.Maui.Storage.Preferences.Default.Set("host", c.Host ?? "100.119.48.15");
+                Microsoft.Maui.Storage.Preferences.Default.Set("port", c.Port);
+                Microsoft.Maui.Storage.Preferences.Default.Set("username", c.Username ?? "local");
+                Microsoft.Maui.Storage.Preferences.Default.Set("password", c.Password ?? "");
+                Microsoft.Maui.Storage.Preferences.Default.Set("useGateway", c.UseGateway);
+                Microsoft.Maui.Storage.Preferences.Default.Set("gatewayUrl", c.GatewayUrl ?? "ws://100.119.48.15:5454");
+                Microsoft.Maui.Storage.Preferences.Default.Set("gatewayToken", c.GatewayToken ?? "");
+                Microsoft.Maui.Storage.Preferences.Default.Set("useTailscale", c.UseTailscale);
+                Microsoft.Maui.Storage.Preferences.Default.Set("tailscaleAuthKey", c.TailscaleAuthKey ?? "");
+                Microsoft.Maui.Storage.Preferences.Default.Set("tailscaleHostname", c.TailscaleHostname ?? "terminalv-mobile");
+            }
+
+            Post(new { type = "imported", requestId, message = "Импорт выполнен — перезагрузка." });
+            // Push new init so UI refreshes without restart
+            SendInit();
+        }
+        catch (Exception ex)
+        {
+            Post(new { type = "imported", requestId, error = ex.Message });
+        }
+    }
+
     private SshConnectionOptions BuildOptions(int cols, int rows, string? cwd, string? shell, string? startupCommand)
     {
         // Read connection prefs (same keys as Home.razor Preferences)
@@ -444,6 +551,31 @@ internal static class MobileJsInterop
         Bridge?.Handle(json);
         return Task.CompletedTask;
     }
+}
+
+internal sealed class ExportDto
+{
+    public int Version { get; set; }
+    public DateTime ExportedAt { get; set; }
+    public AppSettings? AppSettings { get; set; }
+    public List<SessionRecord>? Sessions { get; set; }
+    public List<PaneLayout>? Layouts { get; set; }
+    public List<LaunchProfile>? Profiles { get; set; }
+    public ExportConnection? Connection { get; set; }
+}
+
+internal sealed class ExportConnection
+{
+    public string? Host { get; set; }
+    public int Port { get; set; }
+    public string? Username { get; set; }
+    public string? Password { get; set; }
+    public bool UseGateway { get; set; }
+    public string? GatewayUrl { get; set; }
+    public string? GatewayToken { get; set; }
+    public bool UseTailscale { get; set; }
+    public string? TailscaleAuthKey { get; set; }
+    public string? TailscaleHostname { get; set; }
 }
 
 internal static class AppInfo

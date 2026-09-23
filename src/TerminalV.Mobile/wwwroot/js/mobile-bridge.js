@@ -64,6 +64,48 @@
     }
   }
 
+  // Export/import wiring for settings backup (JSON, Share)
+  (function setupExportImport() {
+    function post(type) {
+      const wv = window.chrome && window.chrome.webview;
+      if (wv && wv.postMessage) wv.postMessage({ type, requestId: Math.random().toString(36).slice(2) });
+      else if (window.DotNet) window.DotNet.invokeMethodAsync("TerminalV.Mobile", "HandleMessage", JSON.stringify({ type, requestId: Math.random().toString(36).slice(2) }));
+    }
+    function bind() {
+      const exp = document.getElementById('export-json');
+      const imp = document.getElementById('import-json');
+      const status = document.getElementById('export-status');
+      if (exp && !exp.dataset.bound) {
+        exp.dataset.bound = "1";
+        exp.addEventListener('click', () => {
+          if (status) status.textContent = "Экспорт…";
+          post("export");
+        });
+      }
+      if (imp && !imp.dataset.bound) {
+        imp.dataset.bound = "1";
+        imp.addEventListener('click', () => {
+          if (status) status.textContent = "Выбери файл…";
+          post("import");
+        });
+      }
+      // Listen for host replies to update status
+      const wv = window.chrome && window.chrome.webview;
+      if (wv && !wv._exportImportHooked) {
+        wv._exportImportHooked = true;
+        wv.addEventListener("message", (e) => {
+          const m = e.data;
+          if (!m || (m.type !== "exported" && m.type !== "imported")) return;
+          if (status) status.textContent = m.error ? ("Ошибка: " + m.error) : (m.message || "Готово");
+        });
+      }
+    }
+    if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", bind);
+    else bind();
+    // Re-bind when settings dialog opens
+    new MutationObserver(bind).observe(document.documentElement, { childList: true, subtree: true });
+  })();
+
   ensureChrome();
 
   // Mobile collapsed sidebar: completely hidden + swipe from left edge

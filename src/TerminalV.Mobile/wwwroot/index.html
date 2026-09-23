@@ -131,6 +131,10 @@
         <input id="bg-opacity" type="range" min="0" max="80" step="1" value="25" />
         <div class="settings-section-label">Рендеринг</div>
         <label class="shortcut-option"><input id="hardware-rendering" type="checkbox" checked /> Аппаратный рендеринг (WebGL)</label>
+        <div class="settings-section-label">Резервная копия</div>
+        <div class="bg-row"><button id="export-json" type="button"><span data-icon="download"></span>Экспорт в JSON</button><button id="import-json" type="button" class="ghost">Импорт из JSON</button></div>
+        <p id="export-status" class="shortcut-status" role="status" aria-live="polite"></p>
+        <p class="shortcut-hint">Сохрани сессии, профили и подключение в файл — восстанови после удаления приложения.</p>
         <div class="settings-section-label">Удалённый доступ (TerminalV Mobile)</div>
         <label class="shortcut-option"><input id="gateway-enabled" type="checkbox" checked /> Шлюз зеркала сессий (ws://:5454)</label>
         <label class="field-label" for="gateway-port">Порт шлюза</label>
