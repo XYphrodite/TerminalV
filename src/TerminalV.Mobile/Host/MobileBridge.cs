@@ -43,11 +43,22 @@ internal sealed class MobileBridge : IDisposable
     public void SendInit()
     {
         var settings = _store.LoadSettings();
-        // Ensure gateway token exists like desktop
         if (settings.GatewayEnabled && string.IsNullOrEmpty(settings.GatewayToken))
         {
             settings.GatewayToken = GenerateToken();
             _store.SaveSettings(settings);
+        }
+        var allSessions = _store.LoadSessions();
+        var live = LiveIds();
+        var liveSet = new HashSet<string>(live);
+        // No live connection -> don't resurrect dead phantom sessions with empty buffer (empty black pane).
+        // Keep only live sessions or those with a buffer to restore; empty dead sessions produce "no connection" empty state.
+        var sessions = allSessions.Where(s => liveSet.Contains(s.Id) || !string.IsNullOrEmpty(s.Buffer)).ToList();
+        var layouts = _store.LoadLayouts();
+        // If sessions were filtered, also normalize layouts to avoid dangling pane refs
+        if (sessions.Count != allSessions.Count)
+        {
+            layouts = PaneLayout.Normalize(layouts, sessions);
         }
         Post(new
         {
@@ -58,10 +69,10 @@ internal sealed class MobileBridge : IDisposable
             updateSupported = false,
             shortcutsSupported = false,
             settings,
-            sessions = _store.LoadSessions(),
-            layouts = _store.LoadLayouts(),
+            sessions,
+            layouts,
             profiles = _store.LoadProfiles(),
-            liveIds = LiveIds(),
+            liveIds = live,
             cwdTrackingSupported = true,
             launchProfilesSupported = true,
             environmentRefreshSupported = true,

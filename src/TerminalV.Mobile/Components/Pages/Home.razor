@@ -88,11 +88,14 @@
             useTailscale = Microsoft.Maui.Storage.Preferences.Default.Get(nameof(useTailscale), useTailscale);
             tailscaleAuthKey = Microsoft.Maui.Storage.Preferences.Default.Get(nameof(tailscaleAuthKey), tailscaleAuthKey);
             tailscaleHostname = Microsoft.Maui.Storage.Preferences.Default.Get(nameof(tailscaleHostname), tailscaleHostname);
-            // Show config on first launch if host is default and no sessions exist
-            if (string.IsNullOrWhiteSpace(host) || host == "100.119.48.15" && Store.LoadSessions().Count == 0)
+            // First launch with no sessions -> show config, otherwise show desktop UI (FAB to re-open)
+            if (Store.LoadSessions().Count == 0)
             {
-                // keep hidden by default to show desktop UI; user can open via FAB
-                showConfig = false;
+                showConfig = true;
+            }
+            else if (string.IsNullOrWhiteSpace(host))
+            {
+                showConfig = true;
             }
         }
         catch { }
