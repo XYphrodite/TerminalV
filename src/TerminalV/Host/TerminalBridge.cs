@@ -9,6 +9,7 @@ using System.Windows.Media;
 using System.Windows.Threading;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Win32;
+using SelfUpdateKit;
 using TerminalV.Data;
 using TerminalV.Diagnostics;
 using TerminalV.Pty;
@@ -177,6 +178,9 @@ internal sealed class TerminalBridge : IDisposable
                 break;
             case "clipboard-read":
                 PostClipboard(message.RequestId);
+                break;
+            case "paste-file-store":
+                StorePasteFile(message.RequestId, message.Data);
                 break;
             case "clipboard-write":
                 if (!string.IsNullOrEmpty(message.Data))
@@ -347,8 +351,9 @@ internal sealed class TerminalBridge : IDisposable
 
         try
         {
-            using var source = new GitHubReleaseSource();
-            var service = new SelfUpdateService(Environment.ProcessPath!, AppVersion.Current, source);
+            var options = TerminalVUpdate.Options(TerminalVUpdate.InstalledVariant(Environment.ProcessPath));
+            using var source = new GitHubReleaseSource(options);
+            var service = new SelfUpdateService(Environment.ProcessPath!, AppVersion.Current, source, options);
             var report = await service.CheckAsync(_updateCts.Token).ConfigureAwait(false);
             if (report.Status == SelfUpdateStatus.AlreadyCurrent)
             {
@@ -396,9 +401,10 @@ internal sealed class TerminalBridge : IDisposable
         Post(new { type = "update", status = "downloading", current = AppVersion.Informational });
         try
         {
-            using var source = new GitHubReleaseSource();
-            var service = new SelfUpdateService(Environment.ProcessPath!, AppVersion.Current, source);
-            var report = await service.ApplyAsync(_updateCts.Token).ConfigureAwait(false);
+            var options = TerminalVUpdate.Options(TerminalVUpdate.InstalledVariant(Environment.ProcessPath));
+            using var source = new GitHubReleaseSource(options);
+            var service = new SelfUpdateService(Environment.ProcessPath!, AppVersion.Current, source, options);
+            var report = await service.UpdateAsync(new SelfUpdateRequest(), _updateCts.Token).ConfigureAwait(false);
             if (report.Status == SelfUpdateStatus.AlreadyCurrent)
             {
                 PostUpdate("current", report);
@@ -654,6 +660,30 @@ internal sealed class TerminalBridge : IDisposable
             }
 
             Post(new { type = "clipboard-data", requestId, data });
+        });
+    }
+
+    private void StorePasteFile(string? requestId, string? data)
+    {
+        if (string.IsNullOrEmpty(data))
+        {
+            Post(new { type = "paste-file-stored", requestId, error = "empty clipboard" });
+            return;
+        }
+
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                var path = PasteFileStore.Save(data);
+                Diag.Log("bridge", $"paste-file stored len={data.Length} path={path}", null);
+                Post(new { type = "paste-file-stored", requestId, path });
+            }
+            catch (Exception ex)
+            {
+                Diag.Log("bridge", $"paste-file store failed: {ex.Message}", null);
+                Post(new { type = "paste-file-stored", requestId, error = ex.Message });
+            }
         });
     }
 

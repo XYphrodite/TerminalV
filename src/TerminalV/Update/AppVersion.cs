@@ -1,5 +1,6 @@
 using System.IO;
 using System.Reflection;
+using SelfUpdateKit;
 
 namespace TerminalV.Update;
 

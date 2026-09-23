@@ -304,8 +304,18 @@ TUI v0.6.7: рваный верх `muse` после ресайза — `applyFit
 
 Окно v0.6.14: минимум опущен до 560×360 (только `MinWidth`/`MinHeight` в XAML, хук v0.6.13 подхватил сам). Подробности — `docs/releases/v0.6.14.md`.
 
-**Last Updated**: 2026-09-22
-**Version**: 0.6.14
+Вставка v0.6.15: тексты длиннее 4000 символов сохраняются хостом в `%TEMP%\TerminalV\pastes\`, в терминал вставляется путь (`paste-file-store`/`paste-file-stored`, фолбэк на текст при ошибке/таймауте, чистка в `Closed`). Подробности — `docs/releases/v0.6.15.md`.
+
+Сайдбар v0.6.16: в свёрнутом режиме `.tab-options` скрыт всегда (`display:none !important`, без re-show на hover/active/focus). Подробности — `docs/releases/v0.6.16.md`.
+
+Скролл v0.6.17: в `tui-lock` колесо уходит приложению при включённом mouse-режиме (`wantsAppWheel` в `ui/src/tui-scroll.js`, `wheelTarget` в `main.js`). Подробности — `docs/releases/v0.6.17.md`.
+
+Панель v0.6.18: высота элементов сессий (`sessionDensity`: `standard`/`minimal`, класс `session-minimal`, поле `AppSettings.SessionDensity`). Подробности — `docs/releases/v0.6.18.md`.
+
+Сплиты v0.7.1: запрет вложенности (`MAX_SPLIT_LEVEL = 1` в `splitSession`, `canSplit` только для одиночной/корневой-первой панели). Подробности — `docs/releases/v0.7.1.md`.
+
+**Last Updated**: 2026-09-23
+**Version**: 0.7.1
 **Status**: Active  
 **Repository**: `https://github.com/XYphrodite/TerminalV`  
 **Workspace**: `C:\Repos\TerminalV`

@@ -18,10 +18,12 @@ import { createNotifications, createNotificationOutput } from "./notifications.j
 import { createLaunchProfiles, PROFILE_SHELLS } from "./launch-profiles.js";
 import { createLaunchMenu } from "./launch-menu.js";
 import { normalizeLayouts, layoutFor, leafIds, splitSession, detachSession, layoutGeometry,
-  neighborPane, paneShortcut, MAX_PANES, MIN_PANE_WIDTH, MIN_PANE_HEIGHT, isSplitChild, isSplitParent } from "./pane-layout.js";
+  neighborPane, paneShortcut, MAX_PANES, MIN_PANE_WIDTH, MIN_PANE_HEIGHT, isSplitChild, isSplitParent, splitIndentLevel } from "./pane-layout.js";
 import { createPaneView } from "./pane-view.js";
 import { createShortcuts } from "./shortcuts.js";
 import { WRITE_CHUNK, chunkText } from "./write-chunk.js";
+import { shouldStoreAsFile, PASTE_FILE_STORE_TIMEOUT_MS } from "./paste-file.js";
+import { wantsAppWheel } from "./tui-scroll.js";
 
 mountIcons(document);
 
@@ -45,6 +47,7 @@ const fontFamilyEl = document.getElementById("font-family");
 const fontSizeEl = document.getElementById("font-size");
 const fontSizeValue = document.getElementById("font-size-value");
 const zoomValue = document.getElementById("zoom-value");
+const sessionDensityEl = document.getElementById("session-density");
 const bgPick = document.getElementById("bg-pick");
 const bgClear = document.getElementById("bg-clear");
 const bgOpacityEl = document.getElementById("bg-opacity");
@@ -69,6 +72,7 @@ let fitRaf = 0;
 let ignoreFitUntil = 0;
 let readyForPersist = false;
 const clipboardWaiters = new Map();
+const pasteFileWaiters = new Map();
 let draggedTabId = null;
 
 const settings = {
@@ -77,13 +81,14 @@ const settings = {
   fontSize: 14,
   zoom: 0,
   sidebarCollapsed: false,
+  sessionDensity: "standard",
   backgroundPath: null,
   backgroundOpacity: 0.25
 };
 
 const pasteController = createPasteController({
   dialog: document.getElementById("paste-confirmation"),
-  readClipboard,
+  readClipboard: readClipboardForPaste,
   canPaste: (tab) => tabs.includes(tab) && tab.id === activeId && !tab.exited && !closeController.isOpen && !sessionOptions.isOpen && !launchProfiles.isOpen && !launchMenu.isOpen,
   restoreFocus: () => currentTab()?.term.focus()
 });
@@ -178,6 +183,11 @@ function isPaneVisible(tab) {
 function canSplit(axis) {
   const tab = currentTab(), count = visibleTabs().length;
   if (!tab || !count || count >= MAX_PANES) return false;
+  // Only a lone pane or the first pane of a top-level split may split:
+  // splitting anything else would nest a second-degree child.
+  const root = layoutFor(layouts, tab.id);
+  const lone = root && root.sessionId === tab.id;
+  if (!lone && !isSplitParent(layouts, tab.id)) return false;
   const box = tab.pane.getBoundingClientRect();
   return axis === "columns" ? box.width >= MIN_PANE_WIDTH * 2 + 6 : box.height >= MIN_PANE_HEIGHT * 2 + 6;
 }
@@ -371,6 +381,7 @@ function applyChrome() {
   root.style.colorScheme = theme.kind;
   root.dataset.themeKind = theme.kind;
   appEl.classList.toggle("collapsed", settings.sidebarCollapsed);
+  appEl.classList.toggle("session-minimal", settings.sessionDensity === "minimal");
   collapseBtn.setAttribute("aria-expanded", String(!settings.sidebarCollapsed));
   collapseBtn.title = settings.sidebarCollapsed
     ? "Показать сессии (Ctrl+B)"
@@ -404,10 +415,30 @@ function applyBackground(pane) {
   }
 }
 
+function applySplitDepth(row, id) {
+  const level = Math.min(splitIndentLevel(layouts, id), 4);
+  row.classList.remove("split-depth-2", "split-depth-3", "split-depth-4");
+  if (level >= 2) {
+    row.classList.add(`split-depth-${level}`);
+  }
+}
+
+function isMouseReporting(tab) {
+  return Boolean(tab.term.element?.classList.contains("enable-mouse-events"));
+}
+
+function wheelTarget(tab, event) {
+  return wantsAppWheel({
+    tuiLock: tab.host.classList.contains("tui-lock"),
+    mouseMode: isMouseReporting(tab),
+    zoomModifier: Boolean(event.ctrlKey || event.metaKey)
+  }) ? "app" : "terminal";
+}
+
 function isTui(tab) {
   return (
     tab.term.buffer.active.type === "alternate" ||
-    Boolean(tab.term.element?.classList.contains("enable-mouse-events")) ||
+    isMouseReporting(tab) ||
     Boolean(tab.tuiHint)
   );
 }
@@ -651,6 +682,7 @@ function renderTabs() {
       row.classList.toggle("in-view", isPaneVisible(tab));
       row.classList.toggle("split-child", isSplitChild(layouts, tab.id));
       row.classList.toggle("split-parent", isSplitParent(layouts, tab.id));
+      applySplitDepth(row, tab.id);
       if (tab.color) row.style.setProperty("--session-color", SESSION_COLORS[tab.color].value);
 
       const accent = document.createElement("span");
@@ -874,6 +906,7 @@ function patchTabRow(tab) {
   row.classList.toggle("unread", Boolean(tab.unread));
   row.classList.toggle("split-child", isSplitChild(layouts, tab.id));
   row.classList.toggle("split-parent", isSplitParent(layouts, tab.id));
+  applySplitDepth(row, tab.id);
   const title = row.querySelector(".tab-title");
   if (title && !tab.renaming) {
     title.textContent = tab.customTitle || tab.title;
@@ -990,6 +1023,36 @@ async function readClipboard() {
       }, 1000);
     });
   }
+}
+
+// Large pastes go to a host temp file; the path is pasted instead of the
+// text. On store failure or timeout the original text is pasted as before.
+async function readClipboardForPaste() {
+  const text = await readClipboard();
+  if (!shouldStoreAsFile(text)) {
+    return text;
+  }
+  const path = await storePasteAsFile(text);
+  if (!path) {
+    return text;
+  }
+  diag("ui", `paste-file stored len=${text.length} path=${path}`);
+  return path;
+}
+
+function storePasteAsFile(text) {
+  return new Promise((resolve) => {
+    const requestId = uuid();
+    pasteFileWaiters.set(requestId, resolve);
+    post({ type: "paste-file-store", requestId, data: text });
+    setTimeout(() => {
+      if (pasteFileWaiters.has(requestId)) {
+        pasteFileWaiters.delete(requestId);
+        diag("ui", "paste-file store timeout, falling back to text");
+        resolve(null);
+      }
+    }, PASTE_FILE_STORE_TIMEOUT_MS);
+  });
 }
 
 function isZoomEvent(event) {
@@ -1271,6 +1334,11 @@ function newTab(options = {}) {
       if (event.ctrlKey || event.metaKey) {
         return;
       }
+      // A mouse-interactive TUI (own scrollbar) gets the wheel itself;
+      // xterm forwards it as mouse reports. Other TUIs stay pinned.
+      if (wheelTarget(tab, event) === "app") {
+        return;
+      }
       event.preventDefault();
       pinViewport(tab);
     },
@@ -1289,9 +1357,13 @@ function newTab(options = {}) {
     if (!tab.host.classList.contains("tui-lock")) {
       return true;
     }
-    if (!(event.ctrlKey || event.metaKey)) {
-      event.preventDefault();
+    if (event.ctrlKey || event.metaKey) {
+      return true;
     }
+    if (wheelTarget(tab, event) === "app") {
+      return true;
+    }
+    event.preventDefault();
     return true;
   });
   syncScrollLock(tab);
@@ -1463,6 +1535,7 @@ function renderThemeGrid() {
 }
 
 function syncSettingsForm() {
+  sessionDensityEl.value = settings.sessionDensity === "minimal" ? "minimal" : "standard";
   fontSizeEl.value = String(settings.fontSize);
   fontSizeValue.textContent = String(settings.fontSize);
   bgOpacityEl.value = String(Math.round(settings.backgroundOpacity * 100));
@@ -1619,6 +1692,15 @@ function handleHost(message) {
     return;
   }
 
+  if (message.type === "paste-file-stored") {
+    const waiter = pasteFileWaiters.get(message.requestId);
+    if (waiter) {
+      pasteFileWaiters.delete(message.requestId);
+      waiter(message.path ?? null);
+    }
+    return;
+  }
+
   const tab = tabs.find((item) => item.id === message.id);
   if (!tab) {
     return;
@@ -1721,6 +1803,11 @@ fontSizeEl.addEventListener("input", () => {
   applyToTerminals();
 });
 fontSizeEl.addEventListener("change", persistSettings);
+sessionDensityEl.addEventListener("change", () => {
+  settings.sessionDensity = sessionDensityEl.value === "minimal" ? "minimal" : "standard";
+  applyChrome();
+  persistSettings();
+});
 bgOpacityEl.addEventListener("input", () => {
   settings.backgroundOpacity = Number(bgOpacityEl.value) / 100;
   bgOpacityValue.textContent = `${bgOpacityEl.value}%`;

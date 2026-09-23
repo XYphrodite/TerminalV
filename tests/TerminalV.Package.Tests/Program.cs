@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text.RegularExpressions;
+using SelfUpdateKit;
 using TerminalV.Update;
 
 if (args.Length != 3 || !ReleaseVersion.TryParse(args[1], out var version))
@@ -37,15 +38,16 @@ string NewInstall()
     File.WriteAllText(Path.Combine(dir, "wwwroot", "index.html"), "old UI sentinel");
     return Path.Combine(dir, "TerminalV.exe");
 }
+static ReleaseSourceOptions PackageOptions() => TerminalVUpdate.Options(TerminalVUpdate.Variant.Full);
 SelfUpdateService Service(string exe, LocalReleaseSource source, IExecutableReplacer? replacer = null) =>
-    new(exe, new ReleaseVersion(0, 0, 0), source, replacer);
+    new(exe, new ReleaseVersion(0, 0, 0), source, PackageOptions(), replacer: replacer);
 void Unchanged(string exe)
 {
     Require(Hash(exe) == Hash(Path.Combine(extracted, "TerminalV.exe")), "Installed EXE changed");
     var dir = Path.GetDirectoryName(exe)!;
     Require(File.ReadAllText(Path.Combine(dir, "wwwroot", "index.html")) == "old UI sentinel", "Installed UI changed");
-    Require(!File.Exists(Path.Combine(dir, SelfUpdateService.PendingMarker)), "Unexpected pending marker");
-    Require(!Directory.EnumerateDirectories(dir, SelfUpdateService.StagingPrefix + "*").Any(), "Failed staging was not cleaned");
+    Require(!File.Exists(Path.Combine(dir, TerminalVUpdate.PendingMarker)), "Unexpected pending marker");
+    Require(!Directory.EnumerateDirectories(dir, TerminalVUpdate.StagingPrefix + "*").Any(), "Failed staging was not cleaned");
 }
 string Variant(string name, Action<ZipArchive> edit)
 {
@@ -106,14 +108,14 @@ try
         var source = new LocalReleaseSource(zip, version, checksum);
         Require((await Service(exe, source).CheckAsync(default)).Status == SelfUpdateStatus.UpdateAvailable, "No update offered");
         var current = new SelfUpdateService(exe, version, source);
-        Require((await current.ApplyAsync(default)).Status == SelfUpdateStatus.AlreadyCurrent, "Current version reinstalled");
+        Require((await current.UpdateAsync(new SelfUpdateRequest(), default)).Status == SelfUpdateStatus.AlreadyCurrent, "Current version reinstalled");
         Require(source.Downloads == 0, "Unexpected download");
         Unchanged(exe);
     });
     await Check("wrong checksum refuses replacement and removes temporary files", async () =>
     {
         var exe = NewInstall();
-        await Refused(() => Service(exe, new(zip, version, new string('0', 64))).ApplyAsync(default));
+        await Refused(() => Service(exe, new(zip, version, new string('0', 64))).UpdateAsync(new SelfUpdateRequest(), default));
         Unchanged(exe);
     });
     foreach (var missing in new[] { "TerminalV.exe", "wwwroot/index.html", "TerminalV.com" })
@@ -126,7 +128,7 @@ try
                 entry.Delete();
             });
             var exe = NewInstall();
-            await Refused(() => Service(exe, new(variant, version, Hash(variant))).ApplyAsync(default));
+            await Refused(() => Service(exe, new(variant, version, Hash(variant))).UpdateAsync(new SelfUpdateRequest(), default));
             Unchanged(exe);
         });
     }
@@ -135,7 +137,7 @@ try
         var exe = NewInstall();
         var replacer = new BrokenReplacement();
         var rejected = false;
-        try { await Service(exe, new(zip, version, checksum), replacer).ApplyAsync(default); }
+        try { await Service(exe, new(zip, version, checksum), replacer).UpdateAsync(new SelfUpdateRequest(), default); }
         catch (Exception) when (replacer.Restored) { rejected = true; }
         Require(rejected && replacer.Restored, "Failed executable was not rolled back");
         Unchanged(exe);
@@ -145,7 +147,7 @@ try
         var exe = NewInstall();
         var replacer = new BrokenReplacement(blockMarker: true);
         var rejected = false;
-        try { await Service(exe, new(zip, version, checksum), replacer).ApplyAsync(default); }
+        try { await Service(exe, new(zip, version, checksum), replacer).UpdateAsync(new SelfUpdateRequest(), default); }
         catch (IOException) when (replacer.Restored) { rejected = true; }
         Require(rejected && replacer.Restored, "Marker failure did not roll back");
         Unchanged(exe);
@@ -154,35 +156,35 @@ try
     {
         var exe = NewInstall();
         var dir = Path.GetDirectoryName(exe)!;
-        var result = await Service(exe, new(zip, version, checksum)).ApplyAsync(default);
+        var result = await Service(exe, new(zip, version, checksum)).UpdateAsync(new SelfUpdateRequest(), default);
         Require(result.Status == SelfUpdateStatus.Updated, "Update not installed");
         Require(File.ReadAllText(Path.Combine(dir, "wwwroot", "index.html")) == "old UI sentinel", "UI replaced before restart");
-        Require(File.Exists(Path.Combine(dir, SelfUpdateService.PendingMarker)), "No pending update");
-        PendingUpdateApplier.Apply(exe);
+        Require(File.Exists(Path.Combine(dir, TerminalVUpdate.PendingMarker)), "No pending update");
+        PendingUpdateApplier.Apply(exe, PackageOptions());
         Require(Hash(exe) == Hash(Path.Combine(extracted, "TerminalV.exe")), "EXE mismatch");
         Require(Hash(Path.Combine(dir, "TerminalV.com")) == Hash(Path.Combine(extracted, "TerminalV.com")), "Console shim was not updated");
         foreach (var file in Directory.EnumerateFiles(Path.Combine(extracted, "wwwroot"), "*", SearchOption.AllDirectories))
             Require(Hash(Path.Combine(dir, Path.GetRelativePath(extracted, file))) == Hash(file), "Installed UI differs from package");
-        Require(!File.Exists(Path.Combine(dir, SelfUpdateService.PendingMarker)), "Marker not removed");
-        Require(!Directory.EnumerateDirectories(dir, SelfUpdateService.StagingPrefix + "*").Any(), "Staging not removed");
-        PendingUpdateApplier.Apply(exe); // Restarting twice must be harmless.
+        Require(!File.Exists(Path.Combine(dir, TerminalVUpdate.PendingMarker)), "Marker not removed");
+        Require(!Directory.EnumerateDirectories(dir, TerminalVUpdate.StagingPrefix + "*").Any(), "Staging not removed");
+        PendingUpdateApplier.Apply(exe, PackageOptions()); // Restarting twice must be harmless.
     });
     await Check("locked staged shim preserves old UI and allows retry", async () =>
     {
         var exe = NewInstall();
         var dir = Path.GetDirectoryName(exe)!;
-        await Service(exe, new(zip, version, checksum)).ApplyAsync(default);
-        var marker = Path.Combine(dir, SelfUpdateService.PendingMarker);
+        await Service(exe, new(zip, version, checksum)).UpdateAsync(new SelfUpdateRequest(), default);
+        var marker = Path.Combine(dir, TerminalVUpdate.PendingMarker);
         var payload = File.ReadAllText(marker);
         using (File.Open(Path.Combine(payload, "TerminalV.com"), FileMode.Open, FileAccess.Read, FileShare.Read))
         {
-            PendingUpdateApplier.Apply(exe);
+            PendingUpdateApplier.Apply(exe, PackageOptions());
             Require(File.Exists(marker), "Retry marker lost");
             Require(File.Exists(Path.Combine(payload, "wwwroot", "index.html")), "Staged UI not restored");
             Require(File.ReadAllText(Path.Combine(dir, "wwwroot", "index.html")) == "old UI sentinel", "Old UI not restored");
             Require(File.ReadAllText(Path.Combine(dir, "TerminalV.com")) == "old shim sentinel", "Old shim not restored");
         }
-        PendingUpdateApplier.Apply(exe);
+        PendingUpdateApplier.Apply(exe, PackageOptions());
         Require(!File.Exists(marker), "Retry did not complete");
         Require(Hash(Path.Combine(dir, "TerminalV.com")) == Hash(Path.Combine(extracted, "TerminalV.com")), "Retried shim mismatch");
     });
@@ -190,11 +192,11 @@ try
     {
         var exe = NewInstall();
         var source = new LocalReleaseSource(zip, version, checksum);
-        await Service(exe, source).ApplyAsync(default);
-        var marker = Path.Combine(Path.GetDirectoryName(exe)!, SelfUpdateService.PendingMarker);
+        await Service(exe, source).UpdateAsync(new SelfUpdateRequest(), default);
+        var marker = Path.Combine(Path.GetDirectoryName(exe)!, TerminalVUpdate.PendingMarker);
         var payload = File.ReadAllText(marker);
         var refused = false;
-        try { await Service(exe, source).ApplyAsync(default); }
+        try { await Service(exe, source).UpdateAsync(new SelfUpdateRequest(), default); }
         catch (InvalidOperationException) { refused = true; }
         Require(refused && source.Downloads == 1, "Downloaded a second update while one was pending");
         Require(File.ReadAllText(marker) == payload && Directory.Exists(payload), "Previous pending update damaged");
@@ -208,8 +210,8 @@ try
         Directory.CreateDirectory(Path.Combine(payload, "wwwroot"));
         File.WriteAllText(Path.Combine(payload, "wwwroot", "index.html"), "unrelated UI sentinel");
         File.WriteAllText(Path.Combine(sibling, "keep.txt"), "keep");
-        File.WriteAllText(Path.Combine(Path.GetDirectoryName(exe)!, SelfUpdateService.PendingMarker), payload);
-        PendingUpdateApplier.Apply(exe);
+        File.WriteAllText(Path.Combine(Path.GetDirectoryName(exe)!, TerminalVUpdate.PendingMarker), payload);
+        PendingUpdateApplier.Apply(exe, PackageOptions());
         Require(File.Exists(Path.Combine(sibling, "keep.txt")), "Pending marker deleted unrelated data");
         Require(File.Exists(Path.Combine(payload, "wwwroot", "index.html")), "Pending marker moved unrelated UI");
         Require(File.ReadAllText(Path.Combine(Path.GetDirectoryName(exe)!, "wwwroot", "index.html")) == "old UI sentinel", "Invalid marker changed installed UI");
@@ -219,18 +221,18 @@ try
     {
         var exe = NewInstall();
         var dir = Path.GetDirectoryName(exe)!;
-        var unrelated = Directory.CreateDirectory(Path.Combine(dir, SelfUpdateService.StagingPrefix + "notes")).FullName;
+        var unrelated = Directory.CreateDirectory(Path.Combine(dir, TerminalVUpdate.StagingPrefix + "notes")).FullName;
         File.WriteAllText(Path.Combine(unrelated, "keep.txt"), "keep");
         var backup = Directory.CreateDirectory(Path.Combine(dir, "wwwroot.old-personal-backup")).FullName;
         File.WriteAllText(Path.Combine(backup, "keep.txt"), "keep");
         foreach (var value in new[] { "", "relative/payload", dir, unrelated, "bad\0path" })
         {
-            File.WriteAllText(Path.Combine(dir, SelfUpdateService.PendingMarker), value);
-            PendingUpdateApplier.Apply(exe);
+            File.WriteAllText(Path.Combine(dir, TerminalVUpdate.PendingMarker), value);
+            PendingUpdateApplier.Apply(exe, PackageOptions());
             Require(File.Exists(exe), "Malformed marker removed installed files");
-            Require(!File.Exists(Path.Combine(dir, SelfUpdateService.PendingMarker)), "Invalid marker not discarded");
+            Require(!File.Exists(Path.Combine(dir, TerminalVUpdate.PendingMarker)), "Invalid marker not discarded");
         }
-        PendingUpdateApplier.Apply(exe);
+        PendingUpdateApplier.Apply(exe, PackageOptions());
         Require(File.Exists(Path.Combine(unrelated, "keep.txt")) && File.Exists(Path.Combine(backup, "keep.txt")), "Cleanup removed unrelated files");
         return Task.CompletedTask;
     });
@@ -285,7 +287,7 @@ sealed class LocalReleaseSource(string zip, ReleaseVersion version, string check
 {
     public int Downloads { get; private set; }
     public Task<ReleaseDescriptor> ResolveAsync(string? tag, CancellationToken cancellationToken) =>
-        Task.FromResult(new ReleaseDescriptor($"v{version}", version, new Uri(zip), new Uri(zip + ".sha256")));
+        Task.FromResult(new ReleaseDescriptor($"v{version}", version, new Uri(zip), new Uri(zip + ".sha256"), 0, null, null));
     public Task DownloadAsync(Uri address, string destinationPath, CancellationToken cancellationToken, Action<long, long?>? progress = null)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -304,7 +306,7 @@ sealed class BrokenReplacement(bool blockMarker = false) : IExecutableReplacer
     {
         var retired = inner.Replace(currentPath, stagedPath);
         if (blockMarker)
-            Directory.CreateDirectory(Path.Combine(Path.GetDirectoryName(currentPath)!, SelfUpdateService.PendingMarker));
+            Directory.CreateDirectory(Path.Combine(Path.GetDirectoryName(currentPath)!, TerminalVUpdate.PendingMarker));
         else
             File.WriteAllText(currentPath, "not an executable");
         return retired;
