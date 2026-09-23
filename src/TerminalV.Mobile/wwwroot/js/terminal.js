@@ -3,9 +3,10 @@
 (function () {
     const terminals = new Map();
 
-    function createTerminal(id, cols, rows) {
-        const container = document.getElementById('terminal-container');
+    function createTerminal(id, cols, rows, containerId) {
+        const container = document.getElementById(containerId || 'terminal-container');
         if (!container || typeof Terminal === 'undefined') return null;
+        if (terminals.has(id)) destroy(id);
 
         const term = new Terminal({
             cols: cols || 80,
@@ -55,8 +56,27 @@
         if (entry && entry.fitAddon) entry.fitAddon.fit();
     }
 
+    function measure(id) {
+        const entry = terminals.get(id);
+        if (!entry) return null;
+        if (entry.fitAddon) {
+            try {
+                const dims = entry.fitAddon.proposeDimensions();
+                if (dims && dims.cols > 0 && dims.rows > 0) return { cols: dims.cols, rows: dims.rows };
+            } catch { /* fall through */ }
+        }
+        return { cols: entry.term.cols, rows: entry.term.rows };
+    }
+
+    function destroy(id) {
+        const entry = terminals.get(id);
+        if (!entry) return;
+        terminals.delete(id);
+        try { entry.term.dispose(); } catch { /* already gone */ }
+    }
+
     // Expose isolated API
-    window.TerminalV = { create: createTerminal, write, resize, terminals };
+    window.TerminalV = { create: createTerminal, write, resize, measure, destroy, terminals };
 
     // Auto-create default terminal on load for standalone testing (isolation: no backend required)
     document.addEventListener('DOMContentLoaded', () => {
@@ -69,12 +89,20 @@
         }
     });
 
-    // Handle window resize with isolation (debounced)
+    // Handle window resize with isolation (debounced).
+    // After refit, report the new grid to .NET so the remote pty follows.
     let resizeTimer = 0;
     window.addEventListener('resize', () => {
         clearTimeout(resizeTimer);
         resizeTimer = setTimeout(() => {
-            terminals.forEach(e => { if (e.fitAddon) e.fitAddon.fit(); });
-        }, 100);
+            terminals.forEach((e, id) => {
+                if (e.fitAddon) e.fitAddon.fit();
+                if (window.Blazor && window.__tvResizeNotify !== false) {
+                    try {
+                        DotNet.invokeMethodAsync('TerminalV.Mobile', 'OnTerminalResizeStatic', id, e.term.cols, e.term.rows);
+                    } catch { /* Blazor not ready */ }
+                }
+            });
+        }, 500);
     });
 })();

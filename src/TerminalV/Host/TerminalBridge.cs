@@ -42,11 +42,15 @@ internal sealed class TerminalBridge : IDisposable
     private readonly Stopwatch _bellClock = Stopwatch.StartNew();
     private long _lastBellMs = -2000;
     private bool _disposed;
+    private readonly Func<object>? _gatewayStatus;
 
-    public TerminalBridge(Dispatcher dispatcher, CoreWebView2 webView)
+    public event Action? SettingsChanged;
+
+    public TerminalBridge(Dispatcher dispatcher, CoreWebView2 webView, Func<object>? gatewayStatus = null)
     {
         _dispatcher = dispatcher;
         _webView = webView;
+        _gatewayStatus = gatewayStatus;
         _shell = ShellResolver.Resolve();
         _buildNumber = Environment.OSVersion.Version.Build;
         _canUpdate = AppVersion.CanSelfUpdate(Environment.ProcessPath);
@@ -74,7 +78,8 @@ internal sealed class TerminalBridge : IDisposable
             cwdTrackingSupported = _host.CwdTrackingSupported,
             launchProfilesSupported = _host.LaunchProfilesSupported,
             environmentRefreshSupported = _host.EnvironmentRefreshSupported,
-            fonts = SystemFonts()
+            fonts = SystemFonts(),
+            gateway = _gatewayStatus?.Invoke()
         });
 
         if (_canUpdate)
@@ -563,7 +568,31 @@ internal sealed class TerminalBridge : IDisposable
             var settings = JsonSerializer.Deserialize<AppSettings>(json, JsonOptions);
             if (settings is not null)
             {
+                // An empty token never wipes the stored one: the desktop UI
+                // always round-trips the real value, and clearing the token
+                // would silently open the LAN listener to everyone.
+                if (string.IsNullOrEmpty(settings.GatewayToken))
+                {
+                    try
+                    {
+                        var stored = _db.LoadSettings();
+                        if (!string.IsNullOrEmpty(stored.GatewayToken))
+                        {
+                            settings.GatewayToken = stored.GatewayToken;
+                        }
+                    }
+                    catch
+                    {
+                    }
+                }
+
+                if (settings.GatewayPort is < 1 or > 65535)
+                {
+                    settings.GatewayPort = 5454;
+                }
+
                 _db.SaveSettings(settings);
+                SettingsChanged?.Invoke();
             }
         }
         catch (JsonException)

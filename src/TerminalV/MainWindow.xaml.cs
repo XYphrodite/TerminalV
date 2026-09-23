@@ -1,9 +1,11 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
+using System.Security.Cryptography;
 using System.Windows;
 using Microsoft.Web.WebView2.Core;
 using TerminalV.Data;
+using TerminalV.Gateway;
 using TerminalV.Host;
 
 namespace TerminalV;
@@ -11,6 +13,10 @@ namespace TerminalV;
 public partial class MainWindow : Window
 {
     private TerminalBridge? _bridge;
+    private GatewayServer? _gateway;
+    private bool _gatewayEnabled;
+    private int _gatewayPort;
+    private string? _gatewayToken;
     private bool _allowClose;
 
     public MainWindow()
@@ -20,7 +26,7 @@ public partial class MainWindow : Window
         WebView.DefaultBackgroundColor = System.Drawing.Color.FromArgb(255, 11, 13, 16);
         Loaded += OnLoaded;
         Closing += OnClosing;
-        Closed += (_, _) => { _bridge?.Dispose(); PasteFileStore.Cleanup(); };
+        Closed += (_, _) => { _gateway?.Dispose(); _bridge?.Dispose(); PasteFileStore.Cleanup(); };
         UpdateMaximizeGlyph();
     }
 
@@ -73,7 +79,9 @@ public partial class MainWindow : Window
             AppPaths.Root,
             CoreWebView2HostResourceAccessKind.Allow);
 
-        _bridge = new TerminalBridge(Dispatcher, core);
+        _bridge = new TerminalBridge(Dispatcher, core, DescribeGateway);
+        _bridge.SettingsChanged += SyncGateway;
+        SyncGateway();
         core.WebMessageReceived += (_, args) => _bridge.Handle(args.WebMessageAsJson);
         core.NewWindowRequested += (_, e) =>
         {
@@ -148,6 +156,88 @@ public partial class MainWindow : Window
 
         _allowClose = true;
         Close();
+    }
+
+    private object DescribeGateway()
+    {
+        var gateway = _gateway;
+        if (gateway is { IsRunning: true })
+        {
+            return gateway.Describe();
+        }
+
+        return new
+        {
+            enabled = _gatewayEnabled,
+            port = _gatewayPort,
+            listening = false,
+            status = gateway?.Status ?? (_gatewayEnabled ? "Не запущен." : "Отключён в настройках.")
+        };
+    }
+
+    private void SyncGateway()
+    {
+        AppSettings settings;
+        try
+        {
+            using var db = new AppDatabase();
+            settings = db.LoadSettings();
+        }
+        catch
+        {
+            return;
+        }
+
+        if (settings.GatewayEnabled && string.IsNullOrEmpty(settings.GatewayToken))
+        {
+            settings.GatewayToken = GenerateToken();
+            try
+            {
+                using var db = new AppDatabase();
+                db.SaveSettings(settings);
+            }
+            catch
+            {
+            }
+        }
+
+        if (_gateway is not null &&
+            _gatewayEnabled == settings.GatewayEnabled &&
+            _gatewayPort == settings.GatewayPort &&
+            _gatewayToken == settings.GatewayToken)
+        {
+            return;
+        }
+
+        _gatewayEnabled = settings.GatewayEnabled;
+        _gatewayPort = settings.GatewayPort;
+        _gatewayToken = settings.GatewayToken;
+
+        _gateway?.Dispose();
+        _gateway = null;
+
+        if (!settings.GatewayEnabled)
+        {
+            return;
+        }
+
+        var server = new GatewayServer(new SessionClientBackend(), settings.GatewayPort, settings.GatewayToken);
+        try
+        {
+            server.Start();
+        }
+        catch
+        {
+            // Status (e.g. missing URL ACL) stays visible in settings; retry on next save/restart.
+        }
+
+        _gateway = server;
+    }
+
+    private static string GenerateToken()
+    {
+        var bytes = RandomNumberGenerator.GetBytes(24);
+        return Convert.ToBase64String(bytes).Replace('+', '-').Replace('/', '_').TrimEnd('=');
     }
 
     private void Minimize_Click(object sender, RoutedEventArgs e) =>

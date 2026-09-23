@@ -444,6 +444,133 @@ Check("Tsnet DynamicRead and DynamicWrite resolve byte-array overloads", () =>
     if (n != 3 || buf[0] != 7 || buf[1] != 8 || buf[2] != 9) throw new Exception("stream roundtrip mismatch");
 });
 
+Check("GatewayProtocol handshake roundtrips sessionId and control flag", () =>
+{
+    var json = TerminalV.Ssh.GatewayProtocol.ConnectHandshake("desk1", control: false, cols: 120, rows: 30, term: null);
+    if (!TerminalV.Ssh.GatewayProtocol.TryParseHandshake(json, out var h) || h is null)
+        throw new Exception("handshake did not parse");
+    if (h.SessionId != "desk1" || h.Control || h.Cols != 120 || h.Rows != 30 || h.Term != "xterm-256color")
+        throw new Exception($"handshake fields wrong: {json}");
+    var ctl = TerminalV.Ssh.GatewayProtocol.ConnectHandshake(null, control: true, cols: 80, rows: 24, term: null);
+    if (!TerminalV.Ssh.GatewayProtocol.TryParseHandshake(ctl, out var hc) || hc is null || !hc.Control)
+        throw new Exception("control handshake must parse with Control=true");
+    // Legacy SSH-proxy handshake (extra host/user fields) is accepted as a create.
+    var legacy = """{"type":"connect","host":"h","port":22,"username":"u","password":"p","cols":80,"rows":24,"term":"xterm-256color"}""";
+    if (!TerminalV.Ssh.GatewayProtocol.TryParseHandshake(legacy, out var hl) || hl is null || hl.Control || hl.SessionId is not null)
+        throw new Exception("legacy handshake must parse as non-control create");
+    if (!TerminalV.Ssh.GatewayProtocol.IsControlReply("attached") || !TerminalV.Ssh.GatewayProtocol.IsControlReply("sessions"))
+        throw new Exception("attached/sessions must be control replies");
+    if (TerminalV.Ssh.GatewayProtocol.IsControlReply("data") || TerminalV.Ssh.GatewayProtocol.IsControlReply("error"))
+        throw new Exception("data/error must not be swallowed as control replies");
+});
+
+Check("Mirror Validate relaxes host/user but keeps gateway URL rules", () =>
+{
+    var mirror = new SshConnectionOptions
+    {
+        Host = "",
+        Username = "",
+        Port = 22,
+        GatewayUrl = "ws://127.0.0.1:5454",
+        MirrorSessionId = "desk1"
+    };
+    mirror.Validate();
+    var noMirror = new SshConnectionOptions
+    {
+        Host = "",
+        Username = "",
+        Port = 22,
+        GatewayUrl = "ws://127.0.0.1:5454"
+    };
+    try { noMirror.Validate(); throw new Exception("empty host without MirrorSessionId must fail"); }
+    catch (ArgumentException) { }
+    var badUrl = new SshConnectionOptions
+    {
+        GatewayUrl = "ftp://x",
+        MirrorSessionId = "desk1",
+        Port = 22
+    };
+    try { badUrl.Validate(); throw new Exception("bad gateway URL must fail even in mirror mode"); }
+    catch (ArgumentException) { }
+});
+
+Check("Mobile links shared mirror client sources", () =>
+{
+    var projPath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "src", "TerminalV.Mobile", "TerminalV.Mobile.csproj"));
+    if (!File.Exists(projPath))
+        projPath = Path.GetFullPath("src/TerminalV.Mobile/TerminalV.Mobile.csproj");
+    var txt = File.ReadAllText(projPath);
+    if (!txt.Contains("GatewayProtocol.cs") || !txt.Contains("GatewayControlClient.cs"))
+        throw new Exception("TerminalV.Mobile.csproj must link GatewayProtocol.cs and GatewayControlClient.cs");
+});
+
+CheckAsync("Mirror gateway end-to-end: list, attach, write, resize, auth", async () =>
+{
+    const int port = 54599;
+    var backend = new FakeGatewayBackend(["desk1"]);
+    using var server = new TerminalV.Gateway.GatewayServer(backend, port, token: "test-token");
+    server.Start();
+    try
+    {
+        using var control = new TerminalV.Ssh.GatewayControlClient($"ws://127.0.0.1:{port}", "test-token");
+        var ids = await control.ListAsync();
+        if (!ids.Contains("desk1")) throw new Exception("list must contain desk1, got: " + string.Join(",", ids));
+
+        var opts = new SshConnectionOptions
+        {
+            Host = "",
+            Username = "",
+            Port = 22,
+            GatewayUrl = $"ws://127.0.0.1:{port}",
+            GatewayToken = "test-token",
+            MirrorSessionId = "desk1",
+            ConnectTimeout = TimeSpan.FromSeconds(5)
+        };
+        using var svc = new SshService();
+        var sess = (TerminalV.Ssh.GatewaySshSession)svc.Create("m1", opts);
+        var received = new List<string>();
+        string? attached = null;
+        sess.DataReceived += d => { lock (received) received.Add(d); };
+        sess.Attached += id => attached = id;
+        await sess.ConnectAsync();
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (attached is null && DateTime.UtcNow < deadline) await Task.Delay(50);
+        if (attached != "desk1") throw new Exception("expected attached desk1, got: " + attached);
+        deadline = DateTime.UtcNow.AddSeconds(5);
+        while (true) { lock (received) { if (received.Count > 0) break; } if (DateTime.UtcNow > deadline) break; await Task.Delay(50); }
+        lock (received)
+        {
+            if (received.Count == 0) throw new Exception("no snapshot data after attach");
+            if (received.Any(d => d.Contains("\"attached\"") || d.Contains("\"sessions\"")))
+                throw new Exception("control frames leaked into terminal data: " + string.Join("|", received));
+        }
+        await sess.WriteAsync("ls\n");
+        await sess.ResizeAsync(100, 30);
+        deadline = DateTime.UtcNow.AddSeconds(5);
+        while ((!backend.Writes.Contains("ls\n") || backend.LastResize != (100, 30)) && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
+        if (!backend.Writes.Contains("ls\n")) throw new Exception("server did not receive write");
+        if (backend.LastResize != (100, 30)) throw new Exception("server did not receive resize");
+
+        var created = await control.CreateAsync(80, 24);
+        if (string.IsNullOrWhiteSpace(created)) throw new Exception("create must return a session id");
+        await control.KillAsync(created);
+        deadline = DateTime.UtcNow.AddSeconds(5);
+        while (!backend.Kills.Contains(created) && DateTime.UtcNow < deadline) await Task.Delay(50);
+        if (!backend.Kills.Contains(created)) throw new Exception("server did not receive kill");
+
+        using var badAuth = new TerminalV.Ssh.GatewayControlClient($"ws://127.0.0.1:{port}", "wrong");
+        try { await badAuth.ListAsync(); throw new Exception("wrong token must be rejected"); }
+        catch (InvalidOperationException) { }
+        catch (System.Net.WebSockets.WebSocketException) { }
+        catch (System.Net.Http.HttpRequestException) { }
+    }
+    finally
+    {
+        server.Stop();
+    }
+});
+
 Console.WriteLine($"Ssh checks: {passed} passed, {failed} failed.");
 if (failed > 0) Environment.Exit(1);
 
@@ -455,4 +582,43 @@ sealed class AmbiguousStream : System.IO.MemoryStream
 {
     public new int Read(System.Span<byte> buffer) => 0;
     public new void Write(System.ReadOnlySpan<byte> buffer) { }
+}
+
+sealed class FakeGatewayBackend : TerminalV.Gateway.IGatewaySessionBackend
+{
+    private readonly object _gate = new();
+    private readonly HashSet<string> _live;
+    public readonly List<string> Writes = new();
+    public readonly List<string> Kills = new();
+    public (int cols, int rows) LastResize;
+
+    public FakeGatewayBackend(IEnumerable<string> ids) { _live = new HashSet<string>(ids); }
+
+    public event Action<string, string>? Data;
+    public event Action<string, uint>? Exited;
+    public event Action<string, string>? DirectoryChanged;
+    public event Action<string, string>? Error;
+
+    public string[] LiveIds() { lock (_gate) return _live.ToArray(); }
+
+    public void Create(string id, int cols, int rows, string? cwd, string? shell, string? startupCommand, string? wslDistribution)
+    {
+        lock (_gate) _live.Add(id);
+    }
+
+    public void Attach(string id)
+    {
+        lock (_gate) { if (!_live.Contains(id)) throw new InvalidOperationException("gone"); }
+        Data?.Invoke(id, "snapshot:" + id);
+    }
+
+    public void Write(string id, string data) { lock (_gate) Writes.Add(data); }
+
+    public void Resize(string id, int cols, int rows) { lock (_gate) LastResize = (cols, rows); }
+
+    public void Kill(string id)
+    {
+        lock (_gate) { _live.Remove(id); Kills.Add(id); }
+        Exited?.Invoke(id, 0);
+    }
 }

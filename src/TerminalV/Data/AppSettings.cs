@@ -11,4 +11,7 @@ internal sealed class AppSettings
     public bool HardwareRendering { get; set; } = true;
     public string? BackgroundPath { get; set; }
     public double BackgroundOpacity { get; set; } = 0.25;
+    public bool GatewayEnabled { get; set; } = true;
+    public int GatewayPort { get; set; } = 5454;
+    public string GatewayToken { get; set; } = "";
 }

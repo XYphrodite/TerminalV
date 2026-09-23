@@ -1,54 +1,161 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ru">
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-    <title>TerminalV Mobile</title>
+    <title>TerminalV</title>
     <base href="/" />
+    <!-- Desktop UI assets (copied via CopyDesktopUi target from src/TerminalV/wwwroot/assets) -->
+    <script type="module" crossorigin src="./assets/index-BlGNZ6s8.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-BBHEd5cA.css">
+    <!-- Mobile bridge shim must load before desktop JS -->
+    <script src="js/mobile-bridge.js"></script>
     <link rel="stylesheet" href="css/app.css" />
-    <!-- xterm.js CSS from CDN with local fallback -->
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.css" />
     <style>
-        /* Isolation: terminal fills available BlazorWebView viewport */
+        /* Blazor Hybrid host — desktop UI is #app, Blazor overlay is on top */
         html, body { margin:0; padding:0; height:100%; background:#0B0D10; overflow:hidden; }
-        #app { height:100%; display:flex; flex-direction:column; }
-        #terminal-container { flex:1; padding:4px; }
-        .xterm { height:100%; }
+        #app { position:relative; z-index:1; }
+        #blazor-root { position:fixed; inset:0; z-index:9998; pointer-events:none; }
+        #blazor-root > * { pointer-events:auto; }
+        #blazor-error-ui { display:none; background:#2a3340; color:#E8EEF5; padding:8px; position:fixed; bottom:0; left:0; right:0; z-index:10000; }
+        #blazor-error-ui.show { display:block; }
+        #mobile-config-fab { pointer-events:auto; }
     </style>
 </head>
 <body>
+    <!-- Desktop UI — 1:1 parity with src/TerminalV/wwwroot/index.html -->
     <div id="app">
-        <div id="terminal-container"></div>
-        <div id="blazor-error-ui" style="display:none; background: #2a3340; color:#E8EEF5; padding:8px;">
-            An unhandled error has occurred.
-            <a href="" class="reload">Reload</a>
-            <a class="dismiss">🗙</a>
+      <aside id="sidebar">
+        <div class="sidebar-head">
+          <div class="sessions-heading"><span class="sessions-label">Сессии</span><span id="session-count" class="count-badge">0</span></div>
+          <div class="sidebar-head-actions">
+            <button id="search-btn" type="button" class="icon-btn" title="Поиск по выводу (Ctrl+Shift+F)" aria-label="Поиск по выводу" data-icon="search"></button>
+            <button id="settings-btn" type="button" class="icon-btn" title="Настройки (Ctrl+,)" aria-label="Настройки" data-icon="settings"></button>
+            <button id="collapse-btn" type="button" class="icon-btn" title="Свернуть список (Ctrl+B)" aria-label="Свернуть список сессий" aria-expanded="true" data-icon="sidebar"></button>
+          </div>
         </div>
+        <div class="session-tools">
+          <div class="session-filter-wrap"><span data-icon="search"></span><input id="session-filter" type="search" placeholder="Найти сессию…" aria-label="Поиск сессии по названию или группе" autocomplete="off" spellcheck="false" /></div>
+          <button id="hidden-sessions" type="button" class="ghost" aria-pressed="false" title="Показать скрытые сессии"><span data-icon="hidden"></span><span data-hidden-label>Скрытые · 0</span></button>
+        </div>
+        <div id="tabs" class="tabs" role="tablist" aria-label="Сессии"></div>
+        <div class="sidebar-foot">
+          <div id="new-tab-split" class="new-tab-split">
+            <button id="new-tab" type="button" title="Новая вкладка (Ctrl+Shift+T)" aria-label="Новая вкладка">
+              <span class="plus" data-icon="plus"></span>
+              <span class="new-tab-label">Новая вкладка</span>
+              <kbd class="new-tab-shortcut" aria-hidden="true">Ctrl ⇧ T</kbd>
+            </button>
+            <button id="new-tab-arrow" type="button" class="new-tab-arrow" title="Выбрать профиль" aria-label="Выбрать профиль для новой вкладки" aria-haspopup="dialog" aria-expanded="false" aria-controls="launch-menu"><span data-icon="chevron"></span></button>
+          </div>
+          <button id="launch-profiles-btn" type="button" class="ghost" title="Профили и оболочки" aria-label="Профили и оболочки" aria-haspopup="dialog" aria-expanded="false" aria-controls="launch-menu"><span data-icon="profiles"></span><span class="profile-button-label">Профили и оболочки</span><span class="profile-button-chevron" data-icon="chevron"></span></button>
+          <div id="update-bar" class="update-bar hidden">
+            <div id="update-text" class="update-text"></div>
+            <button id="update-apply" type="button">Обновить</button>
+          </div>
+          <div class="sidebar-signature"><span class="wordmark">Terminal<span>V</span></span><button id="app-version" type="button" class="version" title="Проверить обновления">v0.5.5</button></div>
+          <div class="author-credit">Автор: <a id="author-link" href="https://github.com/XYphrodite" target="_blank" rel="noopener noreferrer" title="Профиль XYphrodite на GitHub — открыть в браузере" aria-label="Автор XYphrodite — открыть профиль GitHub в браузере">XYphrodite</a></div>
+        </div>
+      </aside>
+      <main id="main">
+        <div id="pane-toolbar" class="pane-toolbar" role="group" aria-label="Разделение экрана" hidden>
+          <div class="workspace-context"><span class="workspace-icon" data-icon="terminal"></span><div class="workspace-labels"><div id="workspace-title">Терминал</div><div id="workspace-path" dir="auto"></div></div></div>
+          <div class="pane-actions">
+            <span id="pane-count" class="count-badge">Панели · 1</span>
+            <button id="split-right" type="button" class="ghost" title="Разделить справа (Alt+Shift+=)" aria-label="Разделить справа"><span data-icon="right"></span><span class="action-label">Справа</span></button>
+            <button id="split-down" type="button" class="ghost" title="Разделить снизу (Alt+Shift+-)" aria-label="Разделить снизу"><span data-icon="down"></span><span class="action-label">Снизу</span></button>
+            <button id="detach-pane" type="button" class="ghost" title="Показать активную панель отдельно, не завершая сессию" aria-label="Отделить панель"><span data-icon="detach"></span></button>
+          </div>
+        </div>
+        <section id="terminal-search" class="terminal-search" role="search" aria-label="Поиск по выводу текущей вкладки" hidden>
+          <input type="text" data-search-input aria-label="Найти в текущей вкладке" placeholder="Найти в текущей вкладке" autocomplete="off" spellcheck="false" />
+          <span class="search-count" data-search-count role="status" aria-live="polite" aria-atomic="true"></span>
+          <div class="search-actions">
+            <button type="button" data-search-case aria-label="Учитывать регистр" aria-pressed="false" title="Учитывать регистр">Aa</button>
+            <button type="button" data-search-previous aria-label="Предыдущее совпадение" title="Предыдущее совпадение (Shift+Enter)" data-icon="up" disabled></button>
+            <button type="button" data-search-next aria-label="Следующее совпадение" title="Следующее совпадение (Enter)" data-icon="arrowDown" disabled></button>
+            <button type="button" data-search-close aria-label="Закрыть поиск" title="Закрыть поиск (Esc)" data-icon="close"></button>
+          </div>
+        </section>
+        <div id="cwd-notice" class="cwd-notice" role="status" hidden>
+          <span></span>
+          <button type="button" class="icon-btn" aria-label="Закрыть уведомление о папке" title="Закрыть уведомление" data-icon="close"></button>
+        </div>
+        <div id="panes"></div>
+        <div id="empty" class="empty hidden">
+          <div class="empty-mark" data-icon="terminal"></div>
+          <div class="empty-eyebrow">ВАШЕ РАБОЧЕЕ ПРОСТРАНСТВО</div>
+          <div class="empty-title">Начнём с терминала</div>
+          <div class="empty-sub">Откройте новую сессию или вернитесь к скрытой в списке слева.</div>
+          <button type="button" id="empty-new"><span data-icon="plus"></span>Запустить оболочку</button>
+          <div class="empty-shortcuts"><span><kbd>Ctrl ⇧ T</kbd> новая сессия</span><span><kbd>Ctrl ⇧ F</kbd> поиск по выводу</span></div>
+        </div>
+      </main>
     </div>
 
-    <!-- Blazor Hybrid WebView bootstrap -->
+    <div id="notification-status" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
+    <div id="settings" class="settings hidden" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+      <div class="settings-panel">
+        <div class="settings-head">
+          <div><div class="settings-eyebrow">TERMINALV ПОД ВАС</div><h2 id="settings-title">Настройки</h2></div>
+          <button id="settings-close" type="button" class="icon-btn" title="Закрыть (Esc)" aria-label="Закрыть настройки" data-icon="close"></button>
+        </div>
+        <label class="field-label">Тема</label>
+        <div id="theme-grid" class="theme-grid"></div>
+        <div class="settings-section-label">Типографика</div>
+        <label class="field-label" for="font-family">Шрифт терминала</label>
+        <select id="font-family"></select>
+        <label class="field-label" for="font-size">Размер шрифта <span id="font-size-value">14</span></label>
+        <input id="font-size" type="range" min="10" max="22" step="1" value="14" />
+        <div class="zoom-row">Масштаб как в VS Code: Ctrl + / − / 0<span id="zoom-value">100%</span></div>
+        <div class="settings-section-label">Панель сессий</div>
+        <label class="field-label" for="session-density">Высота элемента сессии</label>
+        <select id="session-density"><option value="standard">Стандарт</option><option value="minimal">Минимальная</option></select>
+        <div class="settings-section-label">Фон сессий</div>
+        <div class="bg-row"><button id="bg-pick" type="button"><span data-icon="image"></span>Выбрать фото</button><button id="bg-clear" type="button" class="ghost">Убрать</button></div>
+        <label class="field-label" for="bg-opacity">Прозрачность фото <span id="bg-opacity-value">25%</span></label>
+        <input id="bg-opacity" type="range" min="0" max="80" step="1" value="25" />
+        <div class="settings-section-label">Рендеринг</div>
+        <label class="shortcut-option"><input id="hardware-rendering" type="checkbox" checked /> Аппаратный рендеринг (WebGL)</label>
+        <div class="settings-section-label">Удалённый доступ (TerminalV Mobile)</div>
+        <label class="shortcut-option"><input id="gateway-enabled" type="checkbox" checked /> Шлюз зеркала сессий (ws://:5454)</label>
+        <label class="field-label" for="gateway-port">Порт шлюза</label>
+        <input id="gateway-port" type="number" min="1" max="65535" value="5454" />
+        <label class="field-label" for="gateway-token">Токен шлюза</label>
+        <div class="bg-row"><input id="gateway-token" type="text" readonly autocomplete="off" spellcheck="false" /><button id="gateway-copy" type="button" class="ghost">Копировать</button><button id="gateway-regen" type="button" class="ghost">Новый</button></div>
+        <p id="gateway-status" class="shortcut-status" role="status" aria-live="polite" aria-atomic="true"></p>
+        <p id="gateway-hint" class="shortcut-hint"></p>
+        <section id="shortcut-settings" aria-labelledby="shortcuts-title">
+          <h3 id="shortcuts-title" class="settings-section-label">Ярлыки приложения</h3>
+          <p class="shortcut-hint" id="shortcuts-hint">Быстрый запуск этой копии TerminalV, в том числе из ZIP. При переносе папки приложения старые ярлыки нужно заменить.</p>
+          <label class="shortcut-option"><input id="shortcut-start-menu" type="checkbox" checked disabled /> Меню «Пуск»</label>
+          <label class="shortcut-option"><input id="shortcut-desktop" type="checkbox" disabled /> Рабочий стол</label>
+          <button id="create-shortcuts" type="button" class="ghost" aria-describedby="shortcuts-hint" disabled>Создать ярлыки</button>
+          <p id="shortcuts-status" class="shortcut-status" role="status" aria-live="polite" aria-atomic="true"></p>
+        </section>
+      </div>
+    </div>
+    <dialog id="paste-confirmation" class="confirmation-dialog" role="alertdialog" aria-labelledby="paste-title" aria-describedby="paste-description">
+      <div class="confirmation-content"><h2 id="paste-title">Предупреждение</h2><p id="paste-description">Вы собираетесь вставить текст, содержащий несколько строк. Если вы вставите этот текст в оболочку, это может привести к непреднамеренному выполнению команд. Продолжить?</p><p id="paste-preview-label" class="paste-preview-label">Содержимое буфера обмена (предварительный просмотр):</p><pre class="paste-preview" data-paste-preview tabindex="0" aria-labelledby="paste-preview-label"></pre><p class="paste-preview-truncated" data-paste-truncated hidden>Показано начало текста. При подтверждении будет вставлен весь текст.</p></div>
+      <div class="confirmation-actions"><button type="button" class="paste-confirm" data-paste-confirm>Вставить в любом случае</button><button type="button" class="paste-cancel" data-paste-cancel autofocus>Отмена</button></div>
+    </dialog>
+    <dialog id="close-confirmation" class="confirmation-dialog" role="alertdialog" aria-labelledby="close-title" aria-describedby="close-description close-session-name">
+      <div class="confirmation-content"><h2 id="close-title">Завершить сессию?</h2><p id="close-session-name" class="close-session-name" data-close-name></p><p id="close-description">Закрытие вкладки остановит оболочку и запущенные в этой сессии программы. Несохранённые данные могут быть потеряны.</p></div>
+      <div class="confirmation-actions"><button type="button" class="close-confirm" data-close-confirm>Завершить сессию</button><button type="button" class="paste-cancel" data-close-cancel autofocus>Отмена</button></div>
+    </dialog>
+    <dialog id="session-options" class="confirmation-dialog" aria-labelledby="session-options-title">
+      <form><div class="confirmation-content"><h2 id="session-options-title">Управление сессией</h2><p class="close-session-name" data-session-name></p><label class="field-label" for="session-group">Группа проекта</label><input id="session-group" data-session-group type="text" maxlength="80" list="session-groups" placeholder="Без группы" autocomplete="off" /><datalist id="session-groups"></datalist><label class="field-label" for="session-color">Цветовая метка</label><select id="session-color" data-session-color><option value="">Без метки</option></select><label class="session-pin-field"><input type="checkbox" data-session-pinned /> Закрепить вверху группы</label><label class="session-pin-field"><input type="checkbox" data-session-muted /> Без звука для этой сессии</label><p class="notification-hint">Сигналы неактивной вкладки подсвечиваются даже без звука.</p></div><div class="confirmation-actions"><button type="submit" class="paste-confirm">Сохранить</button><button type="button" class="paste-cancel" data-session-cancel>Отмена</button><button type="button" class="ghost session-hide" data-session-hide>Скрыть, оставив работать</button></div></form>
+    </dialog>
+    <dialog id="launch-menu" class="launch-menu" aria-labelledby="launch-menu-title">
+      <div class="launch-menu-head"><h2 id="launch-menu-title">Новая сессия</h2><button type="button" class="icon-btn" data-launch-close aria-label="Закрыть меню" title="Закрыть (Esc)" data-icon="close"></button></div><div class="launch-section-label">Сохранённые профили</div><div data-launch-profiles></div><div class="launch-section-label">Оболочки</div><div data-launch-targets></div><p class="launch-status" data-launch-status role="status" aria-live="polite"></p><div class="launch-menu-foot"><button type="button" data-launch-new data-launch-key="new"><span data-icon="plus"></span>Создать профиль</button><button type="button" class="icon-btn" data-launch-refresh data-launch-key="refresh" aria-label="Обновить список оболочек и WSL" title="Обновить список оболочек и WSL" data-icon="restore"></button></div>
+    </dialog>
+    <dialog id="launch-profiles" class="confirmation-dialog" aria-labelledby="launch-profiles-title">
+      <form><div class="confirmation-content"><h2 id="launch-profiles-title">Создать профиль</h2><fieldset><legend class="sr-only">Параметры запуска</legend><label class="field-label" for="profile-title">Название вкладки</label><input id="profile-title" data-profile-title type="text" maxlength="80" required autocomplete="off" /><div class="profile-columns"><div><label class="field-label" for="profile-shell">Оболочка</label><select id="profile-shell" data-profile-shell></select></div><div><label class="field-label" for="profile-color">Цветовая метка</label><select id="profile-color" data-profile-color><option value="">Без метки</option></select></div></div><label class="field-label" for="profile-cwd">Стартовая папка</label><input id="profile-cwd" data-profile-cwd type="text" maxlength="2048" placeholder="Домашняя папка" autocomplete="off" spellcheck="false" /><label class="field-label" for="profile-command">Стартовая команда (необязательно)</label><textarea id="profile-command" data-profile-command rows="3" maxlength="4096" spellcheck="false" placeholder="Например: muse"></textarea><p class="notification-hint">Команда выполняется при явном запуске или перезапуске сессии, но не при подключении к работающей. Вводите только команды, которым доверяете. Для cmd — одна строка.</p><div class="profile-actions"><button type="submit" class="ghost" data-profile-save>Сохранить</button><button type="submit" class="paste-confirm" data-profile-launch>Создать и запустить</button><button type="button" class="ghost" data-profile-delete>Удалить…</button></div><div class="profile-delete-confirm" data-profile-delete-confirm hidden><p>Удалить профиль «<span data-profile-delete-name></span>»? Работающие сессии не изменятся.</p><button type="button" class="close-confirm" data-profile-confirm-delete>Удалить профиль</button><button type="button" class="ghost" data-profile-keep>Отмена</button></div></fieldset><p class="profile-status" data-profile-error role="status" aria-live="polite"></p><button type="button" class="paste-cancel profile-close" data-profile-cancel>Закрыть без изменений</button></div></form>
+    </dialog>
+
+    <!-- Blazor Hybrid host (hidden) — hosts MobileBridge via DotNet interop -->
+    <div id="blazor-root"></div>
+    <div id="blazor-error-ui"><span>An unhandled error has occurred.</span><a href="" class="reload">Reload</a><a class="dismiss">🗙</a></div>
     <script src="_framework/blazor.webview.js" autostart="false"></script>
-
-    <!-- xterm.js from CDN (isolated, no npm build required) -->
-    <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.12.0/lib/addon-web-links.js"></script>
-
-    <!-- Fallback to local if CDN unavailable (isolation: works offline after first cache) -->
-    <script>
-        if (typeof Terminal === 'undefined') {
-            document.write('<script src="js/xterm.js"><\/script>');
-        }
-    </script>
-
-    <script src="js/terminal.js"></script>
-    <script>
-        // Blazor interop isolation: terminal does not depend on Blazor lifecycle
-        window.terminalInterop = {
-            create: function(id, cols, rows) { return window.TerminalV ? window.TerminalV.create(id, cols, rows) : null; },
-            write: function(id, data) { if (window.TerminalV) window.TerminalV.write(id, data); },
-            resize: function(id, cols, rows) { if (window.TerminalV) window.TerminalV.resize(id, cols, rows); }
-        };
-    </script>
 </body>
 </html>

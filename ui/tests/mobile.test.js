@@ -59,10 +59,52 @@ test("Mobile Home has connection form with Host/Port/User/Password/Gateway and t
   assert.match(home, /Пользователь/, "User field");
   assert.match(home, /Пароль/, "Password field");
   assert.match(home, /Gateway/, "Gateway toggle");
-  assert.match(home, /Подключиться/, "Connect button");
-  assert.match(home, /SshService/, "uses SshService");
-  assert.match(home, /SshConnectionOptions/, "uses SshConnectionOptions");
-  assert.match(home, /terminal-container/, "terminal pane");
-  assert.match(home, /terminalInterop\.create/, "creates terminal");
-  assert.match(home, /DataReceived/, "handles DataReceived");
+  // parity: Home now hosts desktop UI via bridge, primary button text changed but connection fields persist
+  assert.match(home, /Сохранить и показать терминал|Подключиться/, "Save/Connect button");
+  assert.match(home, /SshService|MobileBridge/, "uses SshService or MobileBridge");
+  assert.match(home, /SshConnectionOptions|MobileDataStore/, "uses connection/storage");
+});
+
+test("Mobile parity: wwwroot hosts desktop UI and bridge shim", () => {
+  const html = readFileSync(r("src/TerminalV.Mobile/wwwroot/index.html"), "utf8");
+  assert.match(html, /id="app"/, "desktop #app");
+  assert.match(html, /id="sidebar"/, "sidebar");
+  assert.match(html, /id="tabs"/, "tabs");
+  assert.match(html, /id="panes"/, "panes");
+  assert.match(html, /id="new-tab-split"/, "new-tab split");
+  assert.match(html, /js\/mobile-bridge\.js/, "mobile bridge shim");
+  assert.match(html, /assets\/index-.*\.js/, "desktop bundle");
+  assert.match(html, /assets\/index-.*\.css/, "desktop styles");
+  assert.match(html, /blazor-root/, "blazor root isolated");
+  assert.match(html, /blazor\.webview\.js/, "blazor bootstrap");
+});
+
+test("MobileBridge handles desktop protocol and persists via Preferences", () => {
+  const bridge = readFileSync(r("src/TerminalV.Mobile/Host/MobileBridge.cs"), "utf8");
+  assert.match(bridge, /class MobileBridge/, "MobileBridge exists");
+  assert.match(bridge, /SendInit/, "SendInit");
+  assert.match(bridge, /Handle\(string json\)/, "Handle json");
+  assert.match(bridge, /case "create"/, "handles create");
+  assert.match(bridge, /case "write"/, "handles write");
+  assert.match(bridge, /case "resize"/, "handles resize");
+  assert.match(bridge, /case "persist-settings"/, "persists settings");
+  assert.match(bridge, /MobileDataStore/, "uses MobileDataStore");
+  assert.match(bridge, /__tvDispatch/, "dispatches to JS");
+  const shim = readFileSync(r("src/TerminalV.Mobile/wwwroot/js/mobile-bridge.js"), "utf8");
+  assert.match(shim, /chrome\.webview/, "shims chrome.webview");
+  assert.match(shim, /__tvDispatch/, "dispatch helper");
+  assert.match(shim, /DotNet\.invokeMethodAsync/, "calls DotNet");
+  const store = readFileSync(r("src/TerminalV.Mobile/Host/MobileDataStore.cs"), "utf8");
+  assert.match(store, /Preferences\.Default/, "Preferences storage");
+  assert.match(store, /LoadSettings|SaveSettings/, "settings");
+  assert.match(store, /LoadSessions|SaveSessions/, "sessions");
+});
+
+test("Mobile csproj copies desktop UI assets and links Data", () => {
+  const csproj = readFileSync(r("src/TerminalV.Mobile/TerminalV.Mobile.csproj"), "utf8");
+  assert.match(csproj, /CopyDesktopUi/, "CopyDesktopUi target");
+  assert.match(csproj, /TerminalV\\wwwroot\\assets/, "copies assets");
+  assert.match(csproj, /AppSettings\.cs/, "links AppSettings");
+  assert.match(csproj, /SessionRecord\.cs/, "links SessionRecord");
+  assert.match(csproj, /PaneLayout\.cs/, "links PaneLayout");
 });

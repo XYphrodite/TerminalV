@@ -21,4 +21,6 @@ await session.ReconnectAsync();
 
 Gateway mode: set `GatewayUrl` (ws:// or wss:// or http(s) converted) + optional `GatewayToken`. Then `GatewaySshSession` uses `ClientWebSocket` with query params + JSON handshake.
 
+Mirror mode (desktop session duplication): point `GatewayUrl` at a TerminalV mirror gateway (`ws://pc:5454`, served by `src/TerminalV/Gateway/GatewayServer`) and set `MirrorSessionId` to a live desktop session id. The handshake carries `sessionId`, the server attaches the live ConPTY (snapshot replay + live stream) instead of proxying SSH. Server bookkeeping frames (`attached`/`created`/`sessions`/`cwd`, see `GatewayProtocol`) never reach the terminal. One `GatewaySshSession` = one mirrored tab (own WebSocket); `GatewayControlClient` (control handshake, no session) lists (`list` → `sessions`), creates (`create` → `attached`) and kills desktop sessions. Auth: `Authorization: Bearer <token>` (desktop: Settings → Remote access); empty server token allows LAN without auth.
+
 Requires: `dotnet add package SSH.NET` (Renci.SshNet / SSH.NET). Reflection fallback allows build without package.

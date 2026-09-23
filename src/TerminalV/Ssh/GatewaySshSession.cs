@@ -23,6 +23,14 @@ public sealed class GatewaySshSession : SshSessionBase
         if (!options.UseGateway) throw new ArgumentException("GatewayUrl required for GatewaySshSession.", nameof(options));
     }
 
+    /// <summary>
+    /// Desktop session id reported by the mirror gateway
+    /// ({type:"attached"/"created"}). Null until the server replies.
+    /// </summary>
+    public string? AttachedSessionId { get; private set; }
+
+    public event Action<string>? Attached;
+
     public override async Task ConnectAsync(CancellationToken cancellationToken = default)
     {
         if (IsDisposed) throw new ObjectDisposedException(nameof(GatewaySshSession));
@@ -42,7 +50,9 @@ public sealed class GatewaySshSession : SshSessionBase
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeoutCts.CancelAfter(_options.ConnectTimeout);
             await ws.ConnectAsync(uri, timeoutCts.Token).ConfigureAwait(false);
-            // Handshake: send auth + terminal info as JSON text frame
+            // Handshake: send auth + terminal info as JSON text frame.
+            // Mirror mode adds sessionId so the gateway attaches a live
+            // desktop session instead of proxying SSH (see GatewayProtocol).
             var handshake = new
             {
                 type = "connect",
@@ -52,6 +62,7 @@ public sealed class GatewaySshSession : SshSessionBase
                 password = _options.Password,
                 privateKey = _options.PrivateKeyContent,
                 keyPassphrase = _options.PrivateKeyPassphrase,
+                sessionId = _options.MirrorSessionId,
                 term = TerminalType,
                 cols = Columns,
                 rows = Rows
@@ -161,6 +172,10 @@ public sealed class GatewaySshSession : SshSessionBase
                 if (result.MessageType == WebSocketMessageType.Text)
                 {
                     var text = Encoding.UTF8.GetString(payload);
+                    // Mirror-gateway bookkeeping (attached/sessions/cwd) must
+                    // never leak into the terminal as raw text.
+                    if (HandleControlMessage(text))
+                        continue;
                     // Gateway may send JSON {type:"data", data:"..."} or {type:"error"}
                     if (TryParseGatewayMessage(text, out var data, out var err, out var code))
                     {
@@ -196,6 +211,31 @@ public sealed class GatewaySshSession : SshSessionBase
         if (State == SshSessionState.Connected) { State = SshSessionState.Disconnected; RaiseClosed(null); }
     }
 
+    /// <summary>
+    /// Consumes mirror-gateway control replies. Returns true when the frame
+    /// was bookkeeping and must not reach the terminal.
+    /// </summary>
+    private bool HandleControlMessage(string text)
+    {
+        if (!GatewayProtocol.TryGetType(text, out var type) || !GatewayProtocol.IsControlReply(type))
+            return false;
+        if ((type == GatewayProtocol.Attached || type == GatewayProtocol.Created))
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(text);
+                if (doc.RootElement.TryGetProperty("id", out var idEl) &&
+                    idEl.GetString() is { Length: > 0 } id)
+                {
+                    AttachedSessionId = id;
+                    Attached?.Invoke(id);
+                }
+            }
+            catch (JsonException) { }
+        }
+        return true;
+    }
+
     private static bool TryParseGatewayMessage(string json, out string? data, out string? error, out int? exitCode)
     {
         data = null; error = null; exitCode = null;
@@ -223,6 +263,8 @@ public sealed class GatewaySshSession : SshSessionBase
             baseUrl = "wss://" + baseUrl[8..];
         var sep = baseUrl.Contains('?') ? "&" : "?";
         var ub = $"{baseUrl}{sep}host={Uri.EscapeDataString(o.Host)}&port={o.Port}&user={Uri.EscapeDataString(o.Username)}&cols={Math.Clamp(o.Columns,1,1000)}&rows={Math.Clamp(o.Rows,1,1000)}&term={Uri.EscapeDataString(string.IsNullOrWhiteSpace(o.TerminalType) ? "xterm-256color" : o.TerminalType)}";
+        if (!string.IsNullOrWhiteSpace(o.MirrorSessionId))
+            ub += $"&sessionId={Uri.EscapeDataString(o.MirrorSessionId)}";
         return new Uri(ub);
     }
 }

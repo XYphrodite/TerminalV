@@ -10,5 +10,7 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="../../src/TerminalV/Ssh/*.cs" Link="Ssh/%(Filename)%(Extension)" />
+    <Compile Include="../../src/TerminalV/Gateway/GatewayServer.cs" Link="Gateway/GatewayServer.cs" />
+    <Compile Include="../../src/TerminalV/Gateway/IGatewaySessionBackend.cs" Link="Gateway/IGatewaySessionBackend.cs" />
   </ItemGroup>
 </Project>

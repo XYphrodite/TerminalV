@@ -14,6 +14,12 @@ public sealed class SshConnectionOptions
     public string? PrivateKeyPassphrase { get; set; }
     public string? GatewayUrl { get; set; }
     public string? GatewayToken { get; set; }
+    /// <summary>
+    /// Mirror mode: attach to a live desktop ConPTY session with this id
+    /// instead of opening a proxied SSH shell. Requires <see cref="GatewayUrl"/>
+    /// pointing at a TerminalV mirror gateway; host/user/password are unused.
+    /// </summary>
+    public string? MirrorSessionId { get; set; }
     public TailscaleOptions Tailscale { get; set; } = new();
     public bool UseTailscale => Tailscale.Enabled;
     public string TerminalType { get; set; } = "xterm-256color";
@@ -26,14 +32,18 @@ public sealed class SshConnectionOptions
     public bool UseGateway => !string.IsNullOrWhiteSpace(GatewayUrl);
     public void Validate()
     {
-        if (string.IsNullOrWhiteSpace(Host) || Host.Any(char.IsControl) || Host.Length > 253)
-            throw new ArgumentException("Укажите корректный хост.", nameof(Host));
+        var mirror = UseGateway && !string.IsNullOrWhiteSpace(MirrorSessionId);
+        if (!mirror)
+        {
+            if (string.IsNullOrWhiteSpace(Host) || Host.Any(char.IsControl) || Host.Length > 253)
+                throw new ArgumentException("Укажите корректный хост.", nameof(Host));
+            if (string.IsNullOrWhiteSpace(Username) || Username.Any(char.IsControl) || Username.Length > 128)
+                throw new ArgumentException("Укажите имя пользователя.", nameof(Username));
+            if (Host.Contains(' ') || Host.Contains('\0'))
+                throw new ArgumentException("Хост содержит недопустимые символы.", nameof(Host));
+        }
         if (Port is < 1 or > 65535)
             throw new ArgumentException("Порт должен быть 1..65535.", nameof(Port));
-        if (string.IsNullOrWhiteSpace(Username) || Username.Any(char.IsControl) || Username.Length > 128)
-            throw new ArgumentException("Укажите имя пользователя.", nameof(Username));
-        if (Host.Contains(' ') || Host.Contains('\0'))
-            throw new ArgumentException("Хост содержит недопустимые символы.", nameof(Host));
         if (TerminalType is null || string.IsNullOrWhiteSpace(TerminalType) || TerminalType.Any(char.IsControl) || TerminalType.Length > 64)
             throw new ArgumentException("Некорректный тип терминала.", nameof(TerminalType));
         if (Columns is < 1 or > 1000 || Rows is < 1 or > 1000)
