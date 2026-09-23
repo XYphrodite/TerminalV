@@ -23,6 +23,7 @@ import { createPaneView } from "./pane-view.js";
 import { createShortcuts } from "./shortcuts.js";
 import { WRITE_CHUNK, chunkText } from "./write-chunk.js";
 import { shouldStoreAsFile, PASTE_FILE_STORE_TIMEOUT_MS } from "./paste-file.js";
+import { wantsAppWheel } from "./tui-scroll.js";
 
 mountIcons(document);
 
@@ -406,10 +407,22 @@ function applyBackground(pane) {
   }
 }
 
+function isMouseReporting(tab) {
+  return Boolean(tab.term.element?.classList.contains("enable-mouse-events"));
+}
+
+function wheelTarget(tab, event) {
+  return wantsAppWheel({
+    tuiLock: tab.host.classList.contains("tui-lock"),
+    mouseMode: isMouseReporting(tab),
+    zoomModifier: Boolean(event.ctrlKey || event.metaKey)
+  }) ? "app" : "terminal";
+}
+
 function isTui(tab) {
   return (
     tab.term.buffer.active.type === "alternate" ||
-    Boolean(tab.term.element?.classList.contains("enable-mouse-events")) ||
+    isMouseReporting(tab) ||
     Boolean(tab.tuiHint)
   );
 }
@@ -1303,6 +1316,11 @@ function newTab(options = {}) {
       if (event.ctrlKey || event.metaKey) {
         return;
       }
+      // A mouse-interactive TUI (own scrollbar) gets the wheel itself;
+      // xterm forwards it as mouse reports. Other TUIs stay pinned.
+      if (wheelTarget(tab, event) === "app") {
+        return;
+      }
       event.preventDefault();
       pinViewport(tab);
     },
@@ -1321,9 +1339,13 @@ function newTab(options = {}) {
     if (!tab.host.classList.contains("tui-lock")) {
       return true;
     }
-    if (!(event.ctrlKey || event.metaKey)) {
-      event.preventDefault();
+    if (event.ctrlKey || event.metaKey) {
+      return true;
     }
+    if (wheelTarget(tab, event) === "app") {
+      return true;
+    }
+    event.preventDefault();
     return true;
   });
   syncScrollLock(tab);

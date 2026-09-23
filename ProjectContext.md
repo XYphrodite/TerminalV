@@ -308,8 +308,10 @@ TUI v0.6.7: рваный верх `muse` после ресайза — `applyFit
 
 Сайдбар v0.6.16: в свёрнутом режиме `.tab-options` скрыт всегда (`display:none !important`, без re-show на hover/active/focus). Подробности — `docs/releases/v0.6.16.md`.
 
+Скролл v0.6.17: в `tui-lock` колесо уходит приложению при включённом mouse-режиме (`wantsAppWheel` в `ui/src/tui-scroll.js`, `wheelTarget` в `main.js`). Подробности — `docs/releases/v0.6.17.md`.
+
 **Last Updated**: 2026-09-23
-**Version**: 0.6.16
+**Version**: 0.6.17
 **Status**: Active  
 **Repository**: `https://github.com/XYphrodite/TerminalV`  
 **Workspace**: `C:\Repos\TerminalV`
