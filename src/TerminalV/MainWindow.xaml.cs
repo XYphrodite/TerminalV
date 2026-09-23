@@ -20,7 +20,7 @@ public partial class MainWindow : Window
         WebView.DefaultBackgroundColor = System.Drawing.Color.FromArgb(255, 11, 13, 16);
         Loaded += OnLoaded;
         Closing += OnClosing;
-        Closed += (_, _) => _bridge?.Dispose();
+        Closed += (_, _) => { _bridge?.Dispose(); PasteFileStore.Cleanup(); };
         UpdateMaximizeGlyph();
     }
 

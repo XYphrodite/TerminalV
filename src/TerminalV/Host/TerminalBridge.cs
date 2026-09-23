@@ -178,6 +178,9 @@ internal sealed class TerminalBridge : IDisposable
             case "clipboard-read":
                 PostClipboard(message.RequestId);
                 break;
+            case "paste-file-store":
+                StorePasteFile(message.RequestId, message.Data);
+                break;
             case "clipboard-write":
                 if (!string.IsNullOrEmpty(message.Data))
                 {
@@ -654,6 +657,30 @@ internal sealed class TerminalBridge : IDisposable
             }
 
             Post(new { type = "clipboard-data", requestId, data });
+        });
+    }
+
+    private void StorePasteFile(string? requestId, string? data)
+    {
+        if (string.IsNullOrEmpty(data))
+        {
+            Post(new { type = "paste-file-stored", requestId, error = "empty clipboard" });
+            return;
+        }
+
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                var path = PasteFileStore.Save(data);
+                Diag.Log("bridge", $"paste-file stored len={data.Length} path={path}", null);
+                Post(new { type = "paste-file-stored", requestId, path });
+            }
+            catch (Exception ex)
+            {
+                Diag.Log("bridge", $"paste-file store failed: {ex.Message}", null);
+                Post(new { type = "paste-file-stored", requestId, error = ex.Message });
+            }
         });
     }
 

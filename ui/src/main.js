@@ -22,6 +22,7 @@ import { normalizeLayouts, layoutFor, leafIds, splitSession, detachSession, layo
 import { createPaneView } from "./pane-view.js";
 import { createShortcuts } from "./shortcuts.js";
 import { WRITE_CHUNK, chunkText } from "./write-chunk.js";
+import { shouldStoreAsFile, PASTE_FILE_STORE_TIMEOUT_MS } from "./paste-file.js";
 
 mountIcons(document);
 
@@ -69,6 +70,7 @@ let fitRaf = 0;
 let ignoreFitUntil = 0;
 let readyForPersist = false;
 const clipboardWaiters = new Map();
+const pasteFileWaiters = new Map();
 let draggedTabId = null;
 
 const settings = {
@@ -83,7 +85,7 @@ const settings = {
 
 const pasteController = createPasteController({
   dialog: document.getElementById("paste-confirmation"),
-  readClipboard,
+  readClipboard: readClipboardForPaste,
   canPaste: (tab) => tabs.includes(tab) && tab.id === activeId && !tab.exited && !closeController.isOpen && !sessionOptions.isOpen && !launchProfiles.isOpen && !launchMenu.isOpen,
   restoreFocus: () => currentTab()?.term.focus()
 });
@@ -992,6 +994,36 @@ async function readClipboard() {
   }
 }
 
+// Large pastes go to a host temp file; the path is pasted instead of the
+// text. On store failure or timeout the original text is pasted as before.
+async function readClipboardForPaste() {
+  const text = await readClipboard();
+  if (!shouldStoreAsFile(text)) {
+    return text;
+  }
+  const path = await storePasteAsFile(text);
+  if (!path) {
+    return text;
+  }
+  diag("ui", `paste-file stored len=${text.length} path=${path}`);
+  return path;
+}
+
+function storePasteAsFile(text) {
+  return new Promise((resolve) => {
+    const requestId = uuid();
+    pasteFileWaiters.set(requestId, resolve);
+    post({ type: "paste-file-store", requestId, data: text });
+    setTimeout(() => {
+      if (pasteFileWaiters.has(requestId)) {
+        pasteFileWaiters.delete(requestId);
+        diag("ui", "paste-file store timeout, falling back to text");
+        resolve(null);
+      }
+    }, PASTE_FILE_STORE_TIMEOUT_MS);
+  });
+}
+
 function isZoomEvent(event) {
   if (!(event.ctrlKey || event.metaKey) || event.altKey) {
     return false;
@@ -1615,6 +1647,15 @@ function handleHost(message) {
     if (waiter) {
       clipboardWaiters.delete(message.requestId);
       waiter(message.data ?? "");
+    }
+    return;
+  }
+
+  if (message.type === "paste-file-stored") {
+    const waiter = pasteFileWaiters.get(message.requestId);
+    if (waiter) {
+      pasteFileWaiters.delete(message.requestId);
+      waiter(message.path ?? null);
     }
     return;
   }

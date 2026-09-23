@@ -304,8 +304,10 @@ TUI v0.6.7: рваный верх `muse` после ресайза — `applyFit
 
 Окно v0.6.14: минимум опущен до 560×360 (только `MinWidth`/`MinHeight` в XAML, хук v0.6.13 подхватил сам). Подробности — `docs/releases/v0.6.14.md`.
 
-**Last Updated**: 2026-09-22
-**Version**: 0.6.14
+Вставка v0.6.15: тексты длиннее 4000 символов сохраняются хостом в `%TEMP%\TerminalV\pastes\`, в терминал вставляется путь (`paste-file-store`/`paste-file-stored`, фолбэк на текст при ошибке/таймауте, чистка в `Closed`). Подробности — `docs/releases/v0.6.15.md`.
+
+**Last Updated**: 2026-09-23
+**Version**: 0.6.15
 **Status**: Active  
 **Repository**: `https://github.com/XYphrodite/TerminalV`  
 **Workspace**: `C:\Repos\TerminalV`
