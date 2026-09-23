@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { normalizeLayouts, leafIds, layoutFor, layoutGeometry, splitSession, detachSession,
-  neighborPane, paneShortcut, MAX_PANES, MAX_SPLIT_LEVEL, isSplitChild, isSplitParent, splitIndentLevel } from "../src/pane-layout.js";
+  neighborPane, paneShortcut, MAX_PANES, MAX_SPLIT_LEVEL, isSplitChild, isSplitParent, splitIndentLevel, splitWouldNest } from "../src/pane-layout.js";
 
 const leaf = (sessionId) => ({ sessionId });
 const branch = (first, second, axis = "columns", ratio = .5) => ({ axis, ratio, first, second });
@@ -28,13 +28,11 @@ test("malformed, deep and oversized trees cannot drop a session or recurse indef
 test("splitting grows only flat layouts and keeps other views intact", () => {
   const initial = [leaf("a"), leaf("other")];
   const two = splitSession(initial, "a", "b", "columns");
-  // splitting the child b would nest: refused with views untouched
-  assert.equal(splitSession(two, "b", "c", "rows"), two);
+  // splitting the child b adds c as a sibling under the same parent
+  const three = splitSession(two, "b", "c", "rows");
+  assert.deepEqual(three[0], branch(branch(leaf("a"), leaf("b")), leaf("c"), "rows"));
   assert.deepEqual(initial, [leaf("a"), leaf("other")]);
   assert.equal(two[1], initial[1]);
-  // splitting the root-first a stays flat
-  const three = splitSession(two, "a", "c", "columns");
-  assert.deepEqual(three[0], branch(branch(leaf("a"), leaf("c")), leaf("b")));
   assert.equal(splitSession(three, "a", "c", "columns"), three);
   assert.equal(splitSession(three, "missing", "d", "columns"), three);
 });
@@ -98,21 +96,33 @@ test("split child/parent are detectable for sidebar rendering", () => {
   assert.equal(isSplitParent(detached, "a"), true);
 });
 
-test("second-degree splits are refused, all children stay top-level", () => {
+test("split child joins the same parent, never nests deeper", () => {
   const base = [leaf("a"), leaf("other")];
   const split = splitSession(base, "a", "b", "columns");
   assert.equal(leafIds(split[0]).join(","), "a,b");
-  // splitting the child b would nest c at level 2: refused unchanged
-  const refused = splitSession(split, "b", "c", "rows");
-  assert.equal(refused, split);
-  // splitting the root-first a stays flat: c lands at level 1
-  const flat = splitSession(split, "a", "c", "rows");
+  const flat = splitSession(split, "b", "c", "rows");
   assert.notEqual(flat, split);
   for (const id of ["a", "b", "c"]) {
     assert.ok(splitIndentLevel(flat, id) <= MAX_SPLIT_LEVEL, `${id} stays top-level`);
   }
-  assert.equal(isSplitParent(flat, "a"), false);
+  assert.equal(splitIndentLevel(flat, "c"), 1);
+  assert.equal(isSplitChild(flat, "b"), true);
   assert.equal(isSplitChild(flat, "c"), true);
+});
+
+test("splitWouldNest guards only genuinely deepening splits", () => {
+  const base = [leaf("a"), leaf("other")];
+  const split = splitSession(base, "a", "b", "columns");
+  assert.equal(splitWouldNest(split, "a"), false);
+  assert.equal(splitWouldNest(split, "b"), false);
+  assert.equal(splitWouldNest(split, "missing"), true);
+  assert.equal(splitWouldNest([leaf("solo")], "solo"), false);
+  // legacy nested tree: splitting the nested first b would deepen
+  const nested = [{ axis: "columns", ratio: .5, first: leaf("a"),
+    second: { axis: "rows", ratio: .5, first: leaf("b"), second: leaf("c") } }];
+  assert.equal(splitWouldNest(nested, "b"), true);
+  assert.equal(splitWouldNest(nested, "c"), false);
+  assert.equal(splitSession(nested, "b", "d", "columns"), nested);
 });
 
 test("split indent level follows generations, not tree depth", () => {
@@ -124,8 +134,9 @@ test("split indent level follows generations, not tree depth", () => {
   assert.equal(splitIndentLevel(split, "a"), 0);
   assert.equal(splitIndentLevel(split, "b"), 1);
   assert.equal(splitIndentLevel(split, "other"), 0);
-  // nested splits are refused; legacy trees still measure by generation
-  assert.equal(splitSession(split, "b", "c", "rows"), split);
+  // splitting a child joins as sibling at the same level
+  const joined = splitSession(split, "b", "c", "rows");
+  assert.equal(splitIndentLevel(joined, "c"), 1);
   const nested = [{ axis: "columns", ratio: .5, first: leaf("a"),
     second: { axis: "rows", ratio: .5, first: leaf("b"), second: leaf("c") } }];
   assert.equal(splitIndentLevel(nested, "a"), 0);

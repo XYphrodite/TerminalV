@@ -34,18 +34,42 @@ export const layoutFor = (layouts, id) => layouts.find((root) => leafIds(root).i
 
 export const MAX_SPLIT_LEVEL = 1;
 
+// True when splitting id would nest a leaf deeper than MAX_SPLIT_LEVEL.
+// Splitting a first pane wraps the pane (new leaf one level deeper);
+// splitting a second pane wraps its parent, so the new leaf joins as a
+// sibling at the same level and never nests.
+export function splitWouldNest(layouts, id) {
+  if (!Array.isArray(layouts) || !id) return true;
+  const level = splitIndentLevel(layouts, id);
+  for (const root of layouts) {
+    const stack = [root];
+    while (stack.length) {
+      const node = stack.pop();
+      if (!node || typeof node !== "object" || node.sessionId) continue;
+      if (node.second?.sessionId === id) return false;
+      if (node.first?.sessionId === id) return level + 1 > MAX_SPLIT_LEVEL;
+      if (node.first) stack.push(node.first);
+      if (node.second) stack.push(node.second);
+    }
+  }
+  // Lone root leaf wraps to level 1, always flat.
+  const root = layoutFor(layouts, id);
+  if (root && root.sessionId === id) return false;
+  return true;
+}
+
 export function splitSession(layouts, id, newId, axis) {
   const root = layoutFor(layouts, id);
   if (!root || !["columns", "rows"].includes(axis) || leafIds(root).length >= MAX_PANES || layoutFor(layouts, newId)) return layouts;
+  if (splitWouldNest(layouts, id)) return layouts;
   function split(node) {
     if (node.sessionId === id) return { axis, ratio: .5, first: node, second: { sessionId: newId } };
+    if (!node.sessionId && node.second?.sessionId === id) {
+      return { axis, ratio: .5, first: node, second: { sessionId: newId } };
+    }
     return node.sessionId ? node : { ...node, first: split(node.first), second: split(node.second) };
   }
-  const next = layouts.map((item) => item === root ? split(item) : item);
-  // No second-degree children: every session stays a direct child of one
-  // top-level split. A split that would nest deeper is refused entirely.
-  const flat = next.every((item) => leafIds(item).every((leafId) => splitIndentLevel(next, leafId) <= MAX_SPLIT_LEVEL));
-  return flat ? next : layouts;
+  return layouts.map((item) => item === root ? split(item) : item);
 }
 
 export function detachSession(layouts, id) {

@@ -316,8 +316,10 @@ TUI v0.6.7: рваный верх `muse` после ресайза — `applyFit
 
 Рендеринг v0.7.2: `hardwareRendering` (дефолт вкл, `applyRenderer`, гейт в `ensureWebgl`, поле `AppSettings.HardwareRendering`). Подробности — `docs/releases/v0.7.2.md`.
 
+Сплиты v0.7.3: сплит дочерней оборачивает родителя (`splitWouldNest`, сиблинг того же уровня). Подробности — `docs/releases/v0.7.3.md`.
+
 **Last Updated**: 2026-09-23
-**Version**: 0.7.2
+**Version**: 0.7.3
 **Status**: Active  
 **Repository**: `https://github.com/XYphrodite/TerminalV`  
 **Workspace**: `C:\Repos\TerminalV`

@@ -18,7 +18,7 @@ import { createNotifications, createNotificationOutput } from "./notifications.j
 import { createLaunchProfiles, PROFILE_SHELLS } from "./launch-profiles.js";
 import { createLaunchMenu } from "./launch-menu.js";
 import { normalizeLayouts, layoutFor, leafIds, splitSession, detachSession, layoutGeometry,
-  neighborPane, paneShortcut, MAX_PANES, MIN_PANE_WIDTH, MIN_PANE_HEIGHT, isSplitChild, isSplitParent, splitIndentLevel } from "./pane-layout.js";
+  neighborPane, paneShortcut, MAX_PANES, MIN_PANE_WIDTH, MIN_PANE_HEIGHT, isSplitChild, isSplitParent, splitIndentLevel, splitWouldNest } from "./pane-layout.js";
 import { createPaneView } from "./pane-view.js";
 import { createShortcuts } from "./shortcuts.js";
 import { WRITE_CHUNK, chunkText } from "./write-chunk.js";
@@ -185,11 +185,9 @@ function isPaneVisible(tab) {
 function canSplit(axis) {
   const tab = currentTab(), count = visibleTabs().length;
   if (!tab || !count || count >= MAX_PANES) return false;
-  // Only a lone pane or the first pane of a top-level split may split:
-  // splitting anything else would nest a second-degree child.
-  const root = layoutFor(layouts, tab.id);
-  const lone = root && root.sessionId === tab.id;
-  if (!lone && !isSplitParent(layouts, tab.id)) return false;
+  // A split that would nest deeper than one level stays disabled;
+  // splitting a child pane adds a sibling under the same parent instead.
+  if (splitWouldNest(layouts, tab.id)) return false;
   const box = tab.pane.getBoundingClientRect();
   return axis === "columns" ? box.width >= MIN_PANE_WIDTH * 2 + 6 : box.height >= MIN_PANE_HEIGHT * 2 + 6;
 }
