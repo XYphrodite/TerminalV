@@ -22,11 +22,14 @@
         </div>
         <div id="tabs" class="tabs" role="tablist" aria-label="Сессии"></div>
         <div class="sidebar-foot">
-          <button id="new-tab" type="button" title="Новая вкладка (Ctrl+Shift+T)" aria-label="Новая вкладка">
-            <span class="plus" data-icon="plus"></span>
-            <span class="new-tab-label">Новая вкладка</span>
-            <kbd class="new-tab-shortcut" aria-hidden="true">Ctrl ⇧ T</kbd>
-          </button>
+          <div id="new-tab-split" class="new-tab-split">
+            <button id="new-tab" type="button" title="Новая вкладка (Ctrl+Shift+T)" aria-label="Новая вкладка">
+              <span class="plus" data-icon="plus"></span>
+              <span class="new-tab-label">Новая вкладка</span>
+              <kbd class="new-tab-shortcut" aria-hidden="true">Ctrl ⇧ T</kbd>
+            </button>
+            <button id="new-tab-arrow" type="button" class="new-tab-arrow" title="Выбрать профиль" aria-label="Выбрать профиль для новой вкладки" aria-haspopup="dialog" aria-expanded="false" aria-controls="launch-menu"><span data-icon="chevron"></span></button>
+          </div>
           <button id="launch-profiles-btn" type="button" class="ghost" title="Профили и оболочки" aria-label="Профили и оболочки" aria-haspopup="dialog" aria-expanded="false" aria-controls="launch-menu"><span data-icon="profiles"></span><span class="profile-button-label">Профили и оболочки</span><span class="profile-button-chevron" data-icon="chevron"></span></button>
           <div id="update-bar" class="update-bar hidden">
             <div id="update-text" class="update-text"></div>
@@ -113,6 +116,18 @@
         <input id="bg-opacity" type="range" min="0" max="80" step="1" value="25" />
         <div class="settings-section-label">Рендеринг</div>
         <label class="shortcut-option"><input id="hardware-rendering" type="checkbox" checked /> Аппаратный рендеринг (WebGL)</label>
+        <div class="settings-section-label">Удалённый доступ (TerminalV Mobile)</div>
+        <label class="shortcut-option"><input id="gateway-enabled" type="checkbox" checked /> Шлюз зеркала сессий (ws://:5454)</label>
+        <label class="field-label" for="gateway-port">Порт шлюза</label>
+        <input id="gateway-port" type="number" min="1" max="65535" value="5454" />
+        <label class="field-label" for="gateway-token">Токен шлюза</label>
+        <div class="bg-row">
+          <input id="gateway-token" type="text" readonly autocomplete="off" spellcheck="false" />
+          <button id="gateway-copy" type="button" class="ghost">Копировать</button>
+          <button id="gateway-regen" type="button" class="ghost">Новый</button>
+        </div>
+        <p id="gateway-status" class="shortcut-status" role="status" aria-live="polite" aria-atomic="true"></p>
+        <p id="gateway-hint" class="shortcut-hint"></p>
         <section id="shortcut-settings" aria-labelledby="shortcuts-title">
           <h3 id="shortcuts-title" class="settings-section-label">Ярлыки приложения</h3>
           <p class="shortcut-hint" id="shortcuts-hint">Быстрый запуск этой копии TerminalV, в том числе из ZIP. При переносе папки приложения старые ярлыки нужно заменить.</p>

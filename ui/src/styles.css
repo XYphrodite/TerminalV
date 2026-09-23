@@ -321,6 +321,13 @@ body,
   padding: 0;
   margin: 0 auto;
 }
+#app.collapsed .new-tab-split {
+  width: 32px;
+  margin: 0 auto;
+}
+#app.collapsed #new-tab-arrow {
+  display: none;
+}
 
 .sidebar-foot {
   padding: 10px;

@@ -116,6 +116,11 @@ kbd { font: 10px var(--font-ui); letter-spacing: .02em; white-space: nowrap; }
 #new-tab:hover, #empty-new:hover { background: color-mix(in srgb, var(--accent) 85%, var(--text)); border-color: transparent; }
 #new-tab .plus { color: inherit; }
 .new-tab-shortcut { margin-left: auto; opacity: .8; }
+.new-tab-split { display:flex; width:100%; }
+.new-tab-split #new-tab { flex:1; border-radius:8px 0 0 8px; }
+.new-tab-arrow { width:36px; height:38px; flex-shrink:0; border:1px solid transparent; border-left:1px solid color-mix(in srgb, var(--ink) 14%, transparent); background:var(--accent); color:var(--ink); border-radius:0 8px 8px 0; display:grid; place-items:center; cursor:pointer; }
+.new-tab-arrow:hover { background: color-mix(in srgb, var(--accent) 85%, var(--text)); }
+.new-tab-arrow:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
 #launch-profiles-btn { display: flex; align-items: center; gap: 8px; height: 35px; margin-top: 7px; border-color: var(--border-soft); background: transparent; text-align: left; font-weight: 400; }
 .profile-button-chevron { margin-left: auto; color: var(--label); }
 .sidebar-signature { display: flex; align-items: center; justify-content: space-between; margin-top: 17px; padding: 0 3px 1px; }
@@ -145,6 +150,9 @@ kbd { font: 10px var(--font-ui); letter-spacing: .02em; white-space: nowrap; }
 #app.collapsed .tab .tab-close { display: none !important; }
 #app.collapsed .sidebar-foot { padding: 10px; }
 #app.collapsed #new-tab, #app.collapsed #launch-profiles-btn { width: 36px; height: 36px; padding: 0; justify-content: center; margin-left: auto; margin-right: auto; }
+#app.collapsed .new-tab-split { width: 36px; margin-left:auto; margin-right:auto; }
+#app.collapsed #new-tab-arrow { display:none; }
+#app.collapsed .new-tab-split #new-tab { width:36px; border-radius:8px; }
 
 /* Workspace context and split panels */
 #main { background: var(--surface); }

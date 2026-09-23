@@ -24,6 +24,7 @@ import { createShortcuts } from "./shortcuts.js";
 import { WRITE_CHUNK, chunkText } from "./write-chunk.js";
 import { shouldStoreAsFile, PASTE_FILE_STORE_TIMEOUT_MS } from "./paste-file.js";
 import { wantsAppWheel } from "./tui-scroll.js";
+import { normalizeGatewaySettings, gatewayStatusText, gatewayConnectHint, generateGatewayToken } from "./gateway-settings.js";
 
 mountIcons(document);
 
@@ -31,6 +32,7 @@ const tabsEl = document.getElementById("tabs");
 const panesEl = document.getElementById("panes");
 const emptyEl = document.getElementById("empty");
 const newTabBtn = document.getElementById("new-tab");
+const newTabArrowBtn = document.getElementById("new-tab-arrow");
 const emptyNewBtn = document.getElementById("empty-new");
 const updateBar = document.getElementById("update-bar");
 const updateText = document.getElementById("update-text");
@@ -49,6 +51,13 @@ const fontSizeValue = document.getElementById("font-size-value");
 const zoomValue = document.getElementById("zoom-value");
 const sessionDensityEl = document.getElementById("session-density");
 const hardwareRenderingEl = document.getElementById("hardware-rendering");
+const gatewayEnabledEl = document.getElementById("gateway-enabled");
+const gatewayPortEl = document.getElementById("gateway-port");
+const gatewayTokenEl = document.getElementById("gateway-token");
+const gatewayStatusEl = document.getElementById("gateway-status");
+const gatewayHintEl = document.getElementById("gateway-hint");
+const gatewayCopyBtn = document.getElementById("gateway-copy");
+const gatewayRegenBtn = document.getElementById("gateway-regen");
 const bgPick = document.getElementById("bg-pick");
 const bgClear = document.getElementById("bg-clear");
 const bgOpacityEl = document.getElementById("bg-opacity");
@@ -85,8 +94,12 @@ const settings = {
   sessionDensity: "standard",
   hardwareRendering: true,
   backgroundPath: null,
-  backgroundOpacity: 0.25
+  backgroundOpacity: 0.25,
+  gatewayEnabled: true,
+  gatewayPort: 5454,
+  gatewayToken: ""
 };
+let gatewayState = null;
 
 const pasteController = createPasteController({
   dialog: document.getElementById("paste-confirmation"),
@@ -1546,8 +1559,21 @@ function renderThemeGrid() {
   }
 }
 
+function syncGatewayForm() {
+  const normalized = normalizeGatewaySettings(settings);
+  settings.gatewayEnabled = normalized.enabled;
+  settings.gatewayPort = normalized.port;
+  settings.gatewayToken = normalized.token;
+  gatewayEnabledEl.checked = normalized.enabled;
+  gatewayPortEl.value = String(normalized.port);
+  gatewayTokenEl.value = normalized.token;
+  gatewayStatusEl.textContent = gatewayStatusText(gatewayState);
+  gatewayHintEl.textContent = gatewayConnectHint(normalized.port, normalized.token.length > 0);
+}
+
 function syncSettingsForm() {
   hardwareRenderingEl.checked = settings.hardwareRendering !== false;
+  syncGatewayForm();
   sessionDensityEl.value = settings.sessionDensity === "minimal" ? "minimal" : "standard";
   fontSizeEl.value = String(settings.fontSize);
   fontSizeValue.textContent = String(settings.fontSize);
@@ -1652,6 +1678,7 @@ function handleHost(message) {
     if (message.settings) {
       Object.assign(settings, message.settings);
     }
+    gatewayState = message.gateway ?? null;
     fillFonts(message.fonts);
     window.__liveIds = message.liveIds || [];
     legacyHostNotice = message.cwdTrackingSupported === false
@@ -1770,6 +1797,15 @@ function handleHost(message) {
 }
 
 newTabBtn.addEventListener("click", () => newTab());
+if (newTabArrowBtn) {
+  newTabArrowBtn.addEventListener("click", () => {
+    if (isModalOpen() && !launchMenu.isOpen) return;
+    if (!settingsEl.classList.contains("hidden")) return;
+    pasteController.cancel(currentTab());
+    searchController.close({ focus: false });
+    launchMenu.open(newTabArrowBtn);
+  });
+}
 document.getElementById("launch-profiles-btn").addEventListener("click", () => {
   if (isModalOpen() || !settingsEl.classList.contains("hidden")) return;
   pasteController.cancel(currentTab());
@@ -1824,6 +1860,25 @@ sessionDensityEl.addEventListener("change", () => {
 hardwareRenderingEl.addEventListener("change", () => {
   settings.hardwareRendering = hardwareRenderingEl.checked;
   applyRenderer();
+  persistSettings();
+});
+gatewayEnabledEl.addEventListener("change", () => {
+  settings.gatewayEnabled = gatewayEnabledEl.checked;
+  persistSettings();
+});
+gatewayPortEl.addEventListener("change", () => {
+  const port = Number(gatewayPortEl.value);
+  settings.gatewayPort = Number.isInteger(port) && port >= 1 && port <= 65535 ? port : 5454;
+  syncGatewayForm();
+  persistSettings();
+});
+gatewayCopyBtn.addEventListener("click", () => {
+  if (!settings.gatewayToken) return;
+  post({ type: "clipboard-write", data: settings.gatewayToken });
+});
+gatewayRegenBtn.addEventListener("click", () => {
+  settings.gatewayToken = generateGatewayToken();
+  syncGatewayForm();
   persistSettings();
 });
 bgOpacityEl.addEventListener("input", () => {

@@ -7,10 +7,11 @@ export function createLaunchMenu({ dialog, trigger, post, getProfiles, onLaunch,
   const status = dialog.querySelector("[data-launch-status]");
   const refresh = dialog.querySelector("[data-launch-refresh]");
   let targets = [], pending = null, loaded = false;
+  let activeTrigger = trigger;
 
   function position() {
     if (!dialog.open) return;
-    const anchor = trigger.getBoundingClientRect();
+    const anchor = (activeTrigger || trigger).getBoundingClientRect();
     const height = dialog.getBoundingClientRect().height;
     const width = dialog.getBoundingClientRect().width;
     dialog.style.left = `${Math.max(8, Math.min(anchor.left, innerWidth - width - 8))}px`;
@@ -19,8 +20,9 @@ export function createLaunchMenu({ dialog, trigger, post, getProfiles, onLaunch,
   function close(focus = true) {
     if (!dialog.open) return;
     dialog.close();
-    trigger.setAttribute("aria-expanded", "false");
-    if (focus) trigger.focus({ preventScroll: true });
+    (activeTrigger || trigger).setAttribute("aria-expanded", "false");
+    if (focus) (activeTrigger || trigger).focus({ preventScroll: true });
+    activeTrigger = trigger;
   }
   function run(action) {
     if (!dialog.open) return; // A queued second click cannot create a second session.
@@ -134,11 +136,23 @@ export function createLaunchMenu({ dialog, trigger, post, getProfiles, onLaunch,
   return {
     get isOpen() { return dialog.open; },
     refreshProfiles: render,
-    open() {
-      if (dialog.open) { close(); return; }
+    open(anchor = null) {
+      const nextTrigger = anchor || trigger;
+      if (dialog.open) {
+        if (activeTrigger === nextTrigger) { close(); return; }
+        activeTrigger.setAttribute("aria-expanded", "false");
+        activeTrigger = nextTrigger;
+        render();
+        activeTrigger.setAttribute("aria-expanded", "true");
+        position();
+        (profilesEl.querySelector("button") || targetsEl.querySelector("button") || dialog.querySelector("[data-launch-new]")).focus();
+        if (!loaded) request();
+        return;
+      }
+      activeTrigger = nextTrigger;
       render();
       dialog.showModal();
-      trigger.setAttribute("aria-expanded", "true");
+      activeTrigger.setAttribute("aria-expanded", "true");
       position();
       (profilesEl.querySelector("button") || targetsEl.querySelector("button") || dialog.querySelector("[data-launch-new]")).focus();
       if (!loaded) request();
