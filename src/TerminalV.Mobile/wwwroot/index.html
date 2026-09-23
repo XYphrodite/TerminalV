@@ -17,10 +17,11 @@
         #app { position:relative; z-index:1; display:flex; min-height:100vh; min-height:100dvh; }
         #app #sidebar { flex-shrink:0; }
         #app #main { flex:1; min-width:0; }
-        /* Mobile: collapsed = полностью скрыт, свайп от левого края открывает */
+        /* Mobile: collapsed = полностью скрыт, свайп от левого края открывает — симметричная анимация */
         @media (max-width: 700px) {
-          #app.collapsed #sidebar { position:fixed; inset:0 auto 0 0; width:min(86vw,340px); max-width:86vw; transform:translateX(-100%); transition:transform 0.24s ease; z-index:20; box-shadow: 16px 0 32px rgba(0,0,0,0.5); }
-          #app:not(.collapsed) #sidebar { position:fixed; inset:0 auto 0 0; width:min(86vw,340px); max-width:86vw; z-index:20; box-shadow: 16px 0 32px rgba(0,0,0,0.5); }
+          #app #sidebar { transition:transform 0.24s ease; will-change:transform; }
+          #app.collapsed #sidebar { position:fixed; inset:0 auto 0 0; width:min(86vw,340px); max-width:86vw; transform:translateX(-100%); z-index:20; box-shadow: 16px 0 32px rgba(0,0,0,0.5); }
+          #app:not(.collapsed) #sidebar { position:fixed; inset:0 auto 0 0; width:min(86vw,340px); max-width:86vw; transform:translateX(0); z-index:20; box-shadow: 16px 0 32px rgba(0,0,0,0.5); }
           #app.collapsed::after { content:""; position:fixed; inset:0; background:transparent; pointer-events:none; z-index:19; }
           #app:not(.collapsed)::after { content:""; position:fixed; inset:0; background:rgba(0,0,0,0.4); z-index:19; }
           #app.collapsed #main { margin-left:0; }

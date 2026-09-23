@@ -51,11 +51,8 @@ internal sealed class MobileBridge : IDisposable
         var allSessions = _store.LoadSessions();
         var live = LiveIds();
         var liveSet = new HashSet<string>(live);
-        // No live connection -> don't resurrect dead phantom sessions with empty buffer (empty black pane).
-        // Keep only live sessions or those with a buffer to restore; empty dead sessions produce "no connection" empty state.
         var sessions = allSessions.Where(s => liveSet.Contains(s.Id) || !string.IsNullOrEmpty(s.Buffer)).ToList();
         var layouts = _store.LoadLayouts();
-        // If sessions were filtered, also normalize layouts to avoid dangling pane refs
         if (sessions.Count != allSessions.Count)
         {
             layouts = PaneLayout.Normalize(layouts, sessions);
@@ -79,6 +76,72 @@ internal sealed class MobileBridge : IDisposable
             fonts = Array.Empty<string>(),
             gateway = DescribeGateway(settings)
         });
+        // Fire-and-forget: pull desktop sessions via gateway and mirror them (enables write + text)
+        _ = Task.Run(async () => { try { await SyncGatewaySessionsAsync(settings); } catch { } });
+    }
+
+    private async Task SyncGatewaySessionsAsync(AppSettings settings)
+    {
+        try
+        {
+            var useGwPref = Microsoft.Maui.Storage.Preferences.Default.Get("useGateway", false);
+            var gwUrlPref = Microsoft.Maui.Storage.Preferences.Default.Get("gatewayUrl", "ws://100.119.48.15:5454");
+            var gwTokenPref = Microsoft.Maui.Storage.Preferences.Default.Get("gatewayToken", "");
+            var useGw = useGwPref || settings.GatewayEnabled;
+            var gwUrl = !string.IsNullOrWhiteSpace(gwUrlPref) ? gwUrlPref : (settings.GatewayEnabled ? $"ws://127.0.0.1:{settings.GatewayPort}" : null);
+            var gwToken = !string.IsNullOrWhiteSpace(gwTokenPref) ? gwTokenPref : settings.GatewayToken;
+            if (!useGw || string.IsNullOrWhiteSpace(gwUrl)) return;
+
+            using var client = new GatewayControlClient(gwUrl, string.IsNullOrWhiteSpace(gwToken) ? null : gwToken);
+            var remoteIds = await client.ListAsync().ConfigureAwait(false);
+            if (remoteIds.Count == 0) return;
+
+            var storeSessions = _store.LoadSessions();
+            var storeIds = new HashSet<string>(storeSessions.Select(s => s.Id));
+            var liveSet = new HashSet<string>(LiveIds());
+            var added = new List<SessionRecord>();
+            foreach (var rid in remoteIds)
+            {
+                if (storeIds.Contains(rid) || liveSet.Contains(rid)) continue;
+                // Check if already has a live GatewaySshSession
+                if (_ssh.TryGet(rid) != null) continue;
+                var rec = new SessionRecord
+                {
+                    Id = rid,
+                    Title = $"Сессия {rid[..Math.Min(4, rid.Length)]}",
+                    Active = true,
+                    Shell = "ssh",
+                    Buffer = null
+                };
+                added.Add(rec);
+                var opts = BuildOptions(80, 24, null, null, null);
+                opts.MirrorSessionId = rid;
+                opts.GatewayUrl = gwUrl;
+                opts.GatewayToken = gwToken;
+                try
+                {
+                    var sess = _ssh.Create(rid, opts);
+                    HookSession(sess);
+                    _ = sess.ConnectAsync();
+                }
+                catch { }
+            }
+            if (added.Count > 0)
+            {
+                var all = _store.LoadSessions();
+                all.AddRange(added);
+                _store.SaveSessions(all);
+                var layouts = _store.LoadLayouts();
+                layouts = PaneLayout.Normalize(layouts, all);
+                _store.SaveLayouts(layouts);
+                // Re-push full init so desktop UI (main.js) re-renders tabs/panes with the pulled sessions
+                SendInit();
+            }
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[gateway sync] {ex.Message}");
+        }
     }
 
     public void Handle(string json)
@@ -451,14 +514,17 @@ internal sealed class MobileBridge : IDisposable
 
     private SshConnectionOptions BuildOptions(int cols, int rows, string? cwd, string? shell, string? startupCommand)
     {
-        // Read connection prefs (same keys as Home.razor Preferences)
+        var appSettings = _store.LoadSettings();
         var host = Microsoft.Maui.Storage.Preferences.Default.Get("host", "100.119.48.15");
         var port = Microsoft.Maui.Storage.Preferences.Default.Get("port", 22);
         var username = Microsoft.Maui.Storage.Preferences.Default.Get("username", "local");
         var password = Microsoft.Maui.Storage.Preferences.Default.Get("password", "5454");
-        var useGateway = Microsoft.Maui.Storage.Preferences.Default.Get("useGateway", false);
-        var gatewayUrl = Microsoft.Maui.Storage.Preferences.Default.Get("gatewayUrl", "ws://100.119.48.15:5454");
-        var gatewayToken = Microsoft.Maui.Storage.Preferences.Default.Get("gatewayToken", "");
+        var useGatewayPref = Microsoft.Maui.Storage.Preferences.Default.Get("useGateway", false);
+        var useGateway = useGatewayPref || appSettings.GatewayEnabled;
+        var gatewayUrlPref = Microsoft.Maui.Storage.Preferences.Default.Get("gatewayUrl", "");
+        var gatewayUrl = !string.IsNullOrWhiteSpace(gatewayUrlPref) ? gatewayUrlPref : (appSettings.GatewayEnabled ? $"ws://{host}:{appSettings.GatewayPort}" : "ws://100.119.48.15:5454");
+        var gatewayTokenPref = Microsoft.Maui.Storage.Preferences.Default.Get("gatewayToken", "");
+        var gatewayToken = !string.IsNullOrWhiteSpace(gatewayTokenPref) ? gatewayTokenPref : appSettings.GatewayToken;
         var useTailscale = Microsoft.Maui.Storage.Preferences.Default.Get("useTailscale", false);
         var tailscaleAuthKey = Microsoft.Maui.Storage.Preferences.Default.Get("tailscaleAuthKey", "");
         var tailscaleHostname = Microsoft.Maui.Storage.Preferences.Default.Get("tailscaleHostname", "terminalv-mobile");
