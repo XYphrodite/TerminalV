@@ -13,6 +13,11 @@ test("session options button is always visible in expanded sidebar", () => {
   assert.match(css, /\.tab-close,\s*\.tab-options\s*\{[^}]*border:\s*1px solid var\(--border-soft\)/, "tab-options should have border");
 });
 
+test("minimal session density compacts rows", () => {
+  assert.match(css, /#app\.session-minimal\s*\.tab\s*\{[^}]*min-height:\s*36px/, "minimal should shrink row height");
+  assert.match(css, /#app\.session-minimal\s*\.tab-meta\s*\{[^}]*display:\s*none/, "minimal should hide meta line");
+});
+
 test("collapsed sidebar never shows session options", () => {
   assert.match(css, /#app\.collapsed\s*\.tab\s*\.tab-options\s*\{[^}]*display:\s*none/, "collapsed should hide tab-options");
   assert.doesNotMatch(css, /#app\.collapsed[^{]*\.tab-options\s*\{[^}]*display:\s*grid/, "collapsed must not re-show tab-options");

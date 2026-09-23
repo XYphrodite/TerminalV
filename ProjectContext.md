@@ -310,8 +310,10 @@ TUI v0.6.7: рваный верх `muse` после ресайза — `applyFit
 
 Скролл v0.6.17: в `tui-lock` колесо уходит приложению при включённом mouse-режиме (`wantsAppWheel` в `ui/src/tui-scroll.js`, `wheelTarget` в `main.js`). Подробности — `docs/releases/v0.6.17.md`.
 
+Панель v0.6.18: высота элементов сессий (`sessionDensity`: `standard`/`minimal`, класс `session-minimal`, поле `AppSettings.SessionDensity`). Подробности — `docs/releases/v0.6.18.md`.
+
 **Last Updated**: 2026-09-23
-**Version**: 0.6.17
+**Version**: 0.6.18
 **Status**: Active  
 **Repository**: `https://github.com/XYphrodite/TerminalV`  
 **Workspace**: `C:\Repos\TerminalV`

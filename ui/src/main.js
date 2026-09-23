@@ -47,6 +47,7 @@ const fontFamilyEl = document.getElementById("font-family");
 const fontSizeEl = document.getElementById("font-size");
 const fontSizeValue = document.getElementById("font-size-value");
 const zoomValue = document.getElementById("zoom-value");
+const sessionDensityEl = document.getElementById("session-density");
 const bgPick = document.getElementById("bg-pick");
 const bgClear = document.getElementById("bg-clear");
 const bgOpacityEl = document.getElementById("bg-opacity");
@@ -80,6 +81,7 @@ const settings = {
   fontSize: 14,
   zoom: 0,
   sidebarCollapsed: false,
+  sessionDensity: "standard",
   backgroundPath: null,
   backgroundOpacity: 0.25
 };
@@ -374,6 +376,7 @@ function applyChrome() {
   root.style.colorScheme = theme.kind;
   root.dataset.themeKind = theme.kind;
   appEl.classList.toggle("collapsed", settings.sidebarCollapsed);
+  appEl.classList.toggle("session-minimal", settings.sessionDensity === "minimal");
   collapseBtn.setAttribute("aria-expanded", String(!settings.sidebarCollapsed));
   collapseBtn.title = settings.sidebarCollapsed
     ? "Показать сессии (Ctrl+B)"
@@ -1517,6 +1520,7 @@ function renderThemeGrid() {
 }
 
 function syncSettingsForm() {
+  sessionDensityEl.value = settings.sessionDensity === "minimal" ? "minimal" : "standard";
   fontSizeEl.value = String(settings.fontSize);
   fontSizeValue.textContent = String(settings.fontSize);
   bgOpacityEl.value = String(Math.round(settings.backgroundOpacity * 100));
@@ -1784,6 +1788,11 @@ fontSizeEl.addEventListener("input", () => {
   applyToTerminals();
 });
 fontSizeEl.addEventListener("change", persistSettings);
+sessionDensityEl.addEventListener("change", () => {
+  settings.sessionDensity = sessionDensityEl.value === "minimal" ? "minimal" : "standard";
+  applyChrome();
+  persistSettings();
+});
 bgOpacityEl.addEventListener("input", () => {
   settings.backgroundOpacity = Number(bgOpacityEl.value) / 100;
   bgOpacityValue.textContent = `${bgOpacityEl.value}%`;

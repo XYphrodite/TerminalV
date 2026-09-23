@@ -7,6 +7,7 @@ internal sealed class AppSettings
     public int FontSize { get; set; } = 14;
     public int Zoom { get; set; }
     public bool SidebarCollapsed { get; set; }
+    public string SessionDensity { get; set; } = "standard";
     public string? BackgroundPath { get; set; }
     public double BackgroundOpacity { get; set; } = 0.25;
 }
