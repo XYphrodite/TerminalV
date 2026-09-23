@@ -108,3 +108,24 @@ test("Mobile csproj copies desktop UI assets and links Data", () => {
   assert.match(csproj, /SessionRecord\.cs/, "links SessionRecord");
   assert.match(csproj, /PaneLayout\.cs/, "links PaneLayout");
 });
+
+test("Android immersive hides status and navigation bars", () => {
+  const main = readFileSync(r("src/TerminalV.Mobile/Platforms/Android/MainActivity.cs"), "utf8");
+  assert.match(main, /HideSystemBars/, "HideSystemBars");
+  assert.match(main, /SetDecorFitsSystemWindows\(false\)/, "edge-to-edge");
+  assert.match(main, /Hide\(.*StatusBars\(\)/, "hides status");
+  assert.match(main, /NavigationBars\(\)/, "hides navigation");
+  assert.match(main, /ShowTransientBarsBySwipe/, "transient swipe");
+  assert.match(main, /OnWindowFocusChanged/, "re-hide on focus");
+});
+
+test("Connection overlay scrolls and FAB respects safe-area", () => {
+  const home = readFileSync(r("src/TerminalV.Mobile/Components/Pages/Home.razor"), "utf8");
+  assert.match(home, /overflow-y:auto/, "overlay scroll");
+  assert.match(home, /-webkit-overflow-scrolling:touch/, "touch scroll");
+  assert.match(home, /env\(safe-area-inset-/, "safe-area");
+  assert.match(home, /font-size:16px/, "16px prevents iOS zoom");
+  assert.match(home, /mobile-config-fab/, "FAB");
+  assert.match(home, /bottom:calc\(.*safe-area-inset-bottom/, "FAB bottom safe-area");
+  assert.match(home, /right:calc\(.*safe-area-inset-right/, "FAB right safe-area");
+});

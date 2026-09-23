@@ -28,7 +28,7 @@ public class MainActivity : MauiAppCompatActivity
             var controller = Window?.InsetsController;
             if (controller != null)
             {
-                controller.Hide(WindowInsets.Type.StatusBars());
+                controller.Hide(WindowInsets.Type.StatusBars() | WindowInsets.Type.NavigationBars());
                 controller.SystemBarsBehavior = (int)WindowInsetsControllerBehavior.ShowTransientBarsBySwipe;
             }
         }
