@@ -44,18 +44,19 @@
 
 <style>
 .mobile-root { max-width: 560px; margin: 0 auto; padding: 16px; color: #E8EEF5; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Cascadia Code", monospace; }
-#mobile-config-host { position:fixed; inset:0; z-index:10000; background:rgba(11,13,16,0.92); overflow:auto; padding:16px; }
-.connect-card { background: #0F1318; border: 1px solid #1E2631; padding: 18px; max-width:560px; margin: 40px auto; }
+#mobile-config-host { position:fixed; inset:0; z-index:10000; background:rgba(11,13,16,0.92); overflow-y:auto; overflow-x:hidden; -webkit-overflow-scrolling:touch; overscroll-behavior:contain; padding:16px; padding-bottom: max(16px, env(safe-area-inset-bottom)); display:flex; flex-direction:column; align-items:stretch; }
+.connect-card { background: #0F1318; border: 1px solid #1E2631; padding: 18px; max-width:560px; width:100%; margin: 0 auto; flex-shrink:0; max-height:none; }
 .card-head h1 { font-size: 18px; margin:0 0 6px; }
 .card-head p { font-size: 13px; color:#8A96A6; }
 .form-grid { display:grid; grid-template-columns: 1fr 96px; gap:10px; }
-.field { display:flex; flex-direction:column; gap:5px; }
+.field { display:flex; flex-direction:column; gap:5px; min-width:0; }
 .field span { font-size:12px; color:#9AA8BC; }
-.field input:not([type=checkbox]) { background:#0B0D10; border:1px solid #26303D; color:#E8EEF5; padding:8px 10px; }
+.field input:not([type=checkbox]) { background:#0B0D10; border:1px solid #26303D; color:#E8EEF5; padding:8px 10px; font-size:16px; }
 .field-check { flex-direction:row; align-items:center; grid-column:1/-1; gap:8px; }
 .error { background:#2B1212; border:1px solid #5A1E1E; color:#FF9E9E; padding:8px; margin:10px 0; }
 .primary { width:100%; background:#0F766E; color:#fff; border:1px solid #115E57; padding:10px; font-weight:600; cursor:pointer; }
 .hint { font-size:11px; color:#6E7C90; margin:8px 0; }
+@media (max-width: 400px) { .form-grid { grid-template-columns: 1fr; } .field field-sm { grid-column:1/-1; } }
 </style>
 
 @code {
