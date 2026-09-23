@@ -48,6 +48,7 @@ const fontSizeEl = document.getElementById("font-size");
 const fontSizeValue = document.getElementById("font-size-value");
 const zoomValue = document.getElementById("zoom-value");
 const sessionDensityEl = document.getElementById("session-density");
+const hardwareRenderingEl = document.getElementById("hardware-rendering");
 const bgPick = document.getElementById("bg-pick");
 const bgClear = document.getElementById("bg-clear");
 const bgOpacityEl = document.getElementById("bg-opacity");
@@ -82,6 +83,7 @@ const settings = {
   zoom: 0,
   sidebarCollapsed: false,
   sessionDensity: "standard",
+  hardwareRendering: true,
   backgroundPath: null,
   backgroundOpacity: 0.25
 };
@@ -872,8 +874,20 @@ function dropWebgl(tab) {
   tab.webgl = null;
 }
 
+function applyRenderer() {
+  for (const tab of tabs) {
+    if (settings.hardwareRendering) {
+      if (isPaneVisible(tab)) {
+        ensureWebgl(tab);
+      }
+    } else {
+      dropWebgl(tab);
+    }
+  }
+}
+
 function ensureWebgl(tab) {
-  if (tab.webgl) {
+  if (tab.webgl || !settings.hardwareRendering) {
     return;
   }
 
@@ -1535,6 +1549,7 @@ function renderThemeGrid() {
 }
 
 function syncSettingsForm() {
+  hardwareRenderingEl.checked = settings.hardwareRendering !== false;
   sessionDensityEl.value = settings.sessionDensity === "minimal" ? "minimal" : "standard";
   fontSizeEl.value = String(settings.fontSize);
   fontSizeValue.textContent = String(settings.fontSize);
@@ -1806,6 +1821,11 @@ fontSizeEl.addEventListener("change", persistSettings);
 sessionDensityEl.addEventListener("change", () => {
   settings.sessionDensity = sessionDensityEl.value === "minimal" ? "minimal" : "standard";
   applyChrome();
+  persistSettings();
+});
+hardwareRenderingEl.addEventListener("change", () => {
+  settings.hardwareRendering = hardwareRenderingEl.checked;
+  applyRenderer();
   persistSettings();
 });
 bgOpacityEl.addEventListener("input", () => {

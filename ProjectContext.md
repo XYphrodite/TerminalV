@@ -314,8 +314,10 @@ TUI v0.6.7: рваный верх `muse` после ресайза — `applyFit
 
 Сплиты v0.7.1: запрет вложенности (`MAX_SPLIT_LEVEL = 1` в `splitSession`, `canSplit` только для одиночной/корневой-первой панели). Подробности — `docs/releases/v0.7.1.md`.
 
+Рендеринг v0.7.2: `hardwareRendering` (дефолт вкл, `applyRenderer`, гейт в `ensureWebgl`, поле `AppSettings.HardwareRendering`). Подробности — `docs/releases/v0.7.2.md`.
+
 **Last Updated**: 2026-09-23
-**Version**: 0.7.1
+**Version**: 0.7.2
 **Status**: Active  
 **Repository**: `https://github.com/XYphrodite/TerminalV`  
 **Workspace**: `C:\Repos\TerminalV`
