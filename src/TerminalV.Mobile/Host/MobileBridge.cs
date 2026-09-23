@@ -3,14 +3,15 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using Microsoft.JSInterop;
 using TerminalV.Data;
+using TerminalV.Host;
 using TerminalV.Ssh;
 
 namespace TerminalV.Mobile.Host;
 
 /// <summary>
-/// Mobile analogue of TerminalBridge: speaks the same WebView message protocol as desktop
-/// (post {type, id, ...} <-> handleHost) but maps to SshService (SSH.NET / Gateway / tsnet)
-/// instead of ConPty. Persists settings/sessions/layouts/profiles via MobileDataStore (Preferences).
+/// Mobile analogue of TerminalBridge: speaks same WebView message protocol as desktop
+/// (post type id etc to handleHost) but maps to SshService instead of ConPty.
+/// Persists settings/sessions/layouts/profiles via MobileDataStore (Preferences).
 /// </summary>
 internal sealed class MobileBridge : IDisposable
 {
