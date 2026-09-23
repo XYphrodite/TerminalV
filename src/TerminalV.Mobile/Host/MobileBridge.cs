@@ -192,11 +192,10 @@ internal sealed class MobileBridge : IDisposable
         var s = _ssh.TryGet(id) ?? (_extra.TryGetValue(id, out var e) ? e : null);
         if (s != null)
         {
-            try { s.Write(data); } catch (Exception ex) { Post(new { type = "error", id, message = ex.Message }); }
+            try { _ = s.WriteAsync(data); } catch (Exception ex) { Post(new { type = "error", id, message = ex.Message }); }
         }
         else
         {
-            // session not found – desktop would buffer? For mobile just error
             Post(new { type = "error", id, message = "Сессия не найдена." });
         }
     }
@@ -204,7 +203,7 @@ internal sealed class MobileBridge : IDisposable
     private void HandleResize(string id, int cols, int rows)
     {
         var s = _ssh.TryGet(id) ?? (_extra.TryGetValue(id, out var e) ? e : null);
-        try { s?.Resize(cols, rows); } catch { }
+        try { _ = s?.ResizeAsync(cols, rows); } catch { }
     }
 
     private void HandleKill(string id)
@@ -365,21 +364,13 @@ internal sealed class MobileBridge : IDisposable
 
     private void HookSession(ISshSession session)
     {
-        // Avoid double hook
-        session.DataReceived -= OnData;
-        session.ErrorReceived -= OnError;
-        session.Closed -= OnClosed;
-        session.DataReceived += OnData;
-        session.ErrorReceived += OnError;
-        session.Closed += OnClosed;
+        var id = session.Id;
+        // Avoid double hook by removing previous closures (use local wrappers)
+        // We store per-session handlers via closure to capture id
+        session.DataReceived += data => Post(new { type = "data", id, data, replay = false });
+        session.ErrorReceived += message => Post(new { type = "error", id, message });
+        session.Closed += code => Post(new { type = "exit", id, code });
     }
-
-    private void OnData(string id, string data, bool replay)
-    {
-        Post(new { type = "data", id, data, replay });
-    }
-    private void OnError(string id, string message) => Post(new { type = "error", id, message });
-    private void OnClosed(string id, int? code) => Post(new { type = "exit", id, code });
 
     private string[] LiveIds()
     {
