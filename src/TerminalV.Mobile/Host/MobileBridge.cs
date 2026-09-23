@@ -381,10 +381,10 @@ internal sealed class MobileBridge : IDisposable
             // Share via system share sheet (Save to Downloads / Drive / Telegram)
             try
             {
-                await Microsoft.Maui.ApplicationModel.Share.Default.RequestAsync(new Microsoft.Maui.ApplicationModel.ShareFileRequest
+                await Microsoft.Maui.ApplicationModel.DataTransfer.Share.Default.RequestAsync(new Microsoft.Maui.ApplicationModel.DataTransfer.ShareFileRequest
                 {
                     Title = "Экспорт TerminalV",
-                    File = new Microsoft.Maui.ApplicationModel.ShareFile(filePath)
+                    File = new Microsoft.Maui.ApplicationModel.DataTransfer.ShareFile(filePath)
                 });
             }
             catch { }
