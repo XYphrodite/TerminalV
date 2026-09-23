@@ -19,6 +19,9 @@ public sealed class TsnetSshSession : SshSessionBase
     private Task? _readTask;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private Stream? _tsnetStream;
+    private System.Net.Sockets.TcpListener? _forwardListener;
+    private Task? _forwardTask;
+    private CancellationTokenSource? _forwardCts;
 
     public TsnetSshSession(string id, SshConnectionOptions options, ITailscaleConnector? connector = null)
         : base(id, options)
@@ -90,11 +93,12 @@ public sealed class TsnetSshSession : SshSessionBase
                 throw;
             }
 
-            // 3. Поднять SSH поверх tsnet потока (SSH.NET с кастомным сокетом).
-            // Используем reflection чтобы не тянуть жёсткую зависимость на сборку при тестах.
+            // 3. SSH.NET can only open its own sockets: forward the live tailnet pipe to
+            // localhost and point the client there. Auth/terminal options are unchanged.
             try
             {
-                var client = CreateClientOverStream(tsStream);
+            var loopbackPort = StartLocalForward(tsStream);
+            var client = CreateClientOverLoopback(loopbackPort);
                 _client = client;
                 await Task.Run(() => DynamicConnect(client), cancellationToken).ConfigureAwait(false);
                 TrySetKeepAlive(client, _options.KeepAliveInterval);
@@ -163,6 +167,7 @@ public sealed class TsnetSshSession : SshSessionBase
 
     private async Task DisconnectCoreAsync()
     {
+        await StopLocalForwardAsync().ConfigureAwait(false);
         try { _readCts?.Cancel(); } catch { }
         var stream = _shellStream; _shellStream = null;
         var client = _client; _client = null;
@@ -172,6 +177,65 @@ public sealed class TsnetSshSession : SshSessionBase
         try { if (client is IDisposable dc) dc.Dispose(); } catch { }
         try { if (ts is not null) await ts.DisposeAsync().ConfigureAwait(false); } catch { }
         // tsnet оставляем запущенным — переиспользуется между сессиями. Stop только при Dispose connector.
+    }
+
+    // Local forward: SSH.NET connects here, bytes are pumped to/from the tailnet pipe.
+    private int StartLocalForward(Stream remote)
+    {
+        var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+        listener.Start();
+        _forwardListener = listener;
+        _forwardCts = new CancellationTokenSource();
+        var token = _forwardCts.Token;
+        _forwardTask = Task.Run(() => PumpForwardAsync(listener, remote, token));
+        return ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
+    }
+
+    private async Task StopLocalForwardAsync()
+    {
+        try { _forwardCts?.Cancel(); } catch { }
+        try { _forwardListener?.Stop(); } catch { }
+        var task = _forwardTask; _forwardTask = null;
+        _forwardListener = null;
+        try { _forwardCts?.Dispose(); } catch { }
+        _forwardCts = null;
+        if (task is not null)
+        {
+            try { await Task.WhenAny(task, Task.Delay(1000)).ConfigureAwait(false); } catch { }
+        }
+    }
+
+    private static async Task PumpForwardAsync(System.Net.Sockets.TcpListener listener, Stream remote, CancellationToken ct)
+    {
+        System.Net.Sockets.TcpClient? inbound = null;
+        try
+        {
+            inbound = await listener.AcceptTcpClientAsync(ct).ConfigureAwait(false);
+            var local = inbound.GetStream();
+            var up = CopyForwardAsync(local, remote, ct);
+            var down = CopyForwardAsync(remote, local, ct);
+            await Task.WhenAny(up, down).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception) { }
+        finally { try { inbound?.Close(); } catch { } }
+    }
+
+    private static async Task CopyForwardAsync(Stream from, Stream to, CancellationToken ct)
+    {
+        var buf = new byte[8192];
+        try
+        {
+            while (!ct.IsCancellationRequested)
+            {
+                var n = await from.ReadAsync(buf, 0, buf.Length, ct).ConfigureAwait(false);
+                if (n <= 0) return;
+                await to.WriteAsync(buf, 0, n, ct).ConfigureAwait(false);
+                await to.FlushAsync(ct).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception) { }
     }
 
     private async Task ReadLoop(CancellationToken token)
@@ -207,19 +271,15 @@ public sealed class TsnetSshSession : SshSessionBase
     }
 
     // ---- SSH.NET via reflection (копия логики из SshNetSession) ----
-    private object CreateClientOverStream(Stream tsStream)
+    // SSH.NET speaks to the localhost forward; the bytes travel through the tailnet pipe.
+    private object CreateClientOverLoopback(int loopbackPort)
     {
         var asm = TryLoadSshNet();
-        if (asm is null) throw new PlatformNotSupportedException("SSH.NET (Renci.SshNet) not referenced. Add PackageReference Include=\"SSH.NET\".");
-        // Создаём ConnectionInfo как обычно, но сокет подменим через custom SocketFactory если доступен,
-        // иначе fallback — tsStream уже dial'нут, используем прямой SshClient с ConnectionInfo и переопределим транспорт.
-        // Для простоты используем тот же путь что SshNetSession, но с tsnet Dial — SSH.NET сам сделает TCP connect через наш stream.
-        // Если SSH.NET не поддерживает custom stream, используем обычный ConnectionInfo — tsnet Dial уже проверил tailnet, дальнейший connect пойдёт через tsnet socket via SocketFactory hook.
-        // Здесь: если есть ITailscaleConnector, он уже дал Stream, создаём PrivateKey/Password auth как в SshNetSession.
-        return CreateClientInternal(asm, tsStream);
+        if (asm is null) throw new PlatformNotSupportedException("SSH.NET (Renci.SshNet) is required but not referenced.");
+        return CreateClientInternal(asm, loopbackPort);
     }
 
-    private object CreateClientInternal(System.Reflection.Assembly asm, Stream tsStream)
+    private object CreateClientInternal(System.Reflection.Assembly asm, int loopbackPort)
     {
         var password = _options.Password ?? "";
         var hasKeyContent = !string.IsNullOrWhiteSpace(_options.PrivateKeyContent);
@@ -250,28 +310,12 @@ public sealed class TsnetSshSession : SshSessionBase
         var authBaseType = asm.GetType("Renci.SshNet.AuthenticationMethod")!;
         var typedArray = Array.CreateInstance(authBaseType, authMethods.Count);
         for (int i = 0; i < authMethods.Count; i++) typedArray.SetValue(authMethods[i], i);
-        var connInfo = Activator.CreateInstance(connInfoType, _options.Host, _options.Port, _options.Username, typedArray)!;
+        var connInfo = Activator.CreateInstance(connInfoType, "127.0.0.1", loopbackPort, _options.Username, typedArray)!;
         // Try to set socket factory to use tsnet stream if SSH.NET supports it (SocketFactory property)
-        TrySetSocketFactory(connInfo, tsStream);
         var sshClientType = asm.GetType("Renci.SshNet.SshClient")!;
         return Activator.CreateInstance(sshClientType, connInfo)!;
     }
 
-    private static void TrySetSocketFactory(object connInfo, Stream tsStream)
-    {
-        try
-        {
-            var prop = connInfo.GetType().GetProperty("SocketFactory");
-            if (prop is not null && prop.CanWrite)
-            {
-                // Заглушка: если свойство есть, можно подменить. Иначе tsnet Dial уже валидировал tailnet,
-                // а SSH пойдёт обычным сокетом — но на Android с userspace это всё равно через tsnet netstack,
-                // т.к. tsnet перехватывает Dial на уровне Go.
-            }
-        }
-        catch { }
-        _ = tsStream;
-    }
 
     // Copy of reflection helpers from SshNetSession (duplicated to keep Tsnet self-contained)
     private static System.Reflection.Assembly? TryLoadSshNet()
@@ -298,24 +342,34 @@ public sealed class TsnetSshSession : SshSessionBase
     }
     private static object CreateShellStream(object client, string term, uint cols, uint rows)
     {
-        try
+        // Real SSH.NET signature: (string term, uint cols, uint rows, uint width, uint height,
+        // IDictionary modes, int bufferSize). Look up flexibly like SshNetSession does.
+        var mi = client.GetType().GetMethods().FirstOrDefault(m => m.Name == "CreateShellStream" && m.GetParameters().Length >= 5);
+        if (mi is null) throw new MissingMethodException("SshClient.CreateShellStream not found.");
+        var pars = mi.GetParameters();
+        var args = new object?[pars.Length];
+        for (int k = 0; k < pars.Length; k++)
         {
-            var m = client.GetType().GetMethod("CreateShellStream", new[] { typeof(string), typeof(uint), typeof(uint), typeof(uint), typeof(uint), typeof(uint), typeof(uint) });
-            if (m is not null) return m.Invoke(client, new object[] { term, cols, rows, 80, 24, (uint)1024, (uint)1024 })!;
-            var m2 = client.GetType().GetMethod("CreateShellStream", new[] { typeof(string), typeof(uint), typeof(uint), typeof(uint), typeof(uint), typeof(uint) });
-            if (m2 is not null) return m2.Invoke(client, new object[] { term, cols, rows, 80, 24, (uint)1024 })!;
-            throw new MissingMethodException("CreateShellStream not found");
+            var p = pars[k];
+            if (p.ParameterType == typeof(string)) args[k] = term;
+            else if (p.ParameterType == typeof(uint) && p.Name!.Contains("col", StringComparison.OrdinalIgnoreCase)) args[k] = cols;
+            else if (p.ParameterType == typeof(uint) && p.Name!.Contains("row", StringComparison.OrdinalIgnoreCase)) args[k] = rows;
+            else if (p.ParameterType == typeof(uint)) args[k] = (uint)0;
+            else if (p.Name == "terminalModes" || p.ParameterType.Name.Contains("TerminalModes")) args[k] = null;
+            else if (p.ParameterType == typeof(int)) args[k] = 1024;
+            else args[k] = p.HasDefaultValue ? p.DefaultValue : null;
         }
+        try { return mi.Invoke(client, args)!; }
         catch (System.Reflection.TargetInvocationException tie) when (tie.InnerException != null) { System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw(); throw; }
     }
     private static void DynamicWrite(object stream, byte[] buf, int off, int len)
     {
-        try { stream.GetType().GetMethod("Write")!.Invoke(stream, new object[] { buf, off, len }); }
+        try { stream.GetType().GetMethod("Write", new[] { typeof(byte[]), typeof(int), typeof(int) })!.Invoke(stream, new object[] { buf, off, len }); }
         catch (System.Reflection.TargetInvocationException tie) when (tie.InnerException != null) { System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw(); throw; }
     }
     private static int DynamicRead(object stream, byte[] buf, int off, int len)
     {
-        try { return (int)stream.GetType().GetMethod("Read")!.Invoke(stream, new object[] { buf, off, len })!; }
+        try { return (int)stream.GetType().GetMethod("Read", new[] { typeof(byte[]), typeof(int), typeof(int) })!.Invoke(stream, new object[] { buf, off, len })!; }
         catch (System.Reflection.TargetInvocationException tie) when (tie.InnerException != null) { System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw(); throw; }
     }
     private static bool TrySendWindowChange(object stream, uint cols, uint rows)
