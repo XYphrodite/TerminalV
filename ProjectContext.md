@@ -320,8 +320,10 @@ TUI v0.6.7: рваный верх `muse` после ресайза — `applyFit
 
 Сплит-кнопка v0.7.4: `#new-tab-split` с `#new-tab` + `#new-tab-arrow`, `launch-menu.open(anchor)` на два триггера (все профили, дефолт по клику на `+`). Подробности — `docs/releases/v0.7.4.md`.
 
+Mobile v0.7.5: сохранение `tailscaleAuthKey` и всех полей подключения через `Preferences`, тихий `OnResizeAsync` без `RaiseError`. Подробности — `docs/releases/v0.7.5.md`.
+
 **Last Updated**: 2026-09-23
-**Version**: 0.7.4
+**Version**: 0.7.5
 **Status**: Active  
 **Repository**: `https://github.com/XYphrodite/TerminalV`  
 **Workspace**: `C:\Repos\TerminalV`

@@ -148,8 +148,7 @@ public sealed class TsnetSshSession : SshSessionBase
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (!TrySendWindowChange(_shellStream, (uint)cols, (uint)rows))
-                RaiseError($"Resize to {cols}x{rows} requested but window-change not supported; reconnect to apply.");
+            TrySendWindowChange(_shellStream, (uint)cols, (uint)rows);
         }
         finally { _gate.Release(); }
     }
@@ -376,11 +375,17 @@ public sealed class TsnetSshSession : SshSessionBase
     {
         try
         {
-            var m = stream.GetType().GetMethod("SendWindowChangeRequest");
-            if (m is null) return false;
-            m.Invoke(stream, new object[] { cols, rows, (uint)1024, (uint)1024 });
-            return true;
+            var t = stream.GetType();
+            var mi = t.GetMethod("SendWindowChangeRequest", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public);
+            if (mi is not null) { try { mi.Invoke(stream, new object[] { cols, rows, 0u, 0u }); return true; } catch { } try { mi.Invoke(stream, new object[] { cols, rows, (uint)1024, (uint)1024 }); return true; } catch { } try { mi.Invoke(stream, new object[] { (int)cols, (int)rows }); return true; } catch { } }
+            var chanProp = t.GetProperty("Channel", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public);
+            if (chanProp?.GetValue(stream) is object ch)
+            {
+                var cmi = ch.GetType().GetMethod("SendWindowChangeRequest");
+                if (cmi is not null) { try { cmi.Invoke(ch, new object[] { cols, rows }); return true; } catch { } try { cmi.Invoke(ch, new object[] { (int)cols, (int)rows }); return true; } catch { } }
+            }
         }
-        catch { return false; }
+        catch { }
+        return false;
     }
 }

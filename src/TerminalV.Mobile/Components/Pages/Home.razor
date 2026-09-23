@@ -10,7 +10,7 @@
         <div class="connect-card">
             <div class="card-head">
                 <h1>TerminalV Mobile</h1>
-                <p>Подключение к ПК через OpenSSH — прямой <code>sshd</code>, шлюз TerminalV или <b>вшитый Tailscale</b> (без отдельного VPN, не конфликтует с Happ)</p>
+                <p>Зеркало живых сессий ПК через шлюз TerminalV — прямой <code>sshd</code>, шлюз или <b>вшитый Tailscale</b> (без отдельного VPN, не конфликтует с Happ)</p>
             </div>
             <div class="form-grid">
                 <label class="field">
@@ -30,14 +30,18 @@
                     <input type="password" @bind="password" placeholder="••••" autocomplete="current-password" />
                 </label>
                 <label class="field field-check">
-                    <input type="checkbox" @bind="useGateway" disabled="@useTailscale" />
-                    <span>Через шлюз TerminalV</span>
+                    <input type="checkbox" @bind="useGateway" @bind:after="OnGatewayToggled" disabled="@useTailscale" />
+                    <span>Через шлюз TerminalV (зеркало сессий ПК)</span>
                 </label>
                 @if (useGateway)
                 {
                     <label class="field" style="grid-column:1 / -1">
                         <span>Gateway URL</span>
                         <input @bind="gatewayUrl" placeholder="ws://100.119.48.15:5454" />
+                    </label>
+                    <label class="field" style="grid-column:1 / -1">
+                        <span>Токен шлюза (Настройки ПК → Удалённый доступ)</span>
+                        <input type="password" @bind="gatewayToken" placeholder="токен (пусто — без токена)" autocomplete="off" />
                     </label>
                 }
                 <label class="field field-check">
@@ -63,13 +67,67 @@
             }
             <div class="status">@status</div>
             <button class="primary" @onclick="ConnectAsync" disabled="@connecting">@(connecting ? "Подключение…" : "Подключиться")</button>
-            <div class="hint">5454 — шлюз, 22 — прямой sshd, вшитый Tailscale — 100.119.48.15 без отдельного VPN. Для xeon: 100.119.48.15 / local / 5454</div>
+            <div class="hint">5454 — шлюз (зеркало живых сессий ПК), 22 — прямой sshd, вшитый Tailscale — 100.119.48.15 без отдельного VPN. Для xeon: 100.119.48.15 / 5454 + токен</div>
+        </div>
+    }
+    else if (useGateway)
+    {
+        <div class="terminal-bar">
+            <span class="badge">@GatewayDisplayUrl · mirror</span>
+            <span>
+                <button class="ghost" @onclick="RefreshAsync" title="Обновить список сессий">⟳</button>
+                <button class="ghost" @onclick="RefitActiveAsync" title="Подогнать размер">⤢</button>
+                <button class="ghost" @onclick="DisconnectAsync">Отключиться</button>
+            </span>
+        </div>
+        @if (!string.IsNullOrEmpty(error))
+        {
+            <div class="error bar-error">@error</div>
+        }
+        <div class="tab-strip">
+            @foreach (var t in tabs)
+            {
+                <button class="tab @(t.DesktopId == activeTabId ? "active" : "") @(t.Dead ? "dead" : "")" @onclick="() => SwitchTabAsync(t.DesktopId)">
+                    @t.ShortLabel@(t.Dead ? " ✕" : "")
+                </button>
+            }
+            <button class="tab newtab" @onclick="NewTabAsync" title="Новая сессия на ПК">＋</button>
+        </div>
+        @foreach (var t in tabs)
+        {
+            <div id="c-@t.TermKey" class="terminal-pane" style="@(t.DesktopId == activeTabId ? "" : "display:none")"></div>
+        }
+        @if (activeTab is { Dead: true })
+        {
+            <div class="dead-bar">
+                <span>Сессия завершена@(activeTab.ExitCode.HasValue ? $" (code {activeTab.ExitCode})" : "").</span>
+                <button class="ghost" @onclick="() => ReconnectTabAsync(activeTab)">Переподключиться</button>
+                <button class="ghost" @onclick="() => RemoveTabAsync(activeTab)">Убрать</button>
+            </div>
+        }
+        @if (activeTab is not null)
+        {
+            <div class="tab-actions">
+                <button class="ghost danger" @onclick="() => KillTabAsync(activeTab)" title="Завершить сессию на ПК">Завершить на ПК</button>
+                <button class="ghost" @onclick="() => RemoveTabAsync(activeTab)" title="Открепить (сессия продолжит работать на ПК)">Открепить</button>
+            </div>
+        }
+        <div class="open-row">
+            <span class="open-label">Сессии ПК:</span>
+            @if (availableIds.Count == 0)
+            {
+                <span class="status">нет живых сессий — создайте кнопкой ＋</span>
+            }
+            @foreach (var id in availableIds.Where(id => !tabs.Any(t => t.DesktopId == id)))
+            {
+                <button class="ghost" @onclick="() => OpenTabAsync(id)">@ShortId(id)</button>
+            }
         </div>
     }
     else
     {
         <div class="terminal-bar">
-            <span class="badge">@host:@port · @username @(useGateway ? "· gateway" : useTailscale ? "· tsnet" : "")</span>
+            <span class="badge">@host:@port · @username @(useTailscale ? "· tsnet" : "")</span>
             <button class="ghost" @onclick="DisconnectAsync">Отключиться</button>
         </div>
         @if (!string.IsNullOrEmpty(error))
@@ -104,8 +162,18 @@
 .terminal-bar { display: flex; align-items: center; justify-content: space-between; background: #0F1318; border: 1px solid #1E2631; padding: 8px 10px; margin-bottom: 8px; }
 .badge { font-size: 12px; color: #9AB4D6; }
 .ghost { background: transparent; border: 1px solid #26303D; color: #C5D1E0; padding: 6px 10px; font-size: 13px; cursor: pointer; }
+.ghost.danger { border-color: #5A1E1E; color: #FF9E9E; }
 .terminal-pane { height: 62vh; min-height: 320px; background: #0B0D10; border: 1px solid #1E2631; padding: 4px; }
 .bar-error { margin: -4px 0 8px; }
+.tab-strip { display: flex; gap: 6px; margin-bottom: 8px; overflow-x: auto; }
+.tab { background: #0F1318; border: 1px solid #1E2631; color: #C5D1E0; padding: 6px 10px; font-size: 13px; cursor: pointer; white-space: nowrap; }
+.tab.active { border-color: #2A7FFF; color: #fff; }
+.tab.dead { opacity: .55; }
+.tab.newtab { border-style: dashed; }
+.dead-bar { display: flex; gap: 8px; align-items: center; background: #221410; border: 1px solid #5A2E1E; color: #FFC79E; padding: 8px 10px; font-size: 13px; margin: 8px 0; }
+.tab-actions { display: flex; gap: 8px; margin: 8px 0; }
+.open-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
+.open-label { font-size: 12px; color: #9AA8BC; }
 @@media (max-width: 560px) { .form-grid { grid-template-columns: 1fr; } .terminal-pane { height: 58vh; } }
 </style>
 
@@ -116,9 +184,46 @@
     private string password = "5454";
     private bool useGateway = false;
     private string gatewayUrl = "ws://100.119.48.15:5454";
+    private string gatewayToken = "";
     private bool useTailscale = false;
     private string tailscaleAuthKey = "";
     private string tailscaleHostname = "terminalv-mobile";
+
+    protected override void OnInitialized()
+    {
+        try
+        {
+            host = Microsoft.Maui.Storage.Preferences.Default.Get(nameof(host), host);
+            port = Microsoft.Maui.Storage.Preferences.Default.Get(nameof(port), port);
+            username = Microsoft.Maui.Storage.Preferences.Default.Get(nameof(username), username);
+            password = Microsoft.Maui.Storage.Preferences.Default.Get(nameof(password), password);
+            useGateway = Microsoft.Maui.Storage.Preferences.Default.Get(nameof(useGateway), useGateway);
+            gatewayUrl = Microsoft.Maui.Storage.Preferences.Default.Get(nameof(gatewayUrl), gatewayUrl);
+            gatewayToken = Microsoft.Maui.Storage.Preferences.Default.Get(nameof(gatewayToken), gatewayToken);
+            useTailscale = Microsoft.Maui.Storage.Preferences.Default.Get(nameof(useTailscale), useTailscale);
+            tailscaleAuthKey = Microsoft.Maui.Storage.Preferences.Default.Get(nameof(tailscaleAuthKey), tailscaleAuthKey);
+            tailscaleHostname = Microsoft.Maui.Storage.Preferences.Default.Get(nameof(tailscaleHostname), tailscaleHostname);
+        }
+        catch { }
+    }
+
+    private void SavePreferences()
+    {
+        try
+        {
+            Microsoft.Maui.Storage.Preferences.Default.Set(nameof(host), host);
+            Microsoft.Maui.Storage.Preferences.Default.Set(nameof(port), port);
+            Microsoft.Maui.Storage.Preferences.Default.Set(nameof(username), username);
+            Microsoft.Maui.Storage.Preferences.Default.Set(nameof(password), password);
+            Microsoft.Maui.Storage.Preferences.Default.Set(nameof(useGateway), useGateway);
+            Microsoft.Maui.Storage.Preferences.Default.Set(nameof(gatewayUrl), gatewayUrl);
+            Microsoft.Maui.Storage.Preferences.Default.Set(nameof(gatewayToken), gatewayToken);
+            Microsoft.Maui.Storage.Preferences.Default.Set(nameof(useTailscale), useTailscale);
+            Microsoft.Maui.Storage.Preferences.Default.Set(nameof(tailscaleAuthKey), tailscaleAuthKey);
+            Microsoft.Maui.Storage.Preferences.Default.Set(nameof(tailscaleHostname), tailscaleHostname);
+        }
+        catch { }
+    }
     private bool connecting = false;
     private bool isConnected = false;
     private string error = "";
@@ -126,19 +231,69 @@
     private ISshSession? session;
     private const string TermId = "main";
     private static ISshSession? _staticSession;
+    private static readonly Dictionary<string, ISshSession> _termSessions = new();
+    private static readonly object _termGate = new();
+
+    // Mirror (gateway) workspace
+    private GatewayControlClient? control;
+    private readonly List<MirrorTab> tabs = new();
+    private string? activeTabId;
+    private List<string> availableIds = new();
+    private string GatewayDisplayUrl => string.IsNullOrWhiteSpace(gatewayUrl) ? $"ws://{host}:{port}" : gatewayUrl.Trim();
+
+    private MirrorTab? activeTab => tabs.FirstOrDefault(t => t.DesktopId == activeTabId);
+
+    private sealed class MirrorTab
+    {
+        public string DesktopId = "";
+        public string TermKey => "gw-" + DesktopId;
+        public string ContainerId => "c-gw-" + DesktopId;
+        public string ShortLabel => ShortId(DesktopId);
+        public ISshSession? Session;
+        public bool Open;
+        public bool Dead;
+        public int? ExitCode;
+    }
+
+    private sealed class TermSize
+    {
+        public int Cols { get; set; } = 80;
+        public int Rows { get; set; } = 24;
+    }
+
+    private static string ShortId(string id) => id.Length > 8 ? id[^8..] : id;
+
+    private void OnGatewayToggled()
+    {
+        if (useGateway && port == 22) port = 5454;
+        else if (!useGateway && port == 5454) port = 22;
+        if (useGateway && string.IsNullOrWhiteSpace(gatewayUrl))
+            gatewayUrl = $"ws://{host.Trim()}:{port}";
+    }
 
     private async Task ConnectAsync()
     {
+        SavePreferences();
         error = "";
         status = "";
-        if (string.IsNullOrWhiteSpace(host) || string.IsNullOrWhiteSpace(username))
+        if (string.IsNullOrWhiteSpace(host))
         {
-            error = "Заполни хост и пользователя.";
+            error = "Заполни хост.";
             return;
         }
         if (port < 1 || port > 65535)
         {
             error = "Порт 1..65535.";
+            return;
+        }
+        if (useGateway)
+        {
+            await ConnectGatewayAsync();
+            return;
+        }
+        if (string.IsNullOrWhiteSpace(username))
+        {
+            error = "Заполни пользователя.";
             return;
         }
         if (string.IsNullOrEmpty(password))
@@ -151,13 +306,8 @@
             error = "Укажи Tailscale auth key (admin.tailscale.com → Keys). Без него вшитый tsnet не войдёт в tailnet.";
             return;
         }
-        if (useTailscale && useGateway)
-        {
-            error = "Выбери что-то одно: либо 'Через шлюз', либо 'Через вшитый Tailscale'.";
-            return;
-        }
         connecting = true;
-        status = useTailscale ? $"Подключение через вшитый Tailscale к {host}:{port} (без VPN)…" : useGateway ? $"Подключение через шлюз {gatewayUrl}…" : $"Подключение к {host}:{port}…";
+        status = useTailscale ? $"Подключение через вшитый Tailscale к {host}:{port} (без VPN)…" : $"Подключение к {host}:{port}…";
         StateHasChanged();
         try
         {
@@ -167,7 +317,6 @@
                 Port = port,
                 Username = username.Trim(),
                 Password = password,
-                GatewayUrl = useGateway ? gatewayUrl.Trim() : null,
                 Columns = 80,
                 Rows = 24
             };
@@ -189,8 +338,9 @@
             status = "Соединение установлено.";
             StateHasChanged();
             await Task.Delay(100);
-            await JS.InvokeVoidAsync("terminalInterop.create", TermId, 80, 24);
+            await JS.InvokeVoidAsync("terminalInterop.create", TermId, 80, 24, "terminal-container");
             await JS.InvokeVoidAsync("terminalInterop.write", TermId, "\r\n\x1b[32mПодключено к " + host + ":" + port + "\x1b[0m\r\n");
+            await RefitDirectAsync();
         }
         catch (Exception ex)
         {
@@ -205,6 +355,232 @@
             connecting = false;
             StateHasChanged();
         }
+    }
+
+    private async Task ConnectGatewayAsync()
+    {
+        connecting = true;
+        status = $"Подключение к шлюзу {GatewayDisplayUrl}…";
+        StateHasChanged();
+        try
+        {
+            control?.Dispose();
+            control = new GatewayControlClient(GatewayDisplayUrl,
+                string.IsNullOrWhiteSpace(gatewayToken) ? null : gatewayToken.Trim());
+            availableIds = (await control.ListAsync()).ToList();
+            isConnected = true;
+            status = availableIds.Count == 0 ? "Шлюз доступен. Живых сессий нет — создайте кнопкой ＋." : $"Шлюз доступен. Сессий ПК: {availableIds.Count}.";
+            StateHasChanged();
+            if (availableIds.Count > 0)
+                await OpenTabAsync(availableIds[0]);
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+            status = "Ошибка подключения к шлюзу.";
+            control?.Dispose();
+            control = null;
+        }
+        finally
+        {
+            connecting = false;
+            StateHasChanged();
+        }
+    }
+
+    private SshConnectionOptions MirrorOptions(string desktopId, int cols, int rows) => new()
+    {
+        Host = host.Trim(),
+        Port = port,
+        Username = "mirror",
+        Password = null,
+        GatewayUrl = GatewayDisplayUrl,
+        GatewayToken = string.IsNullOrWhiteSpace(gatewayToken) ? null : gatewayToken.Trim(),
+        MirrorSessionId = desktopId,
+        Columns = cols,
+        Rows = rows
+    };
+
+    private async Task OpenTabAsync(string desktopId)
+    {
+        var existing = tabs.FirstOrDefault(t => t.DesktopId == desktopId);
+        if (existing is not null)
+        {
+            await SwitchTabAsync(desktopId);
+            return;
+        }
+        error = "";
+        var tab = new MirrorTab { DesktopId = desktopId };
+        tabs.Add(tab);
+        activeTabId = desktopId;
+        StateHasChanged();
+        await Task.Delay(100);
+        try
+        {
+            await JS.InvokeVoidAsync("terminalInterop.create", tab.TermKey, 80, 24, tab.ContainerId);
+            var sess = Ssh.Create(Guid.NewGuid().ToString(), MirrorOptions(desktopId, 80, 24));
+            sess.DataReceived += data => OnMirrorData(tab, data);
+            sess.ErrorReceived += msg => OnMirrorError(tab, msg);
+            sess.Closed += code => OnMirrorClosed(tab, code);
+            tab.Session = sess;
+            lock (_termGate) _termSessions[tab.TermKey] = sess;
+            await sess.ConnectAsync();
+            tab.Open = true;
+            StateHasChanged();
+            await RefitTabAsync(tab);
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+            await RemoveTabAsync(tab);
+        }
+        StateHasChanged();
+    }
+
+    private async Task SwitchTabAsync(string desktopId)
+    {
+        activeTabId = desktopId;
+        error = "";
+        StateHasChanged();
+        await Task.Delay(50);
+        var tab = tabs.FirstOrDefault(t => t.DesktopId == desktopId);
+        if (tab?.Session is not null && tab.Open)
+            await RefitTabAsync(tab);
+    }
+
+    private async Task ReconnectTabAsync(MirrorTab tab)
+    {
+        error = "";
+        tab.Dead = false;
+        tab.ExitCode = null;
+        StateHasChanged();
+        try
+        {
+            if (tab.Session is null)
+            {
+                await OpenTabAsync(tab.DesktopId);
+                return;
+            }
+            await tab.Session.ConnectAsync();
+            tab.Open = true;
+            await RefitTabAsync(tab);
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        StateHasChanged();
+    }
+
+    private async Task RemoveTabAsync(MirrorTab tab)
+    {
+        try { if (tab.Session is not null) await tab.Session.DisconnectAsync(); } catch { }
+        tab.Session?.Dispose();
+        tab.Session = null;
+        tab.Open = false;
+        lock (_termGate) _termSessions.Remove(tab.TermKey);
+        try { await JS.InvokeVoidAsync("terminalInterop.destroy", tab.TermKey); } catch { }
+        tabs.Remove(tab);
+        if (activeTabId == tab.DesktopId)
+            activeTabId = tabs.LastOrDefault()?.DesktopId;
+        StateHasChanged();
+    }
+
+    private async Task KillTabAsync(MirrorTab tab)
+    {
+        error = "";
+        try
+        {
+            if (control is not null)
+                await control.KillAsync(tab.DesktopId);
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        await RemoveTabAsync(tab);
+    }
+
+    private async Task NewTabAsync()
+    {
+        error = "";
+        if (control is null)
+        {
+            error = "Нет соединения со шлюзом.";
+            return;
+        }
+        try
+        {
+            var size = await MeasureActiveAsync();
+            var id = await control.CreateAsync(size.Cols, size.Rows);
+            if (!availableIds.Contains(id)) availableIds.Add(id);
+            await OpenTabAsync(id);
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+            StateHasChanged();
+        }
+    }
+
+    private async Task RefreshAsync()
+    {
+        error = "";
+        if (control is null) return;
+        try
+        {
+            availableIds = (await control.ListAsync()).ToList();
+            status = $"Сессий ПК: {availableIds.Count}.";
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        StateHasChanged();
+    }
+
+    private async Task<TermSize> MeasureActiveAsync()
+    {
+        var tab = activeTab;
+        if (tab is null) return new TermSize();
+        try
+        {
+            var size = await JS.InvokeAsync<TermSize>("terminalInterop.measure", tab.TermKey);
+            if (size is not null && size.Cols >= 1 && size.Rows >= 1)
+                return new TermSize { Cols = Math.Min(size.Cols, 1000), Rows = Math.Min(size.Rows, 1000) };
+        }
+        catch { }
+        return new TermSize();
+    }
+
+    private async Task RefitTabAsync(MirrorTab tab)
+    {
+        if (tab.Session is null || !tab.Open) return;
+        try
+        {
+            var size = await JS.InvokeAsync<TermSize>("terminalInterop.measure", tab.TermKey);
+            if (size is not null && size.Cols >= 1 && size.Rows >= 1)
+                await tab.Session.ResizeAsync(Math.Min(size.Cols, 1000), Math.Min(size.Rows, 1000));
+        }
+        catch { }
+    }
+
+    private async Task RefitActiveAsync()
+    {
+        var tab = activeTab;
+        if (tab is not null) await RefitTabAsync(tab);
+    }
+
+    private async Task RefitDirectAsync()
+    {
+        if (session is null) return;
+        try
+        {
+            var size = await JS.InvokeAsync<TermSize>("terminalInterop.measure", TermId);
+            if (size is not null && size.Cols >= 1 && size.Rows >= 1)
+                await session.ResizeAsync(Math.Min(size.Cols, 1000), Math.Min(size.Rows, 1000));
+        }
+        catch { }
     }
 
     private void OnData(string data)
@@ -223,10 +599,31 @@
         _ = InvokeAsync(() => { isConnected = false; status = code.HasValue ? $"Сессия закрыта (code {code})" : "Сессия закрыта."; StateHasChanged(); });
     }
 
+    private void OnMirrorData(MirrorTab tab, string data)
+    {
+        _ = InvokeAsync(async () =>
+        {
+            try { await JS.InvokeVoidAsync("terminalInterop.write", tab.TermKey, data); } catch { }
+        });
+    }
+    private void OnMirrorError(MirrorTab tab, string msg)
+    {
+        _ = InvokeAsync(() => { error = msg; StateHasChanged(); });
+    }
+    private void OnMirrorClosed(MirrorTab tab, int? code)
+    {
+        _ = InvokeAsync(() => { tab.Open = false; tab.Dead = true; tab.ExitCode = code; status = "Сессия на ПК завершена."; StateHasChanged(); });
+    }
+
     [JSInvokable]
     public async Task OnTerminalData(string id, string data)
     {
-        if (session != null && isConnected)
+        var tab = tabs.FirstOrDefault(t => t.TermKey == id);
+        if (tab?.Session is not null && tab.Open)
+        {
+            try { await tab.Session.WriteAsync(data); } catch { }
+        }
+        else if (session != null && isConnected && id == TermId)
         {
             try { await session.WriteAsync(data); } catch { }
         }
@@ -235,14 +632,40 @@
     [JSInvokable("OnTerminalData")]
     public static async Task OnTerminalDataStatic(string id, string data)
     {
-        if (_staticSession != null)
+        ISshSession? target = null;
+        lock (_termGate) _termSessions.TryGetValue(id, out target);
+        target ??= _staticSession;
+        if (target != null)
         {
-            try { await _staticSession.WriteAsync(data); } catch { }
+            try { await target.WriteAsync(data); } catch { }
+        }
+    }
+
+    [JSInvokable("OnTerminalResizeStatic")]
+    public static async Task OnTerminalResizeStatic(string id, int cols, int rows)
+    {
+        ISshSession? target = null;
+        lock (_termGate) _termSessions.TryGetValue(id, out target);
+        if (target != null && cols >= 1 && rows >= 1)
+        {
+            try { await target.ResizeAsync(Math.Min(cols, 1000), Math.Min(rows, 1000)); } catch { }
         }
     }
 
     private async Task DisconnectAsync()
     {
+        foreach (var tab in tabs.ToList())
+        {
+            try { if (tab.Session is not null) await tab.Session.DisconnectAsync(); } catch { }
+            tab.Session?.Dispose();
+            try { await JS.InvokeVoidAsync("terminalInterop.destroy", tab.TermKey); } catch { }
+        }
+        tabs.Clear();
+        lock (_termGate) _termSessions.Clear();
+        control?.Dispose();
+        control = null;
+        availableIds.Clear();
+        activeTabId = null;
         try { if (session != null) await session.DisconnectAsync(); } catch { }
         session?.Dispose();
         session = null;
@@ -254,6 +677,12 @@
 
     public async ValueTask DisposeAsync()
     {
+        foreach (var tab in tabs)
+        {
+            try { if (tab.Session is not null) await tab.Session.DisconnectAsync(); } catch { }
+            tab.Session?.Dispose();
+        }
+        control?.Dispose();
         if (session != null)
         {
             try { await session.DisconnectAsync(); } catch { }

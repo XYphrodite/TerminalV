@@ -92,12 +92,7 @@ public sealed class SshNetSession : SshSessionBase
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            // Try window change via reflection; fallback to recreate stream if not supported
-            if (!TrySendWindowChange(_shellStream, (uint)cols, (uint)rows))
-            {
-                // Fallback: many SSH.NET builds support ShellStream extended method; ignore if absent
-                RaiseError($"Resize to {cols}x{rows} requested but window-change not supported by current SSH.NET; reconnect to apply.");
-            }
+            TrySendWindowChange(_shellStream, (uint)cols, (uint)rows);
         }
         finally { _gate.Release(); }
     }
