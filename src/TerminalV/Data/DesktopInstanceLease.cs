@@ -18,7 +18,8 @@ internal sealed class DesktopInstanceLease : IDisposable
                 Path.Combine(dataDirectory, "desktop.lock"),
                 FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None));
         }
-        catch (IOException ex) when ((ex.HResult & 0xffff) is 32 or 33)
+        catch (IOException ex) when (ex is DirectoryNotFoundException) { throw; }
+        catch (IOException)
         {
             return null;
         }

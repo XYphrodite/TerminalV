@@ -158,11 +158,7 @@ internal sealed class AppDatabase : IDisposable
             using var count = _connection.CreateCommand();
             count.CommandText = "SELECT COUNT(*) FROM sessions";
             var existing = Convert.ToInt64(count.ExecuteScalar());
-            if (existing > 0)
-            {
-                try { TerminalV.Diagnostics.Diag.Log("persistence", $"SaveSessions skipped empty wipe over {existing} existing sessions", null); } catch { }
-                return;
-            }
+            if (existing > 0) return;
         }
         // Preserve every session regardless of Hidden – visible sessions must also
         // survive restart with buffer/cwd, not only hidden ones.
