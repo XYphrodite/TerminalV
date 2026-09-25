@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag (e.g. v0.6.11). Must match Version in src/TerminalV/TerminalV.csproj'
+        description: 'Release tag (e.g. v0.7.8). Must match Version in src/TerminalV/TerminalV.csproj'
         required: true
-        default: 'v0.6.11'
+        default: 'v0.7.8'
   push:
     tags:
       - 'v*'
@@ -63,6 +63,32 @@ jobs:
       - name: Publish package
         shell: pwsh
         run: ./scripts/publish.ps1 -OutputDirectory "artifacts/release-$env:TAG"
+
+      - name: Verify full and light packages before release
+        shell: pwsh
+        run: |
+          $version = $env:TAG.Substring(1)
+          $releaseDirectory = "artifacts/release-$env:TAG"
+          dotnet run --project tests/TerminalV.Package.Tests -c Release -- "$releaseDirectory/TerminalV-win-x64.zip" $version "$releaseDirectory/verified-full"
+          if ($LASTEXITCODE -ne 0) { throw "Full package checks failed" }
+          dotnet run --project tests/TerminalV.Package.Tests -c Release -- "$releaseDirectory/TerminalV-win-x64-light.zip" $version "$releaseDirectory/verified-light"
+          if ($LASTEXITCODE -ne 0) { throw "Light package checks failed" }
+
+      - name: Verify session persistence before release
+        shell: pwsh
+        run: |
+          dotnet run --project tests/TerminalV.Data.Tests -c Release
+          if ($LASTEXITCODE -ne 0) { throw "Session database checks failed" }
+          dotnet run --project tests/TerminalV.Pty.Tests -c Release
+          if ($LASTEXITCODE -ne 0) { throw "Session host checks failed" }
+          $env:TERMINALV_TEST_APP_ROOT = (Resolve-Path "artifacts/release-$env:TAG/verified-full/wwwroot").Path
+          Push-Location ui
+          try {
+            node --test --test-concurrency=1 tests/session-persistence.test.js tests/session-management.test.js tests/notifications.test.js
+            if ($LASTEXITCODE -ne 0) { throw "Session persistence timing checks failed" }
+            node --test --test-concurrency=1 --test-name-pattern="close protection|working directory|session management|notification" tests/selection.test.js
+            if ($LASTEXITCODE -ne 0) { throw "Session interface checks failed" }
+          } finally { Pop-Location }
 
       - name: Create GitHub Release
         shell: pwsh
