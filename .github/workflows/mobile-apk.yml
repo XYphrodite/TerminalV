@@ -1,0 +1,95 @@
+name: mobile-apk
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/mobile-apk.yml'
+      - 'src/TerminalV.Mobile/**'
+      - 'src/TerminalV/**'
+      - 'tools/tsnet-bridge/**'
+      - 'ui/**'
+  pull_request:
+    paths:
+      - '.github/workflows/mobile-apk.yml'
+      - 'src/TerminalV.Mobile/**'
+      - 'src/TerminalV/**'
+      - 'tools/tsnet-bridge/**'
+      - 'ui/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mobile-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: tools/tsnet-bridge/go.mod
+          cache-dependency-path: tools/tsnet-bridge/go.sum
+
+      - name: Install MAUI workload
+        run: dotnet workload install maui --ignore-failed-sources
+
+      - name: Build web UI and copy to MAUI wwwroot
+        working-directory: ui
+        run: |
+          npm ci --no-fund --no-audit
+          if ($LASTEXITCODE -ne 0) { throw "npm ci failed" }
+          npm run build
+          if ($LASTEXITCODE -ne 0) { throw "vite build failed" }
+          node scripts/copy-mobile-ui.js
+          if ($LASTEXITCODE -ne 0) { throw "copy-mobile-ui failed" }
+
+      - name: Build tsnet AAR (embedded Tailscale)
+        run: |
+          $aar = "src/TerminalV.Mobile/Platforms/Android/libs/tsnet.aar"
+          if (Test-Path $aar) { Write-Host "tsnet.aar already present, skipping build"; exit 0 }
+          pwsh -File tools/tsnet-bridge/build-aar.ps1
+          if ($LASTEXITCODE -ne 0) { throw "build-aar.ps1 failed" }
+          $built = "tools/tsnet-bridge/tsnet.aar"
+          if (Test-Path $built) {
+            New-Item -ItemType Directory -Force -Path (Split-Path $aar) | Out-Null
+            Copy-Item $built $aar -Force
+          }
+          if (-not (Test-Path $aar)) { throw "tsnet.aar not found after build" }
+
+      - name: Publish Android APK
+        run: |
+          dotnet publish src/TerminalV.Mobile/TerminalV.Mobile.csproj -f net10.0-android -c Release -p:AndroidPackageFormat=apk -o artifacts/mobile-apk
+          if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed" }
+          Get-ChildItem -Recurse artifacts/mobile-apk/*.apk | ForEach-Object { Write-Host "APK: $($_.FullName) ($([math]::Round($_.Length/1MB,1)) MB)" }
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TerminalV-Mobile-apk
+          path: artifacts/mobile-apk/*.apk
+          if-no-files-found: error
