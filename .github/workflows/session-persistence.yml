@@ -66,4 +66,4 @@ jobs:
       - name: Check built desktop session interface in browser
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         working-directory: TerminalV/ui
-        run: node --test --test-concurrency=1 --test-name-pattern='cold restore|close protection|working directory|session management|notification|search in the built|launch profiles|quick launch menu|split panes|terminal geometry|synchronized TUI output' tests/selection.test.js
+        run: node --test --test-concurrency=1 --test-name-pattern='cold restore|close protection|working directory|session management|notification|search in the built|launch profiles|quick launch menu|split panes|terminal geometry|synchronized TUI output|terminal scrolling survives' tests/selection.test.js

@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag (e.g. v0.7.12). Must match Version in src/TerminalV/TerminalV.csproj'
+        description: 'Release tag (e.g. v0.7.13). Must match Version in src/TerminalV/TerminalV.csproj'
         required: true
-        default: 'v0.7.12'
+        default: 'v0.7.13'
   push:
     tags:
       - 'v*'
@@ -66,7 +66,7 @@ jobs:
         run: |
           npm ci --no-fund --no-audit
           if ($LASTEXITCODE -ne 0) { throw "npm ci failed" }
-          node --test --test-concurrency=1 --test-name-pattern="scroll position when reopening xterm panes|terminal geometry|synchronized TUI output" tests/selection.test.js
+          node --test --test-concurrency=1 --test-name-pattern="scroll position when reopening xterm panes|terminal geometry|synchronized TUI output|terminal scrolling survives" tests/selection.test.js
           if ($LASTEXITCODE -ne 0) { throw "Terminal rendering regression tests failed" }
 
       - name: Publish package

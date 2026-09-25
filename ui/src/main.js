@@ -28,7 +28,6 @@ import { SynchronizedOutputAddon } from "./synchronized-output.js";
 import { createShortcuts } from "./shortcuts.js";
 import { WRITE_CHUNK, chunkText } from "./write-chunk.js";
 import { shouldStoreAsFile, PASTE_FILE_STORE_TIMEOUT_MS } from "./paste-file.js";
-import { wantsAppWheel } from "./tui-scroll.js";
 import { normalizeGatewaySettings, gatewayStatusText, gatewayConnectHint, generateGatewayToken } from "./gateway-settings.js";
 
 mountIcons(document);
@@ -439,48 +438,11 @@ function applySplitDepth(row, id) {
   }
 }
 
-function isMouseReporting(tab) {
-  return Boolean(tab.term.element?.classList.contains("enable-mouse-events"));
-}
-
-function wheelTarget(tab, event) {
-  return wantsAppWheel({
-    tuiLock: tab.host.classList.contains("tui-lock"),
-    mouseMode: isMouseReporting(tab),
-    zoomModifier: Boolean(event.ctrlKey || event.metaKey)
-  }) ? "app" : "terminal";
-}
-
-function isTui(tab) {
-  return (
-    tab.term.buffer.active.type === "alternate" ||
-    isMouseReporting(tab) ||
-    Boolean(tab.tuiHint)
-  );
-}
-
-function pinViewport(tab) {
-  tab.term.scrollToBottom();
-  const viewport = tab.host.querySelector(".xterm-viewport");
-  if (viewport && viewport.scrollTop) {
-    viewport.scrollTop = 0;
-  }
-}
-
 function syncScrollLock(tab) {
-  const lock = isTui(tab);
-  const wasLock = tab.host.classList.contains("tui-lock");
-  tab.host.classList.toggle("tui-lock", lock);
-  if (lock) {
-    if (tab.term.options.scrollback !== 0) {
-      tab.term.options.scrollback = 0;
-    }
-    pinViewport(tab);
-    return;
-  }
-  if (wasLock) {
-    tab.term.options.scrollback = 8000;
-  }
+  // Mouse reporting is also used by inline apps. Only the parsed alternate
+  // buffer owns the viewport; xterm already gives it no scrollback. Changing
+  // the scrollback option here destroys history in the normal buffer too.
+  tab.host.classList.toggle("tui-lock", tab.term.buffer.active.type === "alternate");
 }
 
 function applyFit(tab, notifyHost = true) {
@@ -985,7 +947,6 @@ function removeTab(tab) {
   dropWebgl(tab);
   tab.output.dispose();
   tab.resizeObserver?.disconnect();
-  tab.mouseWatch?.disconnect();
   try {
     tab.term.dispose();
   } catch {
@@ -1273,8 +1234,7 @@ function newTab(options = {}) {
     ptySize: null,
     serialize,
     search,
-    webgl: null,
-    tuiHint: false
+    webgl: null
   };
 
   overlayBtn.addEventListener("click", () => restart(tab));
@@ -1340,53 +1300,9 @@ function newTab(options = {}) {
   });
   attachCopyPaste(tab);
   tab.term.buffer.onBufferChange(() => syncScrollLock(tab));
-  const xtermEl = tab.term.element;
-  if (xtermEl) {
-    const mouseWatch = new MutationObserver(() => syncScrollLock(tab));
-    tab.mouseWatch = mouseWatch;
-    mouseWatch.observe(xtermEl, { attributes: true, attributeFilter: ["class"] });
-  }
-  tab.host.addEventListener(
-    "wheel",
-    (event) => {
-      if (!tab.host.classList.contains("tui-lock")) {
-        return;
-      }
-      if (event.ctrlKey || event.metaKey) {
-        return;
-      }
-      // A mouse-interactive TUI (own scrollbar) gets the wheel itself;
-      // xterm forwards it as mouse reports. Other TUIs stay pinned.
-      if (wheelTarget(tab, event) === "app") {
-        return;
-      }
-      event.preventDefault();
-      pinViewport(tab);
-    },
-    { passive: false, capture: true }
-  );
-  tab.host.querySelector(".xterm-viewport")?.addEventListener(
-    "scroll",
-    () => {
-      if (tab.host.classList.contains("tui-lock")) {
-        pinViewport(tab);
-      }
-    },
-    { passive: true }
-  );
-  tab.term.attachCustomWheelEventHandler((event) => {
-    if (!tab.host.classList.contains("tui-lock")) {
-      return true;
-    }
-    if (event.ctrlKey || event.metaKey) {
-      return true;
-    }
-    if (wheelTarget(tab, event) === "app") {
-      return true;
-    }
-    event.preventDefault();
-    return true;
-  });
+  // xterm routes wheel events to native scrollback, requested mouse reports,
+  // or alternate-buffer cursor keys. Reserve Ctrl/Meta+wheel for UI zoom.
+  tab.term.attachCustomWheelEventHandler(event => !(event.ctrlKey || event.metaKey));
   syncScrollLock(tab);
 
   const observer = new ResizeObserver(() => {
@@ -1767,11 +1683,6 @@ function handleHost(message) {
 
   if (message.type === "data") {
     const chunk = message.data ?? "";
-    if (/\x1b\[\?(?:1049|47|1047)l/.test(chunk)) {
-      tab.tuiHint = false;
-    } else if (/\x1b\[\?(?:1049|47|1047|1000|1002|1003)h/.test(chunk)) {
-      tab.tuiHint = true;
-    }
     tab.output.write(chunk, message.replay === true);
     if (tab.id !== activeId && !tab.unread) {
       tab.unread = true;
@@ -1782,7 +1693,6 @@ function handleHost(message) {
 
   if (message.type === "exit") {
     sessionOptions.cancel(tab);
-    tab.tuiHint = false;
     tab.exited = true;
     closeController.cancel(tab);
     pasteController.cancel(tab);
@@ -2025,7 +1935,7 @@ window.addEventListener(
     event.preventDefault();
     applyZoomDelta(event.deltaY < 0 ? 1 : -1);
   },
-  { passive: false }
+  { passive: false, capture: true }
 );
 
 const webview = host();

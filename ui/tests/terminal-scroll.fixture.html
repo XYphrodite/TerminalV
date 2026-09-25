@@ -1,0 +1,177 @@
+<!doctype html>
+<meta charset="utf-8">
+<style>body { margin: 0; } iframe { display: block; width: 1120px; height: 700px; border: 0; }</style>
+<script type="module">
+  const results = [];
+  const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+  const paint = () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  const display = value => String(JSON.stringify(value)).slice(0, 400);
+  const equal = (actual, expected, label) => {
+    if (JSON.stringify(actual) !== JSON.stringify(expected))
+      throw new Error(`${label}: expected ${display(expected)}, got ${display(actual)}`);
+  };
+  async function check(name, run) {
+    document.body.dataset.testProgress = name;
+    try { await run(); results.push({ name, ok: true }); }
+    catch (error) { results.push({ name, ok: false, error: error.stack }); }
+  }
+
+  // Exercise the production listeners, parser and CSS with only the WebView
+  // host replaced. No terminal application or shell process is started.
+  const source = await (await fetch("/index.html")).text();
+  const styles = ["/node_modules/@xterm/xterm/css/xterm.css", "/src/styles.css", "/src/chrome.css", "/src/extensions.css"];
+  const init = { liveIds: ["scroll"], cwdTrackingSupported: true,
+    settings: { hardwareRendering: false, fontFamily: "Courier New, monospace", fontSize: 14 },
+    sessions: [{ id: "scroll", title: "Scrolling TUI", active: true }] };
+  const frame = document.createElement("iframe");
+  frame.srcdoc = source.replace("<head>", `<head><base href="${location.origin}/">`
+    + styles.map(href => `<link rel="stylesheet" href="${href}">`).join("")
+    + `<script>window.testInit = ${JSON.stringify(init)};<\/script><script src="/tests/search-host.js"><\/script>`)
+    .replace('src="/src/main.js"', 'src="/tests/source-main.js"');
+  const loaded = new Promise(resolve => frame.addEventListener("load", resolve, { once: true }));
+  document.body.append(frame);
+  await loaded;
+  const app = frame.contentWindow;
+  await delay(500);
+  await paint();
+  const tab = app.__sourceTabs?.find(item => item.id === "scroll");
+  const settle = async () => {
+    await new Promise(resolve => tab.output.whenParsed(resolve));
+    await paint();
+    await delay(30);
+    await paint();
+  };
+  const write = async data => {
+    app.sendHost({ type: "data", id: "scroll", data });
+    await settle();
+  };
+  const viewport = () => tab.host.querySelector(".xterm-viewport");
+  const writes = () => app.hostMessages.filter(message => message.type === "write" && message.id === "scroll");
+  const clearWrites = () => { app.hostMessages.length = 0; };
+  const history = () => Array.from({ length: tab.term.buffer.normal.length }, (_, i) =>
+    tab.term.buffer.normal.getLine(i).translateToString(false));
+  const wheel = async (deltaY, modifiers = {}) => {
+    const screen = tab.host.querySelector(".xterm-screen");
+    const box = screen.getBoundingClientRect();
+    screen.dispatchEvent(new app.WheelEvent("wheel", { bubbles: true, cancelable: true,
+      clientX: box.left + 30, clientY: box.top + 30, deltaMode: 1, deltaY, ...modifiers }));
+    await settle();
+  };
+  const unlocked = () => {
+    equal(tab.term.buffer.active.type, "normal", "normal buffer is active");
+    equal(app.getComputedStyle(viewport()).overflowY === "hidden", false, "native scrollbar remains available");
+    equal(tab.term.options.scrollback, 8000, "configured history capacity");
+  };
+  const seed = async () => {
+    // End any mode left by a failed preceding assertion before resetting.
+    await write("\x1b[?1049l\x1b[?1000;1002;1003;1006l");
+    tab.term.reset();
+    await write(Array.from({ length: 180 }, (_, i) => `history ${String(i).padStart(3, "0")}\r\n`).join(""));
+    equal(tab.term.buffer.normal.baseY > 100, true, "fixture has scrollable history");
+    clearWrites();
+  };
+  const scrollNormally = async () => {
+    unlocked();
+    tab.term.scrollToBottom();
+    await settle();
+    clearWrites();
+    const bottom = tab.term.buffer.active.viewportY;
+    await wheel(-3);
+    equal(tab.term.buffer.active.viewportY < bottom, true, "wheel moves into terminal history");
+    equal(writes(), [], "history wheel never becomes terminal input");
+    const position = tab.term.buffer.active.viewportY;
+    await write("new output while reading\r\n");
+    equal(tab.term.buffer.active.viewportY, position, "new output preserves the reader's position");
+  };
+  const assertMouseWheel = async () => {
+    clearWrites();
+    await wheel(-1);
+    await wheel(1);
+    const data = writes().map(message => message.data).join("");
+    equal(/^\x1b\[<64;\d+;\d+M\x1b\[<65;\d+;\d+M$/.test(data), true,
+      `requested mouse wheel uses SGR reports (${JSON.stringify(data)})`);
+  };
+
+  await check("normal scrollback supports wheel scrolling and preserves a reader during output", async () => {
+    equal(Boolean(tab), true, `source terminal loaded (${JSON.stringify(app.hostErrors)})`);
+    await seed();
+    await scrollNormally();
+  });
+
+  await check("normal-buffer mouse tracking preserves history and unlocks when disabled", async () => {
+    await seed();
+    const before = history();
+    await write("\x1b[?1003h\x1b[?1006h");
+    await assertMouseWheel();
+    equal(history(), before, "enabling mouse tracking must not discard normal history");
+    await write("\x1b[?1003l\x1b[?1006l");
+    equal(history(), before, "disabling mouse tracking preserves normal history");
+    await scrollNormally();
+  });
+
+  await check("combined and fragmented DEC modes follow parsed mouse state", async () => {
+    await seed();
+    const before = history();
+    await write("\x1b[?1003;1006h");
+    await assertMouseWheel();
+    await write("\x1b[?1003;10");
+    await write("06l");
+    equal(history(), before, "combined mouse modes preserve history");
+    await scrollNormally();
+    await write("\x1b[?10");
+    await write("03h\x1b[?1006h");
+    await assertMouseWheel();
+    await write("\x1b[?1003;1006l");
+    await scrollNormally();
+  });
+
+  await check("alternate-screen wheel reaches the application and returning restores normal history", async () => {
+    await seed();
+    const before = history();
+    await write("\x1b[?1049;1003;1006hFULLSCREEN");
+    equal(tab.term.buffer.active.type, "alternate", "alternate buffer is active");
+    await assertMouseWheel();
+    equal(tab.term.buffer.active.viewportY, 0, "alternate viewport stays at its origin");
+    equal(history(), before, "entering alternate screen must not discard normal history");
+    await write("\x1b[?1003;1006;1049l");
+    equal(history(), before, "leaving alternate screen restores normal history");
+    await scrollNormally();
+  });
+
+  await check("alternate-screen applications without mouse tracking receive arrow-key wheel fallback", async () => {
+    await seed();
+    await write("\x1b[?1049h\x1b[?1l");
+    clearWrites();
+    await wheel(-1);
+    equal(writes().map(message => message.data).join(""), "\x1b[A", "wheel up becomes cursor up");
+    clearWrites();
+    await write("\x1b[?1h");
+    await wheel(1);
+    equal(writes().map(message => message.data).join(""), "\x1bOB", "application cursor mode wheel down");
+    await write("\x1b[?1049l\x1b[?1l");
+  });
+
+  await check("terminal reset clears mouse state without leaving normal scrolling locked", async () => {
+    await seed();
+    await write("\x1b[?1003h\x1b[?1006h");
+    tab.term.reset();
+    await write("after reset\r\n".repeat(180));
+    await scrollNormally();
+  });
+
+  await check("Ctrl and Meta wheel zoom a mouse-enabled application without sending input", async () => {
+    await seed();
+    await write("\x1b[?1049;1003;1006h");
+    for (const modifier of ["ctrlKey", "metaKey"]) {
+      clearWrites();
+      const before = tab.term.options.fontSize;
+      await wheel(-1, { [modifier]: true });
+      equal(tab.term.options.fontSize > before, true, `${modifier} zoom increases the font size`);
+      equal(writes(), [], `${modifier} zoom does not send mouse or keyboard input`);
+    }
+    equal(app.hostErrors, [], "page errors");
+  });
+
+  frame.remove();
+  document.body.dataset.testResult = btoa(unescape(encodeURIComponent(JSON.stringify(results))));
+</script>
