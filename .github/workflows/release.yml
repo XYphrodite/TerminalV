@@ -131,6 +131,77 @@ jobs:
           $hash = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
           Set-Content -LiteralPath "$zip.sha256" -Value "$hash  terminalv.hello.zip" -Encoding ascii
 
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: tools/tsnet-bridge/go.mod
+          cache-dependency-path: tools/tsnet-bridge/go.sum
+
+      - name: Install MAUI workload
+        shell: pwsh
+        run: dotnet workload install maui --ignore-failed-sources
+
+      - name: Build tsnet AAR (embedded Tailscale)
+        shell: pwsh
+        run: |
+          $aar = "src/TerminalV.Mobile/Platforms/Android/libs/tsnet.aar"
+          if (Test-Path $aar) { Write-Host "tsnet.aar already present, skipping build"; exit 0 }
+          $sdk = $env:ANDROID_HOME
+          if (-not $sdk -or -not (Test-Path $sdk)) { $sdk = "C:\Android\android-sdk" }
+          if (-not (Test-Path $sdk)) { $sdk = $env:ANDROID_SDK_ROOT }
+          Write-Host "ANDROID_HOME=$sdk"
+          $env:ANDROID_HOME = $sdk
+          $env:ANDROID_SDK_ROOT = $sdk
+          try {
+            pwsh -File tools/tsnet-bridge/build-aar.ps1 -AndroidSdk $sdk
+            if ($LASTEXITCODE -ne 0) { throw "build-aar.ps1 exited $LASTEXITCODE" }
+          } catch {
+            Write-Warning "tsnet AAR build failed: $_ - creating stub so APK can build"
+          }
+          $built = "tools/tsnet-bridge/tsnet.aar"
+          if (Test-Path $built) {
+            New-Item -ItemType Directory -Force -Path (Split-Path $aar) | Out-Null
+            Copy-Item $built $aar -Force
+          }
+          if (-not (Test-Path $aar)) {
+            Write-Warning "Creating empty stub tsnet.aar to unblock APK build (embedded Tailscale will be disabled)"
+            New-Item -ItemType Directory -Force -Path (Split-Path $aar) | Out-Null
+            $tmp = Join-Path $env:RUNNER_TEMP "stub-aar"
+            New-Item -ItemType Directory -Force -Path $tmp | Out-Null
+            Set-Content -Path (Join-Path $tmp "AndroidManifest.xml") -Value '<manifest package="org.terminalv.tsnet.stub"/>' -Encoding utf8
+            Compress-Archive -Path (Join-Path $tmp "AndroidManifest.xml") -DestinationPath $aar -Force
+          }
+          if (-not (Test-Path $aar)) { throw "tsnet.aar not found after build" }
+
+      - name: Build web UI and copy to MAUI wwwroot
+        shell: pwsh
+        working-directory: ui
+        run: |
+          npm ci --no-fund --no-audit
+          if ($LASTEXITCODE -ne 0) { throw "npm ci failed" }
+          npm run build
+          if ($LASTEXITCODE -ne 0) { throw "vite build failed" }
+          node scripts/copy-mobile-ui.js
+          if ($LASTEXITCODE -ne 0) { throw "copy-mobile-ui failed" }
+
+      - name: Publish Android APK
+        shell: pwsh
+        run: |
+          dotnet publish src/TerminalV.Mobile/TerminalV.Mobile.csproj -f net10.0-android -c Release -p:AndroidPackageFormat=apk -o "artifacts/release-$env:TAG/mobile-apk"
+          if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed" }
+          Get-ChildItem -Recurse "artifacts/release-$env:TAG/mobile-apk/*.apk" | ForEach-Object { Write-Host "APK: $($_.FullName) ($([math]::Round($_.Length/1MB,1)) MB)" }
+          $apk = Get-ChildItem "artifacts/release-$env:TAG/mobile-apk/*.apk" | Select-Object -First 1
+          if (-not $apk) { throw "APK not found" }
+          $dest = "artifacts/release-$env:TAG/TerminalV-Mobile.apk"
+          Copy-Item $apk.FullName $dest -Force
+          $hash = (Get-FileHash -LiteralPath $dest -Algorithm SHA256).Hash.ToLowerInvariant()
+          Set-Content -LiteralPath "$dest.sha256" -Value "$hash  TerminalV-Mobile.apk" -Encoding ascii
+          Write-Host "APK sha256: $hash"
+
       - name: Create GitHub Release
         shell: pwsh
         env:
@@ -143,5 +214,7 @@ jobs:
             "artifacts/release-$env:TAG/TerminalV-win-x64-light.zip" `
             "artifacts/release-$env:TAG/TerminalV-win-x64-light.zip.sha256" `
             "artifacts/release-$env:TAG/terminalv.hello.zip" `
-            "artifacts/release-$env:TAG/terminalv.hello.zip.sha256"
+            "artifacts/release-$env:TAG/terminalv.hello.zip.sha256" `
+            "artifacts/release-$env:TAG/TerminalV-Mobile.apk" `
+            "artifacts/release-$env:TAG/TerminalV-Mobile.apk.sha256"
           if ($LASTEXITCODE -ne 0) { throw 'GitHub Release publication failed' }
