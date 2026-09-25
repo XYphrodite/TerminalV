@@ -1,0 +1,111 @@
+<!doctype html>
+<meta charset="utf-8">
+<link rel="stylesheet" href="/node_modules/@xterm/xterm/css/xterm.css">
+<style>
+  #panes { position: relative; width: 800px; height: 500px; }
+  .pane { position: absolute; display: none; }
+  .pane.visible { display: block; }
+</style>
+<div id="panes"></div>
+<script src="/node_modules/@xterm/xterm/lib/xterm.js"></script>
+<script type="module">
+  import { createPaneView } from "/src/pane-view.js";
+
+  const results = [];
+  const delay = () => new Promise(resolve => setTimeout(resolve, 100));
+  function equal(actual, expected) {
+    if (actual !== expected) throw new Error(`Expected ${expected}, got ${actual}`);
+  }
+  async function check(name, run) {
+    const container = document.getElementById("panes");
+    const pane = document.createElement("div");
+    pane.className = "pane";
+    container.append(pane);
+    const term = new Terminal({ cols: 80, rows: 24, allowProposedApi: true,
+      windowsPty: { backend: "conpty", buildNumber: 22621 } });
+    term.open(pane);
+    let root = null;
+    const view = createPaneView({ container, getRoot: () => root,
+      getTabs: () => [{ id: "session", pane, term }], canResize: () => false, onResize() {} });
+    const viewport = pane.querySelector(".xterm-viewport");
+    const write = data => new Promise(resolve => term.write(data, resolve));
+    const show = () => { root = { sessionId: "session" }; view.render(); term.refresh(0, term.rows - 1); };
+    const hide = () => { root = null; view.render(); };
+    // Check DOM geometry as well as xterm's buffer: either alone can look correct
+    // while wheel scrolling cannot reach the last screen of output.
+    const geometry = () => {
+      const rowHeight = term._core._renderService.dimensions.css.cell.height;
+      equal(Math.round(viewport.scrollHeight - viewport.clientHeight), Math.round(term.buffer.active.baseY * rowHeight));
+      equal(Math.round(viewport.scrollTop), Math.round(term.buffer.active.viewportY * rowHeight));
+    };
+    try {
+      await run({ term, viewport, write, show, hide, geometry });
+      results.push({ name, ok: true });
+    } catch (error) {
+      results.push({ name, ok: false, error: error.stack });
+    } finally { term.dispose(); pane.remove(); }
+  }
+
+  await check("background output remains at the bottom when the pane reopens at the same size", async s => {
+    s.show(); await delay();
+    await s.write("initial\r\n".repeat(200)); await delay();
+    s.hide(); await delay();
+    await s.write("background\r\n".repeat(100)); await delay();
+    s.show(); await delay();
+    equal(s.term.buffer.active.viewportY, s.term.buffer.active.baseY);
+    s.geometry();
+    // Actual DOM scrolling, with no keyboard input or scrollToBottom workaround.
+    s.viewport.scrollTop = 1000; await delay();
+    s.viewport.scrollTop = 500; await delay();
+    s.viewport.scrollTop = 1e8; await delay();
+    equal(s.term.buffer.active.viewportY, s.term.buffer.active.baseY);
+    s.geometry();
+  });
+
+  await check("restored output written before the first show has a complete scrollbar", async s => {
+    await delay();
+    await s.write("restored\r\n".repeat(200)); await delay();
+    s.show(); await delay();
+    equal(s.term.buffer.active.viewportY, s.term.buffer.active.baseY);
+    s.geometry();
+  });
+
+  await check("reading history survives background output and reopening", async s => {
+    s.show(); await delay();
+    await s.write("initial\r\n".repeat(200)); await delay();
+    s.term.scrollToLine(40); await delay();
+    s.hide(); await delay();
+    await s.write("background\r\n".repeat(100)); await delay();
+    s.show(); await delay();
+    equal(s.term.buffer.active.viewportY, 40);
+    s.geometry();
+  });
+
+  await check("rapid hide/show and queued output retain the bottom", async s => {
+    s.show(); await delay();
+    await s.write("initial\r\n".repeat(200)); await delay();
+    for (let i = 0; i < 3; i++) {
+      s.hide();
+      const parsed = s.write("background\r\n".repeat(100));
+      s.show();
+      await parsed; await delay();
+      equal(s.term.buffer.active.viewportY, s.term.buffer.active.baseY);
+      s.geometry();
+    }
+  });
+
+  await check("alternate screen survives hide/show without changing the normal history", async s => {
+    s.show(); await delay();
+    await s.write("initial\r\n".repeat(200)); await delay();
+    const normalLength = s.term.buffer.normal.length;
+    await s.write("\x1b[?1049hTUI"); await delay();
+    s.hide(); await delay(); s.show(); await delay();
+    equal(s.term.buffer.active.type, "alternate");
+    s.geometry();
+    await s.write("\x1b[?1049l"); await delay();
+    equal(s.term.buffer.normal.length, normalLength);
+    s.geometry();
+  });
+
+  document.body.dataset.testResult = btoa(unescape(encodeURIComponent(JSON.stringify(results))));
+</script>

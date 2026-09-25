@@ -51,6 +51,15 @@ jobs:
           $v = $p.Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1
           if ("v$v" -ne $env:TAG) { throw "Tag $env:TAG != csproj Version $v" }
 
+      - name: Verify terminal viewport restoration
+        shell: pwsh
+        working-directory: ui
+        run: |
+          npm ci --no-fund --no-audit
+          if ($LASTEXITCODE -ne 0) { throw "npm ci failed" }
+          node --test --test-concurrency=1 --test-name-pattern="scroll position when reopening xterm panes" tests/selection.test.js
+          if ($LASTEXITCODE -ne 0) { throw "Viewport restoration regression tests failed" }
+
       - name: Publish package
         shell: pwsh
         run: ./scripts/publish.ps1 -OutputDirectory "artifacts/release-$env:TAG"

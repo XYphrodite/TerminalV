@@ -1,4 +1,5 @@
 import { layoutGeometry, clampRatio, MIN_PANE_WIDTH, MIN_PANE_HEIGHT } from "./pane-layout.js";
+import { syncTerminalViewport } from "./terminal-viewport.js";
 
 // Panes stay mounted in their original DOM nodes: rearranging never recreates
 // xterm, loses its selection, or reattaches/restarts a PTY.
@@ -84,6 +85,7 @@ export function createPaneView({ container, getRoot, getTabs, canResize, onResiz
     container.classList.toggle("split-view", panes.size > 1);
     for (const tab of getTabs()) {
       const rect = panes.get(tab.id);
+      const wasVisible = tab.pane.classList.contains("visible");
       tab.pane.classList.toggle("visible", Boolean(rect));
       tab.pane.inert = !rect;
       if (!rect) continue;
@@ -93,6 +95,8 @@ export function createPaneView({ container, getRoot, getTabs, canResize, onResiz
         left: `calc(${rect.x * 100}% + ${left}px)`, top: `calc(${rect.y * 100}% + ${top}px)`,
         width: `calc(${rect.width * 100}% - ${left + right}px)`, height: `calc(${rect.height * 100}% - ${top + bottom}px)`
       });
+      // Sync before delayed DOM scroll events can overwrite xterm's position.
+      if (!wasVisible) syncTerminalViewport(tab.term);
     }
     const wanted = new Set(geometry.dividers.map((d) => d.path));
     for (const [path, element] of dividers) if (!wanted.has(path)) { element.remove(); dividers.delete(path); }

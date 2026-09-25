@@ -94,6 +94,7 @@ async function runBrowserFixture(t, fixture) {
 }
 
 test("copy selection in xterm.js", (t) => runBrowserFixture(t, "selection"));
+test("scroll position when reopening xterm panes", (t) => runBrowserFixture(t, "viewport-restore"));
 test("multiline paste confirmation in xterm.js", (t) => runBrowserFixture(t, "paste-confirmation"));
 test("terminal search in xterm.js", (t) => runBrowserFixture(t, "terminal-search"));
 test("search in the built TerminalV interface", (t) => runBrowserFixture(t, "search-ui"));

@@ -20,6 +20,7 @@ import { createLaunchMenu } from "./launch-menu.js";
 import { normalizeLayouts, layoutFor, leafIds, splitSession, detachSession, layoutGeometry,
   neighborPane, paneShortcut, MAX_PANES, MIN_PANE_WIDTH, MIN_PANE_HEIGHT, isSplitChild, isSplitParent, splitIndentLevel, splitWouldNest } from "./pane-layout.js";
 import { createPaneView } from "./pane-view.js";
+import { syncTerminalViewport } from "./terminal-viewport.js";
 import { createShortcuts } from "./shortcuts.js";
 import { WRITE_CHUNK, chunkText } from "./write-chunk.js";
 import { shouldStoreAsFile, PASTE_FILE_STORE_TIMEOUT_MS } from "./paste-file.js";
@@ -500,6 +501,8 @@ function applyFit(tab) {
   if (!isPaneVisible(tab)) {
     return false;
   }
+  // Recheck after showing/layout even when fit is deferred or cols/rows match.
+  syncTerminalViewport(tab.term);
   if (Date.now() < ignoreFitUntil) {
     return false;
   }
