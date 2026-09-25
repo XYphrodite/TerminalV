@@ -60,11 +60,27 @@
   document.body.append(frame);
   await loaded;
   const app = frame.contentWindow, doc = frame.contentDocument;
+  const waitForRestore = async () => {
+    // The iframe load event can precede source-main's dynamic module import.
+    // Wait for both terminals and their host replies before draining output;
+    // draining an empty fallback array would silently skip the initial frame.
+    const deadline = performance.now() + 5000;
+    while (true) {
+      const loadedIds = (app.__sourceTabs ?? []).filter(tab => tab.output).map(tab => tab.id);
+      const attachedIds = (app.geometrySamples ?? [])
+        .filter(sample => sample.phase === "restore" && sample.type === "attach").map(sample => sample.id);
+      if (init.liveIds.every(id => loadedIds.includes(id) && attachedIds.includes(id))) return;
+      if (app.hostErrors?.length || performance.now() >= deadline)
+        throw new Error(`Initial restore was not ready: tabs=${JSON.stringify(loadedIds)}, `
+          + `attached=${JSON.stringify(attachedIds)}, errors=${JSON.stringify(app.hostErrors)}`);
+      await delay(20);
+    }
+  };
   const settle = async () => {
     // Covers both old redraw timers (300/40 ms on restore, 100/40 on unhide).
     await delay(500);
     await paint();
-    await Promise.all((app.__sourceTabs ?? []).map(tab => new Promise(resolve => tab.output.whenParsed(resolve))));
+    await Promise.all(app.__sourceTabs.map(tab => new Promise(resolve => tab.output.whenParsed(resolve))));
     await paint();
   };
   const samples = phase => app.geometrySamples.filter(sample => sample.phase === phase && sample.id === "tui");
@@ -84,6 +100,7 @@
   };
 
   await check("live restore fits the visible terminal before replay and never sends a phantom resize", async () => {
+    await waitForRestore();
     await settle();
     const tab = tabFor("tui");
     equal(Boolean(tab), true, `source terminal loaded (${JSON.stringify(app.hostErrors)})`);

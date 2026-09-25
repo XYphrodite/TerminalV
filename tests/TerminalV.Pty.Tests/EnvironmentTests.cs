@@ -145,6 +145,7 @@ internal static class EnvironmentTests
     private sealed class Probe : IDisposable
     {
         private readonly StringBuilder _output = new();
+        private string _cursorQueryTail = "";
         private long _exitCode = -1;
         public ConPtySession Pty { get; }
         public Process Child { get; }
@@ -160,20 +161,39 @@ internal static class EnvironmentTests
                     session.Output += chunk =>
                     {
                         lock (_output) _output.Append(chunk);
-                        if (chunk.Contains("\u001b[6n")) session.Write("\u001b[1;1R");
+                        const string query = "\u001b[6n";
+                        var queries = _cursorQueryTail + chunk;
+                        for (var index = queries.IndexOf(query, StringComparison.Ordinal); index >= 0;
+                            index = queries.IndexOf(query, index + query.Length, StringComparison.Ordinal))
+                            session.Write("\u001b[1;1R");
+                        _cursorQueryTail = queries[^Math.Min(query.Length - 1, queries.Length)..];
                     };
                 });
             Child = Process.GetProcessById(Pty.ProcessId);
         }
-        public void WaitFor(string marker) => Require(SpinWait.SpinUntil(() =>
+        public void WaitFor(string marker)
         {
-            lock (_output) return _output.ToString().Contains(marker);
-        }, 15000), "ConPTY did not emit test marker: " + marker);
+            if (SpinWait.SpinUntil(() =>
+            {
+                lock (_output) return _output.ToString().Contains(marker, StringComparison.Ordinal);
+            }, 15000)) return;
+            throw new Exception($"ConPTY did not emit test marker: {marker}; {Diagnostic()}");
+        }
         public void ExpectSuccess()
         {
-            Require(Child.WaitForExit(5000), "Test shell did not exit");
-            Require(SpinWait.SpinUntil(() => Volatile.Read(ref _exitCode) != -1, 5000), "ConPTY exit event missing");
-            Require(Volatile.Read(ref _exitCode) == 0, "Test shell failed");
+            if (!Child.WaitForExit(5000)) throw new Exception("Test shell did not exit; " + Diagnostic());
+            if (!SpinWait.SpinUntil(() => Volatile.Read(ref _exitCode) != -1, 5000))
+                throw new Exception("ConPTY exit event missing; " + Diagnostic());
+            if (Volatile.Read(ref _exitCode) != 0) throw new Exception("Test shell failed; " + Diagnostic());
+        }
+        private string Diagnostic()
+        {
+            string transcript;
+            lock (_output) transcript = _output.ToString();
+            var exited = Child.HasExited;
+            return $"child exited: {exited}; process exit code: {(exited ? Child.ExitCode.ToString() : "running")}; " +
+                $"ConPTY exit code: {Volatile.Read(ref _exitCode)}; Windows: {Environment.OSVersion.Version}; " +
+                $"output: {System.Text.Json.JsonSerializer.Serialize(transcript)}";
         }
         public void Dispose()
         {

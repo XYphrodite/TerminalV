@@ -586,19 +586,6 @@ try
         using var child = Process.GetProcessById(pty.ProcessId);
         // Raw output also contains an OSC window title with the command text.
         // Count actual side effects, not occurrences in terminal escape sequences.
-        bool HasLines(int count)
-        {
-            try
-            {
-                // Poll without denying cmd's concurrent append access.
-                using var file = new FileStream(markerFile, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-                using var reader = new StreamReader(file);
-                var lines = 0;
-                while (reader.ReadLine() is not null) lines++;
-                return lines == count;
-            }
-            catch (IOException) { return false; }
-        }
         void WaitFor(Func<bool> condition, string phase)
         {
             if (SpinWait.SpinUntil(condition, 10000)) return;
@@ -608,14 +595,19 @@ try
                 $"Windows: {Environment.OSVersion.Version}; " +
                 $"output: {System.Text.Json.JsonSerializer.Serialize(transcript)}");
         }
-        WaitFor(() => HasLines(1), "startup side effect");
         // The nested cmd writes the marker before the outer /k shell resumes.
-        // Wait for its actual prompt before sending input that teardown can flush.
+        // Wait for the actual prompt, then read the file once. Polling it while
+        // cmd opens its append handle can deny sharing even with FileShare.ReadWrite.
         WaitFor(() => { lock (output) return output.ToString().Contains(target + ">", StringComparison.Ordinal); },
             "interactive prompt");
+        Equal(File.ReadAllLines(markerFile).Length, 1);
         Equal(child.HasExited, false);
+        int previousOutput;
+        lock (output) previousOutput = output.Length;
         pty.Write($"echo INTERACTIVE_OK >> \"{markerFile}\"\r");
-        WaitFor(() => HasLines(2), "interactive command");
+        WaitFor(() => { lock (output) return output.ToString(previousOutput, output.Length - previousOutput)
+            .Contains(target + ">", StringComparison.Ordinal); }, "interactive command prompt");
+        Equal(File.ReadAllLines(markerFile).Length, 2);
         Equal(File.ReadAllLines(markerFile).Count(line => line.Trim() == "PROFILE_ONCE"), 1);
         Equal(pty.CurrentDirectory, target);
         pty.Dispose();
