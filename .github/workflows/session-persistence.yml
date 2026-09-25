@@ -43,18 +43,23 @@ jobs:
           cache-dependency-path: TerminalV/ui/package-lock.json
 
       - name: Build Windows application and current UI
+        id: build
         run: dotnet build src/TerminalV/TerminalV.csproj -c Release
 
       - name: Check SQLite persistence and exclusive desktop ownership
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: dotnet run --project tests/TerminalV.Data.Tests -c Release
 
       - name: Check isolated session host and ConPTY restoration
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: dotnet run --project tests/TerminalV.Pty.Tests -c Release
 
       - name: Check save timing with real xterm
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         working-directory: TerminalV/ui
         run: node --test --test-concurrency=1 tests/session-persistence.test.js tests/session-management.test.js tests/notifications.test.js
 
       - name: Check built desktop session interface in browser
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         working-directory: TerminalV/ui
         run: node --test --test-concurrency=1 --test-name-pattern='close protection|working directory|session management|notification' tests/selection.test.js

@@ -512,21 +512,43 @@ try
             // runner would otherwise pass its own pipes to PowerShell outside ConPTY.
             using var standardHandles = new GuiStandardHandles();
             using var directoryReady = new ManualResetEventSlim();
+            var output = new StringBuilder();
+            var cursorQueryTail = "";
             var expected = target;
             var command = PowerShellIntegration.CommandLine(shell, target).Replace(" -NoLogo ", " -NoLogo -NoProfile ");
             using var pty = ConPtySession.Start("cwd-test", command,
                 initial, 100, 30, session =>
                 {
                     session.DirectoryChanged += path => { if (path == expected) directoryReady.Set(); };
-                    session.Output += data => { if (data.Contains("\u001b[6n")) session.Write("\u001b[1;1R"); };
+                    session.Output += data =>
+                    {
+                        lock (output) output.Append(data);
+                        // Pipe reads may split the cursor query used during shell startup.
+                        const string query = "\u001b[6n";
+                        var queries = cursorQueryTail + data;
+                        for (var index = queries.IndexOf(query, StringComparison.Ordinal); index >= 0;
+                            index = queries.IndexOf(query, index + query.Length, StringComparison.Ordinal))
+                            session.Write("\u001b[1;1R");
+                        cursorQueryTail = queries[^Math.Min(query.Length - 1, queries.Length)..];
+                    };
                 });
             using var child = Process.GetProcessById(pty.ProcessId);
-            Equal(directoryReady.Wait(TimeSpan.FromSeconds(10)), true);
+            void WaitForDirectory()
+            {
+                if (directoryReady.Wait(TimeSpan.FromSeconds(10))) return;
+                string transcript;
+                lock (output) transcript = output.ToString();
+                throw new Exception($"Timed out waiting for directory '{expected}'. " +
+                    $"Current directory: '{pty.CurrentDirectory}'; child exited: {child.HasExited}; " +
+                    $"Windows: {Environment.OSVersion.Version}; " +
+                    $"output: {System.Text.Json.JsonSerializer.Serialize(transcript)}");
+            }
+            WaitForDirectory();
             Equal(pty.CurrentDirectory, target);
             expected = initial;
             directoryReady.Reset();
             pty.Write("Set-Location -LiteralPath " + Quote(initial) + "\r");
-            Equal(directoryReady.Wait(TimeSpan.FromSeconds(10)), true);
+            WaitForDirectory();
             Equal(pty.CurrentDirectory, initial);
             pty.Dispose();
             Equal(child.WaitForExit(5000), true);
