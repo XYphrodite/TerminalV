@@ -12,8 +12,10 @@
             cols: cols || 80,
             rows: rows || 24,
             cursorBlink: true,
-            fontFamily: 'Cascadia Code, Cascadia Mono, Consolas, monospace',
+            fontFamily: 'Cascadia Code, Cascadia Mono, Roboto Mono, Droid Sans Mono, Noto Sans Mono, Consolas, Courier New, monospace',
             fontSize: 14,
+            letterSpacing: 0,
+            allowProposedApi: true,
             theme: { background: '#0B0D10', foreground: '#E8EEF5', cursor: '#E8EEF5' },
             allowTransparency: false
         });
