@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag (e.g. v0.7.9). Must match Version in src/TerminalV/TerminalV.csproj'
+        description: 'Release tag (e.g. v0.7.10). Must match Version in src/TerminalV/TerminalV.csproj'
         required: true
-        default: 'v0.7.9'
+        default: 'v0.7.10'
   push:
     tags:
       - 'v*'
