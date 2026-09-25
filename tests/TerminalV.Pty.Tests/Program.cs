@@ -570,11 +570,17 @@ try
         var markerFile = Path.Combine(testRoot, "cmd-starts.txt");
         var command = ShellResolver.Resolve(target, "cmd", $"\"{exe}\" /d /c echo PROFILE_ONCE >> \"{markerFile}\"").CommandLine;
         var output = new StringBuilder();
+        var cursorQueryTail = "";
         using var pty = ConPtySession.Start("cmd-profile-test", command, target, 160, 30, session =>
         {
             session.Output += chunk => {
                 lock (output) output.Append(chunk);
-                if (chunk.Contains("\u001b[6n")) session.Write("\u001b[1;1R");
+                const string query = "\u001b[6n";
+                var queries = cursorQueryTail + chunk;
+                for (var index = queries.IndexOf(query, StringComparison.Ordinal); index >= 0;
+                    index = queries.IndexOf(query, index + query.Length, StringComparison.Ordinal))
+                    session.Write("\u001b[1;1R");
+                cursorQueryTail = queries[^Math.Min(query.Length - 1, queries.Length)..];
             };
         });
         using var child = Process.GetProcessById(pty.ProcessId);
@@ -585,10 +591,23 @@ try
             try { return File.Exists(markerFile) && File.ReadAllLines(markerFile).Length == count; }
             catch (IOException) { return false; }
         }
-        Equal(SpinWait.SpinUntil(() => HasLines(1), 10000), true);
+        void WaitFor(Func<bool> condition, string phase)
+        {
+            if (SpinWait.SpinUntil(condition, 10000)) return;
+            string transcript;
+            lock (output) transcript = output.ToString();
+            throw new Exception($"Timed out waiting for cmd {phase}; child exited: {child.HasExited}; " +
+                $"Windows: {Environment.OSVersion.Version}; " +
+                $"output: {System.Text.Json.JsonSerializer.Serialize(transcript)}");
+        }
+        WaitFor(() => HasLines(1), "startup side effect");
+        // The nested cmd writes the marker before the outer /k shell resumes.
+        // Wait for its actual prompt before sending input that teardown can flush.
+        WaitFor(() => { lock (output) return output.ToString().Contains(target + ">", StringComparison.Ordinal); },
+            "interactive prompt");
         Equal(child.HasExited, false);
         pty.Write($"echo INTERACTIVE_OK >> \"{markerFile}\"\r");
-        Equal(SpinWait.SpinUntil(() => HasLines(2), 10000), true);
+        WaitFor(() => HasLines(2), "interactive command");
         Equal(File.ReadAllLines(markerFile).Count(line => line.Trim() == "PROFILE_ONCE"), 1);
         Equal(pty.CurrentDirectory, target);
         pty.Dispose();
