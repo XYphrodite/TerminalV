@@ -1,0 +1,142 @@
+<!doctype html>
+<meta charset="utf-8">
+<link rel="stylesheet" href="/node_modules/@xterm/xterm/css/xterm.css">
+<div id="terminal" style="width:700px;height:300px"></div>
+<script src="/node_modules/@xterm/xterm/lib/xterm.js"></script>
+<script type="module">
+  import { createNotificationOutput } from "/src/notifications.js";
+  import { SynchronizedOutputAddon } from "/src/synchronized-output.js";
+  const results = [], errors = [], replies = [];
+  window.addEventListener("error", e => errors.push(e.message));
+  const host = document.getElementById("terminal");
+  const term = new Terminal({ cols: 60, rows: 10, allowProposedApi: true, cursorBlink: false });
+  term.open(host);
+  const addon = new SynchronizedOutputAddon();
+  term.loadAddon(addon);
+  let bells = 0;
+  const output = createNotificationOutput(term, () => bells++);
+  const write = (data, historical = false) => new Promise(resolve => { output.write(data, historical); output.whenParsed(resolve); });
+  const paint = () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  const row = index => host.querySelector(".xterm-rows").children[index].textContent.trimEnd();
+  const equal = (actual, expected) => {
+    if (actual !== expected) throw new Error(`Expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
+  };
+  async function check(name, action) {
+    try { await action(); results.push({ name, ok: true }); }
+    catch (error) { results.push({ name, ok: false, error: error.stack }); }
+  }
+  term.onData(data => replies.push(data));
+  await write("\x1b[?1049h\x1b[2J\x1b[HHEADER\r\nOLD BODY\x1b[10;1HFOOTER");
+  await paint();
+
+  await check("fragmented Grok frame keeps the previous screen until the end marker", async () => {
+    await write("\x1b[?20");
+    await write("26h\x1b[2;1H\x1b[2K");
+    await paint();
+    equal(term.buffer.active.getLine(1).translateToString(true), "");
+    equal(row(1), "OLD BODY");
+    term.focus(); term.blur();
+    term.select(0, 0, 6);
+    await paint();
+    equal(row(1), "OLD BODY");
+    term.clearSelection();
+    await write("Продолжаю проверку\x1b[3;1H┌─ Новый блок ─┐");
+    await paint();
+    equal(row(1), "OLD BODY");
+    await write("\x1b[?2026");
+    await write("l");
+    await paint();
+    equal(row(0), "HEADER");
+    equal(row(1), "Продолжаю проверку");
+    equal(row(2), "┌─ Новый блок ─┐");
+    equal(row(9), "FOOTER");
+  });
+
+  await check("a paint queued before BSU cannot expose the partial frame", async () => {
+    // Queue a real animation-frame repaint and parse BSU in the same task.
+    // Synchronous parsing here makes the scheduling race deterministic.
+    term.refresh(0, term.rows - 1);
+    term._core._inputHandler.parse("\x1b[?2026h\x1b[2;1H\x1b[2KQUEUED");
+    await paint();
+    equal(row(1), "Продолжаю проверку");
+    await write("\x1b[?2026l");
+    await paint();
+    equal(row(1), "QUEUED");
+  });
+
+  await check("mode queries and other combined modes still work during synchronized output", async () => {
+    replies.length = 0;
+    await write("\x1b[?2026$p\x1b[?2026;1003h\x1b[?2026$p\x1b[6n");
+    equal(replies[0], "\x1b[?2026;2$y");
+    equal(replies[1], "\x1b[?2026;1$y");
+    equal(replies[2], "\x1b[2;7R");
+    equal(term.modes.mouseTrackingMode, "any");
+    await write("\x1b[?2026;1003l\x1b[?2026$p");
+    equal(replies.at(-1), "\x1b[?2026;2$y");
+    equal(term.modes.mouseTrackingMode, "none");
+  });
+
+  await check("a missing end marker times out even when BSU repeats", async () => {
+    await write("\x1b[?2026h\x1b[2;1H\x1b[2KTIMEOUT");
+    await paint();
+    equal(row(1), "QUEUED");
+    await new Promise(resolve => setTimeout(resolve, 600));
+    await write("\x1b[?2026h");
+    await new Promise(resolve => setTimeout(resolve, 500));
+    await paint();
+    equal(row(1), "TIMEOUT");
+    await write("\x1b[?2026$p");
+    equal(replies.at(-1), "\x1b[?2026;2$y");
+  });
+
+  await check("reset releases a suspended frame and later frames still synchronize", async () => {
+    for (const reset of [() => term.reset(), () => write("\x1bc"), () => write("\x1b[!p")]) {
+      await write("\x1b[?2026h\x1b[2;1HPARTIAL");
+      await reset();
+      await write("\x1b[2J\x1b[HRESET\x1b[?2026$p");
+      await paint();
+      equal(row(0), "RESET");
+      equal(replies.at(-1), "\x1b[?2026;2$y");
+      await write("\x1b[?2026h\x1b[H\x1b[2KAFTER RESET");
+      await paint();
+      equal(row(0), "RESET");
+      await write("\x1b[?2026l");
+      await paint();
+      equal(row(0), "AFTER RESET");
+    }
+  });
+
+  await check("renderer replacement preserves synchronization and the completed buffer", async () => {
+    await write("\x1b[?2026h\x1b[H\x1b[2KREPLACED");
+    // WebGL enable/disable uses this same renderer replacement path.
+    term._core._renderService.setRenderer(term._core._createRenderer());
+    term.focus(); term.blur();
+    await paint();
+    equal(row(0), ""); // The new renderer must not paint the partial buffer.
+    await write("\x1b[?2026l");
+    await paint();
+    equal(row(0), "REPLACED");
+  });
+
+  await check("synchronized replay keeps historical bells silent and live bells working", async () => {
+    await write("\x1b[?2026h\x07", true);
+    await write("\x07");
+    await write("\x1b[?2026l\x07", true);
+    equal(bells, 1);
+  });
+
+  await check("disposing the addon releases its suspended screen and mode handler", async () => {
+    await write("\x1b[?2026h\x1b[H\x1b[2KDISPOSED");
+    await paint();
+    equal(row(0), "REPLACED");
+    addon.dispose();
+    await paint();
+    equal(row(0), "DISPOSED");
+    await write("\x1b[?2026$p");
+    equal(replies.at(-1), "\x1b[?2026;0$y");
+  });
+
+  output.dispose(); term.dispose();
+  results.push({ name: "no unhandled errors", ok: errors.length === 0, error: errors.join("\n") });
+  document.body.dataset.testResult = btoa(unescape(encodeURIComponent(JSON.stringify(results))));
+</script>

@@ -24,6 +24,7 @@ import { normalizeLayouts, layoutFor, leafIds, splitSession, detachSession, layo
   neighborPane, paneShortcut, MAX_PANES, MIN_PANE_WIDTH, MIN_PANE_HEIGHT, isSplitChild, isSplitParent, splitIndentLevel, splitWouldNest } from "./pane-layout.js";
 import { createPaneView } from "./pane-view.js";
 import { syncTerminalViewport } from "./terminal-viewport.js";
+import { SynchronizedOutputAddon } from "./synchronized-output.js";
 import { createShortcuts } from "./shortcuts.js";
 import { WRITE_CHUNK, chunkText } from "./write-chunk.js";
 import { shouldStoreAsFile, PASTE_FILE_STORE_TIMEOUT_MS } from "./paste-file.js";
@@ -282,9 +283,6 @@ function revealTab(tab) {
   sessionFilter.value = "";
   renderTabs();
   activate(tab.id);
-  // A hidden terminal was not fitted to the window. Ask a live TUI to redraw
-  // only once it is visible, including when the target size happens to match.
-  window.setTimeout(() => { if (activeId === tab.id) pulseResize(tab); }, 100);
   persistSessions();
 }
 
@@ -485,23 +483,7 @@ function syncScrollLock(tab) {
   }
 }
 
-function pulseResize(tab) {
-  if (!isPaneVisible(tab) || tab.exited || !tabs.includes(tab)) return;
-  const cols = tab.term.cols;
-  const rows = tab.term.rows;
-  if (cols < 10 || rows < 4) {
-    return;
-  }
-  post({ type: "resize", id: tab.id, cols: cols - 1, rows });
-  window.setTimeout(() => {
-    if (tab.exited || !tabs.includes(tab)) return;
-    // A split/drag may have changed the size while the redraw pulse was pending.
-    post({ type: "resize", id: tab.id, cols: tab.term.cols, rows: tab.term.rows });
-    tab.term.refresh(0, Math.max(0, tab.term.rows - 1));
-  }, 40);
-}
-
-function applyFit(tab) {
+function applyFit(tab, notifyHost = true) {
   if (!isPaneVisible(tab)) {
     return false;
   }
@@ -515,13 +497,20 @@ function applyFit(tab) {
   if (!proposed || proposed.cols < 2 || proposed.rows < 1) {
     return false;
   }
-  if (proposed.cols === tab.term.cols && proposed.rows === tab.term.rows) {
+  const resizeHost = notifyHost && !tab.exited &&
+    (tab.ptySize?.cols !== proposed.cols || tab.ptySize?.rows !== proposed.rows);
+  if (proposed.cols === tab.term.cols && proposed.rows === tab.term.rows && !resizeHost) {
     return false;
   }
 
   const t0 = performance.now();
-  if (!tab.exited) post({ type: "resize", id: tab.id, cols: proposed.cols, rows: proposed.rows });
+  // Keep the parser's grid aligned with every PTY resize. A backend-only
+  // one-column "redraw" pulse wraps incoming output into the wrong cells.
   tab.term.resize(proposed.cols, proposed.rows);
+  if (resizeHost) {
+    post({ type: "resize", id: tab.id, cols: proposed.cols, rows: proposed.rows });
+    tab.ptySize = { cols: proposed.cols, rows: proposed.rows };
+  }
   // Alternate buffer (muse TUI) leaves torn top after resize — hard refresh only its canvas, not normal scrollback
   if (tab.host.classList.contains("tui-lock")) {
     try { tab.webgl?.clearTexture?.(); } catch {}
@@ -542,6 +531,12 @@ function scheduleFit(tab, immediate = false) {
   const fitVisible = () => {
     fitRaf = 0;
     fitTimer = 0;
+    const remaining = ignoreFitUntil - Date.now();
+    if (remaining > 0) {
+      // A drawer/layout event during the pause still needs its final PTY size.
+      fitTimer = window.setTimeout(fitVisible, remaining);
+      return;
+    }
     const t0 = performance.now();
     let changed = 0;
     for (const item of visibleTabs()) if (applyFit(item)) changed++;
@@ -1252,6 +1247,7 @@ function newTab(options = {}) {
   const search = new SearchAddon({ highlightLimit: SEARCH_HIGHLIGHT_LIMIT });
   term.loadAddon(search);
   term.open(hostEl);
+  term.loadAddon(new SynchronizedOutputAddon());
 
   const tab = {
     ...metadata,
@@ -1274,6 +1270,7 @@ function newTab(options = {}) {
     overlayBtn,
     term,
     fit,
+    ptySize: null,
     serialize,
     search,
     webgl: null,
@@ -1290,6 +1287,7 @@ function newTab(options = {}) {
     if (activeId !== id && isPaneVisible(tab) && !isModalOpen()) activate(id, { focus: false });
   });
   function postWrite(targetId, data) {
+    if (tab.exited) return;
     const isPaste = data.includes("\u001b[200~");
     // For bracketed paste (muse) send as single post — host will chunk efficiently in one Task.Run batch.
     // Per-chunk queueMicrotask/post caused visible inter-chunk pause ("мб между чанками большие паузы").
@@ -1412,8 +1410,16 @@ function newTab(options = {}) {
   const rows = term.rows || 24;
   diag("restore", `newTab id=${id} live=${!!options.live} restored=${!!options.restored} hidden=${!!tab.hidden} shell=${tab.shell||""} startup=${(tab.startupCommand||"").slice(0,40)}`, id);
   if (options.live) {
-    post({ type: "attach", id });
-    window.setTimeout(() => pulseResize(tab), 300);
+    // Restore the pane layout before accepting cursor-addressed replay. Host
+    // replies can arrive before the first animation frame fits the terminal.
+    queueMicrotask(() => {
+      if (!tabs.includes(tab)) return;
+      applyFit(tab, false);
+      post({ type: "attach", id });
+      // Request replay before a PTY resize can emit a fresh repaint. Its old
+      // size is unknown, even when xterm happens to fit at the default 80x24.
+      applyFit(tab);
+    });
   } else if (tab.hidden || options.restored) {
     // The shell is gone (e.g. Windows restarted). Keep the saved screen, but
     // do not run a new shell over it: ConPTY startup clears the viewport, which
@@ -1431,6 +1437,7 @@ function newTab(options = {}) {
       createMsg.rows = term.rows;
     }
     post(createMsg);
+    tab.ptySize = { cols: createMsg.cols, rows: createMsg.rows };
   }
   if (!options.skipActivate && !tab.hidden) {
     showHiddenSessions = false;
@@ -1455,6 +1462,7 @@ function restart(tab) {
   tab.fit.fit();
   post({ type: "create", id: tab.id, cols: tab.term.cols, rows: tab.term.rows, cwd: tab.cwd,
     shell: tab.shell, startupCommand: tab.startupCommand, wslDistribution: tab.wslDistribution });
+  tab.ptySize = { cols: tab.term.cols, rows: tab.term.rows };
   tab.term.focus();
   renderTabs();
 }

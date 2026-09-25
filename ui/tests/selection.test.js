@@ -56,7 +56,7 @@ async function runBrowserFixture(t, fixture) {
       fixture === "close-ui" ? process.env.TERMINALV_CLOSE_SCREENSHOT :
       fixture === "search-ui" ? process.env.TERMINALV_SEARCH_SCREENSHOT :
       fixture === "paste-confirmation" && process.env.TERMINALV_TEST_SCREENSHOT;
-    const output = fixture === "viewport-restore"
+    const output = ["viewport-restore", "synchronized-output", "terminal-geometry"].includes(fixture)
       ? await runFrameFixture(browser, profile, `http://127.0.0.1:${server.address().port}/tests/${fixture}.fixture.html`)
       : await new Promise((resolve, reject) => {
       const child = spawn(browser, [
@@ -98,6 +98,8 @@ async function runBrowserFixture(t, fixture) {
 
 test("copy selection in xterm.js", (t) => runBrowserFixture(t, "selection"));
 test("scroll position when reopening xterm panes", (t) => runBrowserFixture(t, "viewport-restore"));
+test("synchronized TUI output in real xterm DOM", (t) => runBrowserFixture(t, "synchronized-output"));
+test("terminal geometry stays consistent during restore and unhide", (t) => runBrowserFixture(t, "terminal-geometry"));
 test("multiline paste confirmation in xterm.js", (t) => runBrowserFixture(t, "paste-confirmation"));
 test("terminal search in xterm.js", (t) => runBrowserFixture(t, "terminal-search"));
 test("search in the built TerminalV interface", (t) => runBrowserFixture(t, "search-ui"));

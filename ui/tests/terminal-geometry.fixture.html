@@ -1,0 +1,184 @@
+<!doctype html>
+<meta charset="utf-8">
+<style>body { margin: 0; } iframe { display: block; width: 1120px; height: 700px; border: 0; }</style>
+<script type="module">
+  const results = [];
+  const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+  const paint = () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  const equal = (actual, expected, label) => {
+    if (JSON.stringify(actual) !== JSON.stringify(expected))
+      throw new Error(`${label}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
+  };
+  async function check(name, run) {
+    document.body.dataset.testProgress = name;
+    try { await run(); results.push({ name, ok: true }); }
+    catch (error) { results.push({ name, ok: false, error: error.stack }); }
+  }
+
+  // Observe every host request, including transient ones that a final-size-only
+  // assertion misses. Sampling after the current stack permits applyFit to post
+  // the dimensions immediately before its synchronous term.resize call.
+  function installGeometryHost() {
+    window.geometryPhase = "restore";
+    window.geometrySamples = [];
+    const originalPost = window.chrome.webview.postMessage.bind(window.chrome.webview);
+    window.chrome.webview.postMessage = message => {
+      originalPost(message);
+      if (message.type !== "attach" && message.type !== "resize") return;
+      const phase = window.geometryPhase;
+      queueMicrotask(() => {
+        const tab = window.__sourceTabs?.find(item => item.id === message.id);
+        const sample = { phase, type: message.type, id: message.id,
+          requested: message.type === "resize" ? { cols: message.cols, rows: message.rows } : null,
+          actual: tab ? { cols: tab.term.cols, rows: tab.term.rows } : null,
+          proposed: tab?.pane.classList.contains("visible") ? tab.fit.proposeDimensions() : null };
+        window.geometrySamples.push(sample);
+        if (!tab || message.id !== "tui") return;
+        const { cols, rows } = sample.requested ?? sample.actual;
+        // A small cursor-addressed TUI frame puts markers at both right edges.
+        // The host uses its requested dimensions, just as a real PTY would.
+        const data = "\x1b[?1049h\x1b[?2026h\x1b[2J\x1b[HHEADER"
+          + `\x1b[1;${cols}HR\x1b[2;1H\x1b[32mBODY\x1b[0m`
+          + `\x1b[${rows};1HFOOTER\x1b[${rows};${cols}HZ\x1b[?2026l`;
+        window.sendHost({ type: "data", id: message.id, data, replay: message.type === "attach" });
+      });
+    };
+  }
+
+  const source = await (await fetch("/index.html")).text();
+  const styles = ["/node_modules/@xterm/xterm/css/xterm.css", "/src/styles.css", "/src/chrome.css", "/src/extensions.css"];
+  const init = { liveIds: ["tui", "other"], cwdTrackingSupported: true,
+    settings: { hardwareRendering: false, fontFamily: "Courier New, monospace", fontSize: 14 },
+    sessions: [{ id: "tui", title: "Synthetic TUI", active: true }, { id: "other", title: "Other session" }] };
+  const frame = document.createElement("iframe");
+  frame.srcdoc = source.replace("<head>", `<head><base href="${location.origin}/">`
+    + styles.map(href => `<link rel="stylesheet" href="${href}">`).join("")
+    + `<script>window.testInit = ${JSON.stringify(init)};<\/script>`
+    + `<script src="/tests/search-host.js"><\/script><script>(${installGeometryHost.toString()})();<\/script>`)
+    .replace('src="/src/main.js"', 'src="/tests/source-main.js"');
+  const loaded = new Promise(resolve => frame.addEventListener("load", resolve, { once: true }));
+  document.body.append(frame);
+  await loaded;
+  const app = frame.contentWindow, doc = frame.contentDocument;
+  const settle = async () => {
+    // Covers both old redraw timers (300/40 ms on restore, 100/40 on unhide).
+    await delay(500);
+    await paint();
+    await Promise.all((app.__sourceTabs ?? []).map(tab => new Promise(resolve => tab.output.whenParsed(resolve))));
+    await paint();
+  };
+  const samples = phase => app.geometrySamples.filter(sample => sample.phase === phase && sample.id === "tui");
+  const matchingResizes = phase => {
+    for (const sample of samples(phase).filter(sample => sample.type === "resize"))
+      equal(sample.requested, sample.actual, `${phase} resize must match xterm, including intermediate requests`);
+  };
+  const tabFor = id => app.__sourceTabs?.find(tab => tab.id === id);
+  const row = id => doc.querySelector(`.tab[data-id="${id}"]`);
+  const assertFrame = tab => {
+    const line = index => tab.term.buffer.active.getLine(index).translateToString(false);
+    equal(tab.term.buffer.active.type, "alternate", "TUI buffer");
+    equal(line(0).slice(0, 6), "HEADER", "first row");
+    equal(line(0)[tab.term.cols - 1], "R", "right edge");
+    equal(line(tab.term.rows - 1).slice(0, 6), "FOOTER", "last row");
+    equal(line(tab.term.rows - 1)[tab.term.cols - 1], "Z", "bottom right edge");
+  };
+
+  await check("live restore fits the visible terminal before replay and never sends a phantom resize", async () => {
+    await settle();
+    const tab = tabFor("tui");
+    equal(Boolean(tab), true, `source terminal loaded (${JSON.stringify(app.hostErrors)})`);
+    equal(Boolean(tab.host.querySelector(".xterm-rows")), true, "real DOM renderer");
+    const attach = samples("restore").find(sample => sample.type === "attach");
+    equal(Boolean(attach?.proposed), true, "attached visible pane");
+    equal(attach.actual, attach.proposed, "replay starts at the fitted grid");
+    equal(attach.actual.cols > 80, true, "layout differs from xterm's default grid");
+    for (const id of init.liveIds) {
+      let attached = false;
+      for (const sample of app.geometrySamples.filter(item => item.phase === "restore" && item.id === id)) {
+        if (sample.type === "attach") attached = true;
+        else equal(attached, true, `${id} must attach before requesting a backend resize`);
+      }
+      equal(attached, true, `${id} restored attachment`);
+    }
+    matchingResizes("restore");
+    assertFrame(tab);
+    equal(app.hostErrors, [], "page errors");
+  });
+
+  await check("an inactive restored terminal synchronizes an unchanged default grid when first shown", async () => {
+    const tab = tabFor("other");
+    const expected = { cols: 80, rows: 24 };
+    equal({ cols: tab.term.cols, rows: tab.term.rows }, expected, "inactive xterm starts at its default grid");
+    equal(app.geometrySamples.filter(sample => sample.id === "other" && sample.type === "resize").length, 0,
+      "inactive session has not synchronized its PTY size yet");
+    // FitAddon measures the terminal's parent, subtracting padding and the
+    // scrollbar. Use the visible terminal's measured cell metrics because the
+    // inactive terminal may not have measured its hidden font yet.
+    const cell = tabFor("tui").term._core._renderService.dimensions.css.cell;
+    const padding = app.getComputedStyle(tab.term.element);
+    const horizontal = parseInt(padding.paddingLeft) + parseInt(padding.paddingRight);
+    const vertical = parseInt(padding.paddingTop) + parseInt(padding.paddingBottom);
+    const scrollbar = tab.term._core.viewport.scrollBarWidth;
+    Object.assign(tab.host.style, {
+      width: `${Math.ceil(expected.cols * cell.width) + horizontal + scrollbar}px`,
+      height: `${Math.ceil(expected.rows * cell.height) + vertical}px`, right: "auto", bottom: "auto"
+    });
+    app.geometryPhase = "default-grid";
+    try {
+      row("other").click();
+      await settle();
+      equal(tab.fit.proposeDimensions(), expected, "container fits exactly the default grid");
+      equal({ cols: tab.term.cols, rows: tab.term.rows }, expected, "local grid did not change");
+      const resizes = app.geometrySamples.filter(sample => sample.phase === "default-grid"
+        && sample.id === "other" && sample.type === "resize");
+      equal(resizes.length, 1, "unchanged local grid still sends its first actual PTY size");
+      equal(resizes[0].requested, expected, "default PTY dimensions");
+      equal(resizes[0].actual, expected, "matching xterm dimensions");
+      equal(app.hostErrors, [], "page errors");
+    } finally {
+      row("tui").click();
+      await settle();
+    }
+  });
+
+  await check("unhiding a fitted TUI preserves its grid without a one-column redraw pulse", async () => {
+    const tab = tabFor("tui");
+    const original = { cols: tab.term.cols, rows: tab.term.rows };
+    row("tui").querySelector(".tab-options").click();
+    doc.querySelector("[data-session-hide]").click();
+    await settle();
+    equal(tab.hidden, true, "hidden session");
+    app.geometryPhase = "unhide";
+    doc.getElementById("hidden-sessions").click();
+    row("tui").click();
+    await settle();
+    equal(tab.hidden, false, "revealed session");
+    equal(tabFor("tui") === tab, true, "same terminal instance");
+    equal({ cols: tab.term.cols, rows: tab.term.rows }, original, "unchanged layout grid");
+    matchingResizes("unhide");
+    equal(samples("unhide").length, 0, "unchanged layout must not request backend resize or replay");
+    assertFrame(tab);
+    equal(app.hostErrors, [], "page errors");
+  });
+
+  await check("a real container resize updates both xterm and the PTY to the same dimensions", async () => {
+    const tab = tabFor("tui");
+    const before = { cols: tab.term.cols, rows: tab.term.rows };
+    app.geometryPhase = "layout";
+    frame.style.width = "960px";
+    frame.style.height = "580px";
+    await settle();
+    const expected = tab.fit.proposeDimensions();
+    equal(expected.cols < before.cols && expected.rows < before.rows, true, "container changed both dimensions");
+    equal({ cols: tab.term.cols, rows: tab.term.rows }, expected, "fitted xterm grid");
+    matchingResizes("layout");
+    const resizes = samples("layout").filter(sample => sample.type === "resize");
+    equal(resizes.length > 0, true, "PTY resize was sent");
+    equal(resizes.at(-1).requested, expected, "final PTY grid");
+    assertFrame(tab);
+    equal(app.hostErrors, [], "page errors");
+  });
+
+  frame.remove();
+  document.body.dataset.testResult = btoa(unescape(encodeURIComponent(JSON.stringify(results))));
+</script>

@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag (e.g. v0.7.11). Must match Version in src/TerminalV/TerminalV.csproj'
+        description: 'Release tag (e.g. v0.7.12). Must match Version in src/TerminalV/TerminalV.csproj'
         required: true
-        default: 'v0.7.11'
+        default: 'v0.7.12'
   push:
     tags:
       - 'v*'
@@ -60,14 +60,14 @@ jobs:
           $v = $p.Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1
           if ("v$v" -ne $env:TAG) { throw "Tag $env:TAG != csproj Version $v" }
 
-      - name: Verify terminal viewport restoration
+      - name: Verify terminal rendering and restoration
         shell: pwsh
         working-directory: ui
         run: |
           npm ci --no-fund --no-audit
           if ($LASTEXITCODE -ne 0) { throw "npm ci failed" }
-          node --test --test-concurrency=1 --test-name-pattern="scroll position when reopening xterm panes" tests/selection.test.js
-          if ($LASTEXITCODE -ne 0) { throw "Viewport restoration regression tests failed" }
+          node --test --test-concurrency=1 --test-name-pattern="scroll position when reopening xterm panes|terminal geometry|synchronized TUI output" tests/selection.test.js
+          if ($LASTEXITCODE -ne 0) { throw "Terminal rendering regression tests failed" }
 
       - name: Publish package
         shell: pwsh
