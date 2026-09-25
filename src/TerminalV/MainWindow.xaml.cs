@@ -16,6 +16,7 @@ public partial class MainWindow : Window
 {
     private TerminalBridge? _bridge;
     private GatewayServer? _gateway;
+    private TailnetAccess? _tailnetAccess;
     private bool _gatewayEnabled;
     private int _gatewayPort;
     private string? _gatewayToken;
@@ -109,7 +110,17 @@ public partial class MainWindow : Window
             Close();
         };
         SyncGateway();
-        core.WebMessageReceived += (_, args) => _bridge.Handle(args.WebMessageAsJson);
+        core.WebMessageReceived += (_, args) =>
+        {
+            using var message = System.Text.Json.JsonDocument.Parse(args.WebMessageAsJson);
+            if (message.RootElement.TryGetProperty("type", out var type) && type.GetString() == "tailnet-revoke")
+            {
+                if (MessageBox.Show(this, "Отключить все привязанные устройства? При следующем подключении потребуется новое подтверждение на ПК.", "TerminalV", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) == MessageBoxResult.Yes)
+                    _tailnetAccess?.RevokeAll();
+                return;
+            }
+            _bridge.Handle(args.WebMessageAsJson);
+        };
         core.NewWindowRequested += (_, e) =>
         {
             // window.open() from xterm's default link handler (if any) should not show an embedded popup.
@@ -238,6 +249,7 @@ public partial class MainWindow : Window
 
     private void SyncGateway()
     {
+        if (_bridge is null) return;
         AppSettings settings;
         try
         {
@@ -282,7 +294,10 @@ public partial class MainWindow : Window
             return;
         }
 
-        var server = new GatewayServer(new SessionClientBackend(), settings.GatewayPort, settings.GatewayToken);
+        _tailnetAccess ??= new TailnetAccess(Path.Combine(AppPaths.Root, "tailnet-devices.json"),
+            (identity, ct) => TailnetPairingPrompt.ShowAsync(this, identity, ct));
+        var server = new GatewayServer(_bridge.GatewayBackend, settings.GatewayPort, settings.GatewayToken,
+            _tailnetAccess, _bridge.GatewaySessions);
         try
         {
             server.Start();

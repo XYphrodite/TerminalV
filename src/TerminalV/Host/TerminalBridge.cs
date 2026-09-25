@@ -13,8 +13,10 @@ using SelfUpdateKit;
 using TerminalV.Data;
 using TerminalV.Diagnostics;
 using TerminalV.Extensions;
+using TerminalV.Gateway;
 using TerminalV.Pty;
 using TerminalV.Shell;
+using TerminalV.Ssh;
 using TerminalV.Update;
 
 namespace TerminalV.Host;
@@ -36,6 +38,8 @@ internal sealed class TerminalBridge : IDisposable
     private readonly CancellationTokenSource _updateCts = new();
     private readonly AppDatabase _db = new();
     private readonly SessionClient _host = new();
+    private readonly Dictionary<string, Queue<string>> _attachBacklog = new();
+    private GatewaySessionInfo[] _gatewaySessions = [];
     private readonly ExtensionManager? _extensions;
     private readonly string? _extensionsError;
     private int _updateBusy;
@@ -51,6 +55,7 @@ internal sealed class TerminalBridge : IDisposable
 
     public event Action? SettingsChanged;
     public event Action? RestartRequested;
+    internal SessionClientBackend GatewayBackend { get; }
 
     public TerminalBridge(Dispatcher dispatcher, CoreWebView2 webView, Func<object>? gatewayStatus = null)
     {
@@ -60,7 +65,13 @@ internal sealed class TerminalBridge : IDisposable
         _shell = ShellResolver.Resolve();
         _buildNumber = Environment.OSVersion.Version.Build;
         _canUpdate = AppVersion.CanSelfUpdate(Environment.ProcessPath);
-        _host.Data += (id, data, replay) => Post(new { type = "data", id, data, replay });
+        // The existing session host accepts one pipe client. The gateway shares
+        // this connection and captures output before the desktop restores tabs.
+        GatewayBackend = new SessionClientBackend(_host);
+        GatewayBackend.DesktopData += (id, data, replay) => Post(new { type = "data", id, data, replay });
+        GatewayBackend.Created += (id, cwd, shell, startupCommand, wslDistribution) =>
+            Post(new { type = "remote-session-created", id, cwd, shell, startupCommand, wslDistribution });
+        UpdateGatewaySessions(_db.LoadSessions());
         _host.Exited += (id, code) => Post(new { type = "exit", id, code });
         _host.DirectoryChanged += (id, cwd, notice) => Post(new { type = "cwd", id, cwd, notice });
         _host.Error += (id, message) => Post(new { type = "error", id, message });
@@ -108,6 +119,30 @@ internal sealed class TerminalBridge : IDisposable
         {
             _ = CheckUpdatesAsync(silent: true);
         }
+    }
+
+    internal GatewaySessionInfo[] GatewaySessions() => Volatile.Read(ref _gatewaySessions);
+
+    private void UpdateGatewaySessions(IEnumerable<SessionRecord> sessions) =>
+        Volatile.Write(ref _gatewaySessions, sessions.Select(s => new GatewaySessionInfo
+        {
+            Id = s.Id, Title = s.Title, CustomTitle = s.CustomTitle,
+            Hidden = s.Hidden, SortOrder = s.SortOrder, Active = s.Active
+        }).ToArray());
+
+    private async Task AttachDesktopAsync(string id)
+    {
+        Exception? failure = null;
+        try { await GatewayBackend.AttachDesktopAsync(id).ConfigureAwait(false); }
+        catch (Exception ex) { failure = ex; }
+        await _dispatcher.InvokeAsync(() =>
+        {
+            if (!_attachBacklog.Remove(id, out var waiting) || _disposed) return;
+            if (failure is not null)
+                Post(new { type = "error", id, message = failure.Message });
+            else
+                while (waiting.TryDequeue(out var message)) Handle(message);
+        });
     }
 
     public async Task FlushAsync()
@@ -158,6 +193,15 @@ internal sealed class TerminalBridge : IDisposable
             return;
         }
 
+        // The UI posts resize immediately after attach. Preserve that ordering
+        // while the shared backend loads history without blocking the UI thread.
+        if ((message.Type is "resize" or "write") && message.Id is { } pendingId &&
+            _attachBacklog.TryGetValue(pendingId, out var waiting))
+        {
+            waiting.Enqueue(json);
+            return;
+        }
+
         if (message.Type.StartsWith("extensions:", StringComparison.Ordinal))
         {
             if (_extensions is not null && _extensionsError is null)
@@ -175,9 +219,10 @@ internal sealed class TerminalBridge : IDisposable
                 Create(message);
                 break;
             case "attach":
-                if (message.Id is not null && _host.Ensure())
+                if (message.Id is { } attachingId && !_attachBacklog.ContainsKey(attachingId))
                 {
-                    _host.Attach(message.Id);
+                    _attachBacklog[attachingId] = new Queue<string>();
+                    _ = AttachDesktopAsync(attachingId);
                 }
                 break;
             case "write":
@@ -378,6 +423,8 @@ internal sealed class TerminalBridge : IDisposable
         _updateCts.Cancel();
         _updateCts.Dispose();
         _db.Dispose();
+        GatewayBackend.Dispose();
+        _attachBacklog.Clear();
         _host.Dispose();
         foreach (var id in _sessions.Keys)
         {
@@ -549,6 +596,7 @@ internal sealed class TerminalBridge : IDisposable
             if (!isWsl) Post(new { type = "cwd", id = message.Id, cwd = cwd.Path, notice = cwd.Notice });
             if (_host.Ensure())
             {
+                GatewayBackend.SessionCreated(message.Id, desktopAttached: true);
                 _host.Create(message.Id, Math.Max(message.Cols, 1), Math.Max(message.Rows, 1),
                     isWsl || message.Cwd is null ? null : cwd.Path, message.Shell, message.StartupCommand, message.WslDistribution);
                 return;
@@ -676,6 +724,7 @@ internal sealed class TerminalBridge : IDisposable
             }
 
             _db.SaveSessions(sessions, message.Layouts);
+            UpdateGatewaySessions(sessions);
             CompleteFlush(message.RequestId);
         }
         catch (Exception ex) when (ex is JsonException or Microsoft.Data.Sqlite.SqliteException or ArgumentException or InvalidOperationException)

@@ -2,6 +2,7 @@
 <meta charset="utf-8">
 <style>body { margin: 0; } iframe { display: block; width: 1120px; height: 700px; border: 0; }</style>
 <script type="module">
+  import { serializeSessionBuffer } from "/src/session-persistence.js";
   const results = [];
   const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
   const paint = () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
@@ -62,6 +63,10 @@
     equal(app.getComputedStyle(viewport()).overflowY === "hidden", false, "native scrollbar remains available");
     equal(tab.term.options.scrollback, 8000, "configured history capacity");
   };
+  const appScrolling = () => {
+    equal(app.getComputedStyle(viewport()).overflowY, "hidden", "application owns scrolling; native scrollbar is hidden");
+    equal(tab.term.options.scrollback, 8000, "application scrolling retains shell history");
+  };
   const seed = async () => {
     // End any mode left by a failed preceding assertion before resetting.
     await write("\x1b[?1049l\x1b[?1000;1002;1003;1006l");
@@ -102,11 +107,59 @@
     await seed();
     const before = history();
     await write("\x1b[?1003h\x1b[?1006h");
+    appScrolling();
     await assertMouseWheel();
     equal(history(), before, "enabling mouse tracking must not discard normal history");
     await write("\x1b[?1003l\x1b[?1006l");
     equal(history(), before, "disabling mouse tracking preserves normal history");
     await scrollNormally();
+  });
+
+  await check("inline Grok hides the outer scrollbar without changing terminal size or deleting history", async () => {
+    await seed();
+    const before = history();
+    const size = [tab.term.cols, tab.term.rows];
+    tab.term.scrollToTop();
+    await settle();
+    // Captured from a real Grok --no-alt-screen startup through ConPTY.
+    await write("\x1b[?1003;1006h");
+    equal(tab.term.buffer.active.type, "normal", "inline Grok stays in the normal buffer");
+    appScrolling();
+    equal(tab.term.buffer.active.viewportY, tab.term.buffer.active.baseY, "entering application scrolling shows the live screen");
+    equal([tab.term.cols, tab.term.rows], size, "scrollbar visibility does not resize the grid");
+    await assertMouseWheel();
+    await write("\x1b[?1003l");
+    equal(history(), before, "shell history survives application scrolling");
+    await scrollNormally();
+  });
+
+  await check("only wheel-reporting mouse protocols hide normal scrollback", async () => {
+    await seed();
+    await write("\x1b[?9h");
+    await scrollNormally();
+    await write("\x1b[?9l\x1b[?1006h");
+    for (const mode of [1000, 1002, 1003]) {
+      await write(`\x1b[?${mode}h`);
+      appScrolling();
+      await assertMouseWheel();
+      await write(`\x1b[?${mode}l`);
+      unlocked();
+    }
+  });
+
+  await check("saved Grok screens restore SGR wheel input together with mouse tracking", async () => {
+    for (const alternate of [false, true]) {
+      await seed();
+      await write((alternate ? "\x1b[?1049h" : "") + "\x1b[?1003;1006h");
+      const saved = serializeSessionBuffer(tab);
+      tab.term.reset();
+      await write(saved);
+      equal(tab.term.buffer.active.type, alternate ? "alternate" : "normal", "saved buffer kind");
+      appScrolling();
+      await assertMouseWheel();
+      await write("\x1b[?1003;1006;1049l");
+      await scrollNormally();
+    }
   });
 
   await check("combined and fragmented DEC modes follow parsed mouse state", async () => {
@@ -130,6 +183,7 @@
     const before = history();
     await write("\x1b[?1049;1003;1006hFULLSCREEN");
     equal(tab.term.buffer.active.type, "alternate", "alternate buffer is active");
+    appScrolling();
     await assertMouseWheel();
     equal(tab.term.buffer.active.viewportY, 0, "alternate viewport stays at its origin");
     equal(history(), before, "entering alternate screen must not discard normal history");

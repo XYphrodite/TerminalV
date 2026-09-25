@@ -74,6 +74,25 @@
     equal(s.activeId(), "first");
   });
 
+  await check("phone-created sessions join and persist on desktop without another shell or focus change", async (s) => {
+    const created = { type: "remote-session-created", id: "phone-created", cwd: "C:\\Phone",
+      shell: "pwsh", startupCommand: "echo phone" };
+    s.app.sendHost(created);
+    s.app.sendHost(created);
+    await delay();
+    equal(s.messages("create").length, 0);
+    equal(s.messages("attach").filter((message) => message.id === created.id).length, 1);
+    equal(s.activeId(), "first");
+    equal(s.rows().filter((id) => id === created.id).length, 1);
+    const saved = s.messages("persist-sessions").at(-1).sessions.filter((record) => record.id === created.id);
+    equal(saved.length, 1);
+    equal([saved[0].cwd, saved[0].shell, saved[0].startupCommand, saved[0].group, saved[0].hidden],
+      [created.cwd, created.shell, created.startupCommand, null, false]);
+    s.app.sendHost({ type: "data", id: created.id, data: "PHONE OUTPUT\r\n" });
+    await delay();
+    equal(s.records().find((record) => record.id === created.id).buffer.includes("PHONE OUTPUT"), true);
+  });
+
   await check("editing is cancelable and saves group, color and pin atomically for the selected tab", (s) => {
     s.edit("first");
     equal(s.dialog.open, true);

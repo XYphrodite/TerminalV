@@ -254,9 +254,7 @@ internal static class SessionHost
 
     private sealed class HostedSession : IDisposable
     {
-        private const int Cap = 1_500_000;
-        private readonly List<string> _chunks = [];
-        private int _chars;
+        private readonly TerminalReplayBuffer _replay = new();
 
         public ConPtySession Pty { get; }
         public bool ReportDirectory { get; }
@@ -264,23 +262,9 @@ internal static class SessionHost
 
         public HostedSession(ConPtySession pty, bool reportDirectory) { Pty = pty; ReportDirectory = reportDirectory; }
 
-        public void Add(string chunk)
-        {
-            if (string.IsNullOrEmpty(chunk))
-            {
-                return;
-            }
+        public void Add(string chunk) => _replay.Add(chunk);
 
-            _chunks.Add(chunk);
-            _chars += chunk.Length;
-            while (_chars > Cap && _chunks.Count > 1)
-            {
-                _chars -= _chunks[0].Length;
-                _chunks.RemoveAt(0);
-            }
-        }
-
-        public string Snapshot() => string.Concat(_chunks);
+        public string Snapshot() => _replay.Snapshot();
 
         public void Dispose() => Pty.Dispose();
     }

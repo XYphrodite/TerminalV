@@ -58,6 +58,10 @@ jobs:
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: dotnet run --project tests/TerminalV.Pty.Tests -c Release
 
+      - name: Check SSH, Tailnet access and shared gateway replay
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: dotnet run --project tests/TerminalV.Ssh.Tests -c Release
+
       - name: Check save timing with real xterm
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         working-directory: TerminalV/ui

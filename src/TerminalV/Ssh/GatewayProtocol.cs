@@ -2,6 +2,21 @@ using System.Text.Json;
 
 namespace TerminalV.Ssh;
 
+/// <summary>Desktop session metadata, including saved and hidden tabs.</summary>
+public sealed class GatewaySessionInfo
+{
+    public string Id { get; set; } = "";
+    public string Title { get; set; } = "";
+    public string? CustomTitle { get; set; }
+    public bool Hidden { get; set; }
+    public int SortOrder { get; set; }
+    public bool Active { get; set; }
+    public bool Live { get; set; }
+}
+
+/// <summary>A null Sessions value identifies a legacy gateway without a desktop catalog.</summary>
+public sealed record GatewaySessionCatalog(IReadOnlyList<string> Ids, IReadOnlyList<GatewaySessionInfo>? Sessions);
+
 /// <summary>
 /// Mirror-gateway wire protocol between the TerminalV desktop server
 /// (ws://pc:5454) and remote clients (TerminalV.Mobile).
@@ -98,8 +113,10 @@ public static class GatewayProtocol
     public static string AttachedReply(string id) =>
         JsonSerializer.Serialize(new { type = Attached, id }, Json);
 
-    public static string SessionsReply(IEnumerable<string> ids) =>
-        JsonSerializer.Serialize(new { type = Sessions, ids = ids.ToArray() }, Json);
+    public static string SessionsReply(IEnumerable<string> ids, IEnumerable<GatewaySessionInfo>? sessions = null) =>
+        sessions is null
+            ? JsonSerializer.Serialize(new { type = Sessions, ids = ids.ToArray() }, Json)
+            : JsonSerializer.Serialize(new { type = Sessions, ids = ids.ToArray(), sessions = sessions.ToArray() }, Json);
 
     public static string DataMessage(string id, string data) =>
         JsonSerializer.Serialize(new { type = Data, id, data }, Json);

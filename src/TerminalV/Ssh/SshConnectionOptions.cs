@@ -14,6 +14,8 @@ public sealed class SshConnectionOptions
     public string? PrivateKeyPassphrase { get; set; }
     public string? GatewayUrl { get; set; }
     public string? GatewayToken { get; set; }
+    public bool GatewayTailnetIdentity { get; set; }
+    public Func<string, int, CancellationToken, Task<System.IO.Stream>>? GatewayDial { get; set; }
     /// <summary>
     /// Mirror mode: attach to a live desktop ConPTY session with this id
     /// instead of opening a proxied SSH shell. Requires <see cref="GatewayUrl"/>
@@ -32,7 +34,7 @@ public sealed class SshConnectionOptions
     public bool UseGateway => !string.IsNullOrWhiteSpace(GatewayUrl);
     public void Validate()
     {
-        var mirror = UseGateway && !string.IsNullOrWhiteSpace(MirrorSessionId);
+        var mirror = UseGateway && (GatewayTailnetIdentity || !string.IsNullOrWhiteSpace(MirrorSessionId));
         if (!mirror)
         {
             if (string.IsNullOrWhiteSpace(Host) || Host.Any(char.IsControl) || Host.Length > 253)

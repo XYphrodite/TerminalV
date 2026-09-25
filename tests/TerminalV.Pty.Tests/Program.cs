@@ -22,6 +22,7 @@ string Quote(string path) => "'" + path.Replace("'", "''") + "'";
 string Encode(string script) => Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
 
 EnvironmentTests.Run(Check);
+TerminalReplayBufferTests.Run(Check);
 
 Check("OSC metadata survives every possible chunk boundary and both terminators", () =>
 {

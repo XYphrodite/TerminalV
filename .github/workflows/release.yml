@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag (e.g. v0.7.13). Must match Version in src/TerminalV/TerminalV.csproj'
+        description: 'Release tag (e.g. v0.7.15). Must match Version in src/TerminalV/TerminalV.csproj'
         required: true
-        default: 'v0.7.13'
+        default: 'v0.7.15'
   push:
     tags:
       - 'v*'
@@ -92,6 +92,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Window state checks failed" }
           dotnet run --project tests/TerminalV.Pty.Tests -c Release
           if ($LASTEXITCODE -ne 0) { throw "Session host checks failed" }
+          dotnet run --project tests/TerminalV.Ssh.Tests -c Release
+          if ($LASTEXITCODE -ne 0) { throw "SSH and shared gateway checks failed" }
           $env:TERMINALV_TEST_APP_ROOT = (Resolve-Path "artifacts/release-$env:TAG/verified-full/wwwroot").Path
           Push-Location ui
           try {

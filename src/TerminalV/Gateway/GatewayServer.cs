@@ -27,14 +27,19 @@ internal sealed class GatewayServer : IDisposable
     private CancellationTokenSource? _cts;
     private Task? _loop;
     private bool _disposed;
+    private readonly ITailnetAccess? _tailnet;
+    private readonly Func<GatewaySessionInfo[]>? _sessionCatalog;
 
-    public GatewayServer(IGatewaySessionBackend backend, int port, string? token = null)
+    public GatewayServer(IGatewaySessionBackend backend, int port, string? token = null, ITailnetAccess? tailnet = null,
+        Func<GatewaySessionInfo[]>? sessionCatalog = null)
     {
         _backend = backend ?? throw new ArgumentNullException(nameof(backend));
         if (port is < 1 or > 65535)
             throw new ArgumentOutOfRangeException(nameof(port));
         _port = port;
         _token = string.IsNullOrWhiteSpace(token) ? null : token;
+        _tailnet = tailnet;
+        _sessionCatalog = sessionCatalog;
     }
 
     public int Port => _port;
@@ -109,6 +114,29 @@ internal sealed class GatewayServer : IDisposable
 
     private async Task HandleAsync(HttpListenerContext context, CancellationToken token)
     {
+        TailnetIdentity? identity = null;
+        if (context.Request.Headers["Authorization"] == "Tailscale" && _tailnet is not null)
+            identity = await _tailnet.IdentifyAsync(context.Request.RemoteEndPoint, context.Request.LocalEndPoint, token);
+        var path = context.Request.Url?.AbsolutePath;
+        if (path is "/terminalv/info" or "/terminalv/pair")
+        {
+            if (identity is null) { context.Response.StatusCode = 401; context.Response.Close(); return; }
+            var approved = _tailnet!.IsApproved(identity);
+            if (path == "/terminalv/pair")
+            {
+                if (context.Request.HttpMethod != "POST") { context.Response.StatusCode = 405; context.Response.Close(); return; }
+                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
+                timeout.CancelAfter(TimeSpan.FromSeconds(60));
+                try { approved = await _tailnet.ApproveAsync(identity, timeout.Token); }
+                catch { approved = false; }
+                if (!approved) { context.Response.StatusCode = 403; context.Response.Close(); return; }
+            }
+            context.Response.ContentType = "application/json";
+            var bytes = JsonSerializer.SerializeToUtf8Bytes(new { protocol = "terminalv-tailnet-v1", name = Environment.MachineName, approved }, Json);
+            context.Response.ContentLength64 = bytes.Length;
+            try { await context.Response.OutputStream.WriteAsync(bytes, token); } finally { context.Response.Close(); }
+            return;
+        }
         if (!context.Request.IsWebSocketRequest)
         {
             context.Response.StatusCode = 426;
@@ -122,7 +150,7 @@ internal sealed class GatewayServer : IDisposable
             return;
         }
 
-        if (!Authorized(context.Request))
+        if (!(identity is not null && _tailnet!.IsApproved(identity)) && !Authorized(context.Request))
         {
             context.Response.StatusCode = 401;
             try { context.Response.Close(); } catch { }
@@ -140,11 +168,19 @@ internal sealed class GatewayServer : IDisposable
             return;
         }
 
-        await ServeAsync(wsContext.WebSocket, token).ConfigureAwait(false);
+        // Revocation also ends an already-open identity-authenticated channel.
+        using var connection = CancellationTokenSource.CreateLinkedTokenSource(token);
+        using var watcher = identity is null ? null : new Timer(_ =>
+        {
+            try { if (!_tailnet!.IsApproved(identity)) { connection.Cancel(); wsContext.WebSocket.Abort(); } }
+            catch (ObjectDisposedException) { }
+        }, null, 1000, 1000);
+        await ServeAsync(wsContext.WebSocket, connection.Token).ConfigureAwait(false);
     }
 
     private bool Authorized(HttpListenerRequest request)
     {
+        if (request.Headers["Authorization"] == "Tailscale") return false;
         if (_token is null)
             return true;
         var header = request.Headers["Authorization"];
@@ -244,10 +280,7 @@ internal sealed class GatewayServer : IDisposable
                     {
                         try
                         {
-                            // Bind first: the backend may replay the snapshot
-                            // synchronously inside Attach.
-                            Bind(id);
-                            _backend.Attach(id);
+                            await AttachBackendAsync(id, Bind, SendAsync, serverToken).ConfigureAwait(false);
                             await SendAsync(GatewayProtocol.AttachedReply(id)).ConfigureAwait(false);
                         }
                         catch (Exception ex)
@@ -292,7 +325,7 @@ internal sealed class GatewayServer : IDisposable
                 }
 
                 await DispatchAsync(Encoding.UTF8.GetString(frame.Value.bytes), Bind, Unbind,
-                    () => defaultId, SendAsync).ConfigureAwait(false);
+                    () => defaultId, SendAsync, serverToken).ConfigureAwait(false);
             }
         }
         catch (WebSocketException) { }
@@ -309,7 +342,7 @@ internal sealed class GatewayServer : IDisposable
     }
 
     private async Task DispatchAsync(string text, Action<string> bind,
-        Action<string> unbind, Func<string?> defaultId, Func<string, Task> send)
+        Action<string> unbind, Func<string?> defaultId, Func<string, Task> send, CancellationToken ct)
     {
         string? type;
         try
@@ -328,7 +361,8 @@ internal sealed class GatewayServer : IDisposable
             switch (type)
             {
                 case GatewayProtocol.List:
-                    await send(GatewayProtocol.SessionsReply(SafeLiveIds())).ConfigureAwait(false);
+                    try { await send(SessionListReply()).ConfigureAwait(false); }
+                    catch (Exception ex) { await send(GatewayProtocol.ErrorMessage(null, ex.Message)).ConfigureAwait(false); }
                     break;
                 case GatewayProtocol.Attach:
                     if (Id() is { } attachId)
@@ -341,8 +375,7 @@ internal sealed class GatewayServer : IDisposable
                         {
                             try
                             {
-                                bind(attachId);
-                                _backend.Attach(attachId);
+                                await AttachBackendAsync(attachId, bind, send, ct).ConfigureAwait(false);
                                 await send(GatewayProtocol.AttachedReply(attachId)).ConfigureAwait(false);
                             }
                             catch (Exception ex)
@@ -409,10 +442,36 @@ internal sealed class GatewayServer : IDisposable
         catch (JsonException) { }
     }
 
-    private string[] SafeLiveIds()
+    private async Task AttachBackendAsync(string id, Action<string> bind, Func<string, Task> send, CancellationToken ct)
     {
-        try { return _backend.LiveIds(); }
-        catch { return []; }
+        if (_backend is IGatewayReplayBackend replayBackend)
+        {
+            var replaySent = Task.CompletedTask;
+            await replayBackend.ReplayAndBindAsync(id,
+                data => replaySent = send(GatewayProtocol.DataMessage(id, data)),
+                () => bind(id), ct).ConfigureAwait(false);
+            await replaySent.ConfigureAwait(false);
+        }
+        else
+        {
+            // Independent backends may synchronously emit history from Attach.
+            bind(id);
+            _backend.Attach(id);
+        }
+    }
+
+    private string SessionListReply()
+    {
+        var live = _backend.LiveIds();
+        if (_sessionCatalog is null) return GatewayProtocol.SessionsReply(live);
+        var liveSet = new HashSet<string>(live);
+        var records = _sessionCatalog().OrderBy(s => s.SortOrder).Select(s => new GatewaySessionInfo
+        {
+            Id = s.Id, Title = s.Title, CustomTitle = s.CustomTitle,
+            Hidden = s.Hidden, SortOrder = s.SortOrder, Active = s.Active,
+            Live = liveSet.Contains(s.Id)
+        }).ToArray();
+        return GatewayProtocol.SessionsReply(records.Where(s => s.Live && !s.Hidden).Select(s => s.Id), records);
     }
 
     private bool IsLive(string id)

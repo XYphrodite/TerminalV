@@ -180,3 +180,23 @@ test("parse barriers preserve replay bell suppression and wait for reset", async
   s.controller.flush("close-after-reset");
   assert.deepEqual((await s.saved).buffers, [""]);
 });
+
+test("saved screens retain SGR mouse encoding, including after switching it off", async t => {
+  const original = terminal(t);
+  const restored = terminal(t);
+  for (const mode of [1006, 1016]) {
+    original.output.write(`\x1b[?1003;${mode}h`);
+    await new Promise(resolve => original.output.whenParsed(resolve));
+    restored.output.reset();
+    restored.output.write(serializeSessionBuffer(original), true);
+    await new Promise(resolve => restored.output.whenParsed(resolve));
+    assert.equal(restored.term.modes.mouseTrackingMode, "any");
+    assert.equal(restored.term._core.coreMouseService.activeEncoding, mode === 1006 ? "SGR" : "SGR_PIXELS");
+    original.output.write(`\x1b[?${mode}l`);
+    await new Promise(resolve => original.output.whenParsed(resolve));
+    restored.output.reset();
+    restored.output.write(serializeSessionBuffer(original), true);
+    await new Promise(resolve => restored.output.whenParsed(resolve));
+    assert.equal(restored.term._core.coreMouseService.activeEncoding, "DEFAULT");
+  }
+});

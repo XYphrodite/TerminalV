@@ -3,7 +3,14 @@
 export function serializeSessionBuffer(tab) {
   if (!tab.output.hasParsed && tab.buffer) return tab.buffer;
   try {
-    tab.buffer = tab.serialize.serialize({ excludeAltBuffer: false, excludeModes: false });
+    let buffer = tab.serialize.serialize({ excludeAltBuffer: false, excludeModes: false });
+    // xterm 5.5's serializer saves mouse tracking but omits its encoding. Without
+    // SGR, restored Grok wheel events switch to the legacy binary input channel.
+    // Isolate the private read until the serializer includes these modes itself.
+    const encoding = tab.term._core?.coreMouseService?.activeEncoding;
+    if (encoding === "SGR") buffer += "\x1b[?1006h";
+    else if (encoding === "SGR_PIXELS") buffer += "\x1b[?1016h";
+    tab.buffer = buffer;
   } catch {
     // Keep the most recent successful snapshot if serialization fails.
   }

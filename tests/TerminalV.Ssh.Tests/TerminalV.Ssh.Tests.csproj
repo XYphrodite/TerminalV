@@ -12,5 +12,9 @@
     <Compile Include="../../src/TerminalV/Ssh/*.cs" Link="Ssh/%(Filename)%(Extension)" />
     <Compile Include="../../src/TerminalV/Gateway/GatewayServer.cs" Link="Gateway/GatewayServer.cs" />
     <Compile Include="../../src/TerminalV/Gateway/IGatewaySessionBackend.cs" Link="Gateway/IGatewaySessionBackend.cs" />
+    <Compile Include="../../src/TerminalV/Gateway/TailnetAccess.cs" Link="Gateway/TailnetAccess.cs" />
+    <Compile Include="../../src/TerminalV/Gateway/SessionClientBackend.cs" Link="Gateway/SessionClientBackend.cs" />
+    <Compile Include="../../src/TerminalV/Host/SessionClient.cs" Link="Host/SessionClient.cs" />
+    <Compile Include="../../src/TerminalV/Host/OutputReplayGuard.cs" Link="Host/OutputReplayGuard.cs" />
   </ItemGroup>
 </Project>

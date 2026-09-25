@@ -86,6 +86,7 @@ let fitTimer = 0;
 let fitRaf = 0;
 let ignoreFitUntil = 0;
 let readyForPersist = false;
+const pendingRemoteSessions = new Map();
 const clipboardWaiters = new Map();
 const pasteFileWaiters = new Map();
 let draggedTabId = null;
@@ -439,10 +440,15 @@ function applySplitDepth(row, id) {
 }
 
 function syncScrollLock(tab) {
-  // Mouse reporting is also used by inline apps. Only the parsed alternate
-  // buffer owns the viewport; xterm already gives it no scrollback. Changing
-  // the scrollback option here destroys history in the normal buffer too.
-  tab.host.classList.toggle("tui-lock", tab.term.buffer.active.type === "alternate");
+  // Inline TUIs (including Grok --no-alt-screen) own wheel events too. Follow
+  // xterm's parsed modes, including combined/fragmented sequences and resets.
+  // X10 only reports button presses, so its native wheel scrollback stays usable.
+  const mouse = tab.term.modes.mouseTrackingMode;
+  const appScroll = tab.term.buffer.active.type === "alternate" ||
+    mouse === "vt200" || mouse === "drag" || mouse === "any";
+  if (appScroll && !tab.host.classList.contains("tui-lock")) tab.term.scrollToBottom();
+  // Hiding the scrollbar must never change scrollback capacity or erase history.
+  tab.host.classList.toggle("tui-lock", appScroll);
 }
 
 function applyFit(tab, notifyHost = true) {
@@ -474,7 +480,7 @@ function applyFit(tab, notifyHost = true) {
     tab.ptySize = { cols: proposed.cols, rows: proposed.rows };
   }
   // Alternate buffer (muse TUI) leaves torn top after resize — hard refresh only its canvas, not normal scrollback
-  if (tab.host.classList.contains("tui-lock")) {
+  if (tab.term.buffer.active.type === "alternate") {
     try { tab.webgl?.clearTexture?.(); } catch {}
     tab.term.refresh(0, Math.max(0, tab.term.rows - 1), true);
   } else {
@@ -1618,6 +1624,36 @@ function handleHost(message) {
       renderTabs();
     }
     renderCwdNotice();
+    const pending = [...pendingRemoteSessions.values()];
+    pendingRemoteSessions.clear();
+    for (const created of pending) handleHost(created);
+    return;
+  }
+
+  if (message.type === "remote-session-created") {
+    if (typeof message.id !== "string" || !message.id.trim()) return;
+    // A gateway request can arrive while the desktop is still restoring its
+    // saved tabs. Keep those records authoritative until initialization ends.
+    if (!readyForPersist) {
+      pendingRemoteSessions.set(message.id, message);
+      return;
+    }
+    if (tabs.some((tab) => tab.id === message.id)) return;
+    newTab({
+      id: message.id,
+      cwd: message.cwd ?? null,
+      shell: message.shell,
+      startupCommand: message.startupCommand,
+      wslDistribution: message.wslDistribution,
+      group: "",
+      live: true,
+      skipActivate: true
+    });
+    layouts = normalizeLayouts(layouts, tabs);
+    renderTabs();
+    if (!activeId) activate(message.id);
+    else renderPaneLayout();
+    persistSessions();
     return;
   }
 
@@ -1794,6 +1830,7 @@ gatewayCopyBtn.addEventListener("click", () => {
   if (!settings.gatewayToken) return;
   post({ type: "clipboard-write", data: settings.gatewayToken });
 });
+document.getElementById("tailnet-revoke")?.addEventListener("click", () => post({ type: "tailnet-revoke" }));
 gatewayRegenBtn.addEventListener("click", () => {
   settings.gatewayToken = generateGatewayToken();
   syncGatewayForm();

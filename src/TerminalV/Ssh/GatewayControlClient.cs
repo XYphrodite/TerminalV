@@ -13,23 +13,35 @@ namespace TerminalV.Ssh;
 /// </summary>
 public sealed class GatewayControlClient : IDisposable
 {
-    private static readonly JsonSerializerOptions JsonOpts = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+    private static readonly JsonSerializerOptions JsonOpts = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        PropertyNameCaseInsensitive = true
+    };
     private readonly string _url;
     private readonly string? _token;
     private readonly TimeSpan _timeout;
     private ClientWebSocket? _ws;
     private int _disposed;
+    private readonly bool _tailnetIdentity;
+    private readonly System.Net.Http.HttpMessageInvoker? _transport;
 
-    public GatewayControlClient(string gatewayUrl, string? gatewayToken = null, TimeSpan? timeout = null)
+    public GatewayControlClient(string gatewayUrl, string? gatewayToken = null, TimeSpan? timeout = null,
+        bool tailnetIdentity = false, Func<string, int, CancellationToken, Task<Stream>>? dial = null)
     {
         if (string.IsNullOrWhiteSpace(gatewayUrl))
             throw new ArgumentException("GatewayUrl required.", nameof(gatewayUrl));
         _url = Normalize(gatewayUrl);
         _token = gatewayToken;
         _timeout = timeout ?? TimeSpan.FromSeconds(15);
+        _tailnetIdentity = tailnetIdentity;
+        _transport = GatewayTransport.CreateHandler(dial);
     }
 
-    public async Task<IReadOnlyList<string>> ListAsync(CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<string>> ListAsync(CancellationToken cancellationToken = default) =>
+        (await ListCatalogAsync(cancellationToken).ConfigureAwait(false)).Ids;
+
+    public async Task<GatewaySessionCatalog> ListCatalogAsync(CancellationToken cancellationToken = default)
     {
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         cts.CancelAfter(_timeout);
@@ -45,20 +57,29 @@ public sealed class GatewayControlClient : IDisposable
                 try
                 {
                     using var doc = JsonDocument.Parse(text);
-                    if (doc.RootElement.TryGetProperty("ids", out var ids) &&
-                        ids.ValueKind == JsonValueKind.Array)
+                    var root = doc.RootElement;
+                    var ids = root.TryGetProperty("ids", out var idsElement) && idsElement.ValueKind == JsonValueKind.Array
+                        ? idsElement.EnumerateArray()
+                            .Where(e => e.ValueKind == JsonValueKind.String)
+                            .Select(e => e.GetString()!)
+                            .Where(s => !string.IsNullOrWhiteSpace(s))
+                            .ToArray()
+                        : Array.Empty<string>();
+                    GatewaySessionInfo[]? sessions = null;
+                    if (root.TryGetProperty("sessions", out var catalog) && catalog.ValueKind != JsonValueKind.Null)
                     {
-                        return ids.EnumerateArray()
-                            .Select(e => e.GetString() ?? "")
-                            .Where(s => s.Length > 0)
-                            .ToList()
-                            .AsReadOnly();
+                        sessions = catalog.Deserialize<GatewaySessionInfo[]>(JsonOpts)
+                            ?? throw new JsonException("Missing desktop session catalog.");
+                        if (sessions.Any(s => s is null || string.IsNullOrWhiteSpace(s.Id)) ||
+                            sessions.Select(s => s.Id).Distinct(StringComparer.Ordinal).Count() != sessions.Length)
+                            throw new JsonException("Invalid desktop session catalog.");
                     }
-                    return Array.Empty<string>();
+                    return new GatewaySessionCatalog(ids, sessions);
                 }
-                catch (JsonException)
+                catch (JsonException ex)
                 {
-                    return Array.Empty<string>();
+                    // Do not turn an invalid reply into an authoritative empty list.
+                    throw new InvalidOperationException("Invalid gateway session list.", ex);
                 }
             }
             if (type == GatewayProtocol.Error)
@@ -105,6 +126,7 @@ public sealed class GatewayControlClient : IDisposable
         {
             try { _ws?.Dispose(); } catch { }
             _ws = null;
+            _transport?.Dispose();
         }
     }
 
@@ -114,9 +136,10 @@ public sealed class GatewayControlClient : IDisposable
             return _ws;
         _ws?.Dispose();
         var ws = new ClientWebSocket();
-        if (!string.IsNullOrWhiteSpace(_token))
+        if (_tailnetIdentity) ws.Options.SetRequestHeader("Authorization", "Tailscale");
+        else if (!string.IsNullOrWhiteSpace(_token))
             ws.Options.SetRequestHeader("Authorization", "Bearer " + _token);
-        await ws.ConnectAsync(new Uri(_url), ct).ConfigureAwait(false);
+        await GatewayTransport.ConnectAsync(ws, new Uri(_url), _transport, ct).ConfigureAwait(false);
         var handshake = GatewayProtocol.ConnectHandshake(null, control: true, cols: 80, rows: 24, term: null);
         await SendAsync(ws, handshake, ct).ConfigureAwait(false);
         _ws = ws;

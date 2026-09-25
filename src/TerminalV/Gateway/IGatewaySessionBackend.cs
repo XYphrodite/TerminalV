@@ -19,3 +19,10 @@ internal interface IGatewaySessionBackend
     void Resize(string id, int cols, int rows);
     void Kill(string id);
 }
+
+// A backend sharing the desktop's transport must replay only to the new
+// subscriber, then bind it atomically with respect to incoming live output.
+internal interface IGatewayReplayBackend
+{
+    Task ReplayAndBindAsync(string id, Action<string> replay, Action bind, CancellationToken ct);
+}

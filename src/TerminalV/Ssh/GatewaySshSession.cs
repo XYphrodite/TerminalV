@@ -13,6 +13,7 @@ namespace TerminalV.Ssh;
 public sealed class GatewaySshSession : SshSessionBase
 {
     private ClientWebSocket? _ws;
+    private System.Net.Http.HttpMessageInvoker? _transport;
     private CancellationTokenSource? _readCts;
     private Task? _readTask;
     private readonly SemaphoreSlim _gate = new(1, 1);
@@ -42,14 +43,16 @@ public sealed class GatewaySshSession : SshSessionBase
         {
             await DisconnectCoreAsync().ConfigureAwait(false);
             var ws = new ClientWebSocket();
-            if (!string.IsNullOrWhiteSpace(_options.GatewayToken))
+            if (_options.GatewayTailnetIdentity) ws.Options.SetRequestHeader("Authorization", "Tailscale");
+            else if (!string.IsNullOrWhiteSpace(_options.GatewayToken))
                 ws.Options.SetRequestHeader("Authorization", "Bearer " + _options.GatewayToken);
             // Subprotocol? Use terminalv.ssh
             // Build URL: gatewayUrl + ?host=&port=&user=&cols=&rows=&term=
             var uri = BuildUri(_options);
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeoutCts.CancelAfter(_options.ConnectTimeout);
-            await ws.ConnectAsync(uri, timeoutCts.Token).ConfigureAwait(false);
+            _transport = GatewayTransport.CreateHandler(_options.GatewayDial);
+            await GatewayTransport.ConnectAsync(ws, uri, _transport, timeoutCts.Token).ConfigureAwait(false);
             // Handshake: send auth + terminal info as JSON text frame.
             // Mirror mode adds sessionId so the gateway attaches a live
             // desktop session instead of proxying SSH (see GatewayProtocol).
@@ -146,6 +149,7 @@ public sealed class GatewaySshSession : SshSessionBase
             } catch { }
             ws.Dispose();
         }
+        _transport?.Dispose(); _transport = null;
     }
 
     private async Task ReadLoop(CancellationToken token)

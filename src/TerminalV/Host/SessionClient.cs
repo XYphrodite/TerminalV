@@ -28,6 +28,7 @@ internal sealed class SessionClient : IDisposable
     public event Action<string, uint>? Exited;
     public event Action<string, string, string?>? DirectoryChanged;
     public event Action<string, string>? Error;
+    public event Action<string>? ReplayCompleted;
     public bool? CwdTrackingSupported { get; private set; }
     public bool? LaunchProfilesSupported { get; private set; }
     public bool? WslLaunchSupported { get; private set; }
@@ -41,6 +42,11 @@ internal sealed class SessionClient : IDisposable
     }
 
     public bool Ensure()
+    {
+        lock (_gate) return EnsureCore();
+    }
+
+    private bool EnsureCore()
     {
         if (_pipe is { IsConnected: true })
         {
@@ -226,7 +232,13 @@ internal sealed class SessionClient : IDisposable
                         continue;
                     }
 
-                    if (type != "list" || _replay.CompleteList())
+                    var ordinaryPacket = true;
+                    if (type == "list")
+                    {
+                        ordinaryPacket = _replay.CompleteList(out var replayedId);
+                        if (replayedId is not null) ReplayCompleted?.Invoke(replayedId);
+                    }
+                    if (ordinaryPacket)
                         _onPacket?.Invoke(type, root.Clone());
                     var id = root.TryGetProperty("id", out var idEl) ? idEl.GetString() : null;
                     if (type == "data" && id is not null && root.TryGetProperty("data", out var dataEl))

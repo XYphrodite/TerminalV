@@ -25,13 +25,17 @@ internal sealed class OutputReplayGuard
     }
 
     // True only for a regular List() call, not an internal attach barrier.
-    public bool CompleteList()
+    public bool CompleteList() => CompleteList(out _);
+
+    public bool CompleteList(out string? attachingId)
     {
         lock (_gate)
         {
+            attachingId = null;
             if (!_barriers.TryDequeue(out var id) || id is null) return true;
             if (_attaching[id] == 1) _attaching.Remove(id);
             else _attaching[id]--;
+            if (!_attaching.ContainsKey(id)) attachingId = id;
             return false;
         }
     }

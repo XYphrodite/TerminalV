@@ -10,6 +10,7 @@
     <Compile Include="../../src/TerminalV/Host/OutputReplayGuard.cs" Link="Host/OutputReplayGuard.cs" />
     <Compile Include="../../src/TerminalV/Host/SessionClient.cs" Link="Host/SessionClient.cs" />
     <Compile Include="../../src/TerminalV/Host/SessionHost.cs" Link="Host/SessionHost.cs" />
+    <Compile Include="../../src/TerminalV/Host/TerminalReplayBuffer.cs" Link="Host/TerminalReplayBuffer.cs" />
     <Compile Include="../../src/TerminalV/Diagnostics/Diag.cs" Link="Diagnostics/Diag.cs" />
   </ItemGroup>
 </Project>
