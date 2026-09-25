@@ -26,7 +26,9 @@ echo "==> go mod tidy"
 go mod tidy
 
 echo "==> gomobile bind -target android -o $OUTPUT_AAR org.terminalv.tsnet"
-gomobile bind -target android -o "$OUTPUT_AAR" ./...
+gomobile bind -target android/arm64,android/amd64 -androidapi 21 \
+  -ldflags='-checklinkname=0 -extldflags=-Wl,-z,max-page-size=16384,-z,common-page-size=16384' \
+  -o "$OUTPUT_AAR" ./...
 
 if [ ! -f "$OUTPUT_AAR" ]; then
   echo "AAR not created: $OUTPUT_AAR" >&2

@@ -4,6 +4,7 @@ const paths = {
   settings: ["M4 7h16M4 17h16", "M8 4v6M16 14v6"],
   sidebar: ["M4 4h16v16H4z", "M9 4v16"],
   terminal: ["m6 7 5 5-5 5", "M13 17h5"],
+  computer: ["M3 4h18v13H3z", "M8 21h8M12 17v4"],
   plus: ["M12 5v14M5 12h14"],
   close: ["m6 6 12 12M18 6 6 18"],
   more: ["M5 12h.01M12 12h.01M19 12h.01"],

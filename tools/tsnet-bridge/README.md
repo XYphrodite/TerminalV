@@ -4,20 +4,28 @@
 
 * `tsnet.go` — `Tsnet.Start(authKey,hostname,controlUrl,stateDir,verbosity)` + `Dial(host,port)` + `DialFD`
 * `go.mod` — `tailscale.com v1.82.0`
-* Сборка: `gomobile bind -target android` → `org.terminalv.tsnet.Tsnet` `AAR`
+* Сборка: `gomobile bind` → Java-класс `tsnet.Tsnet_` и `libgojni.so` в `AAR`
 
 ## Сборка AAR (на xeon, где есть Go + Android SDK)
 
 ```powershell
 # Windows (xeon desktop-ib88isg)
-.\tools\tsnet-bridge\build-aar.ps1
+.\tools\tsnet-bridge\build-aar.ps1 -AndroidSdk C:\AndroidSDK
 # Linux/macOS
 ./tools/tsnet-bridge/build-aar.sh
 ```
 
 Результат: `tools/tsnet-bridge/tsnet.aar` + копия `src/TerminalV.Mobile/Platforms/Android/libs/tsnet.aar` (подхватывается `MAUI` как `AndroidAarLibrary`).
 
-Без `Go`/`gomobile` сборка `TerminalV.Mobile` идёт со `stub` (`TailscaleStubConnector`) — в UI покажет хинт `собери AAR на xeon`, но не упадёт. На `Android` без `AAR` `Dial` бросит `PlatformNotSupportedException` с инструкцией.
+Android-сборка требует AAR и останавливается с ошибкой, если его нет. PowerShell-скрипт по умолчанию собирает ARM64 и x86_64, как APK; для других архитектур задайте `-Target`. На остальных платформах остаётся `TailscaleStubConnector`.
+
+Скрипты передают внешнему компоновщику `max-page-size=16384` и `common-page-size=16384`, чтобы библиотека из NDK r26 имела 16-КБ ELF-выравнивание. См. [требования Android к размеру страниц](https://developer.android.com/guide/practices/page-sizes#compile-r27).
+
+После публикации проверяйте готовый APK, включая наличие Java-класса и обеих нативных библиотек:
+
+```powershell
+.\scripts\verify-mobile-apk.ps1 -Apk path\to\com.terminalv.mobile-Signed.apk
+```
 
 ## Использование в MAUI
 

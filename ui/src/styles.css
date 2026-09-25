@@ -711,6 +711,16 @@ body,
   height: 100%;
 }
 
+.terminal-host.mirror-viewport {
+  overflow: auto;
+  touch-action: pan-x pan-y;
+}
+
+.terminal-host.mirror-viewport > .xterm {
+  max-width: none;
+  max-height: none;
+}
+
 .settings {
   position: absolute;
   inset: 0;
@@ -722,6 +732,18 @@ body,
 
 .settings.hidden {
   display: none;
+}
+
+[data-desktop-only][hidden], [data-mobile-only][hidden] {
+  display: none !important;
+}
+
+.version:disabled {
+  cursor: default;
+}
+
+.mobile-ui .profile-columns {
+  grid-template-columns: 1fr;
 }
 
 .settings-panel {

@@ -1,0 +1,91 @@
+name: SSH terminal
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/ssh-terminal.yml'
+      - 'src/TerminalV/Ssh/**'
+      - 'src/TerminalV/Gateway/**'
+      - 'src/TerminalV/TerminalV.csproj'
+      - 'src/TerminalV.Mobile/**'
+      - 'tests/TerminalV.Ssh.Tests/**'
+      - 'tests/TerminalV.Mobile.Tests/**'
+      - 'tools/tsnet-bridge/go.*'
+      - 'ui/src/**'
+      - 'ui/tests/**'
+      - 'ui/package*.json'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/ssh-terminal.yml'
+      - 'src/TerminalV/Ssh/**'
+      - 'src/TerminalV/Gateway/**'
+      - 'src/TerminalV/TerminalV.csproj'
+      - 'src/TerminalV.Mobile/**'
+      - 'tests/TerminalV.Ssh.Tests/**'
+      - 'tests/TerminalV.Mobile.Tests/**'
+      - 'tools/tsnet-bridge/go.*'
+      - 'ui/src/**'
+      - 'ui/tests/**'
+      - 'ui/package*.json'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ssh-terminal-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  transport:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: tools/tsnet-bridge/go.mod
+          cache-dependency-path: tools/tsnet-bridge/go.sum
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - name: Install UI test dependencies without building
+        working-directory: ui
+        run: npm ci --ignore-scripts --no-fund --no-audit
+      - name: Check mobile terminal geometry and synchronized frames
+        working-directory: ui
+        run: node --test --test-concurrency=1 --test-name-pattern='mobile terminal fits|synchronized TUI output' tests/selection.test.js
+      - name: Build isolated SSH server
+        working-directory: tools/tsnet-bridge
+        run: go build -o "$env:RUNNER_TEMP/terminalv-test-sshd.exe" ../../tests/TerminalV.Ssh.Tests/keyboard-server.go
+      - name: Check SSH resize, UTF-8 and keyboard authentication
+        run: |
+          $portFile = Join-Path $env:RUNNER_TEMP 'terminalv-test-sshd.port'
+          $server = Start-Process -FilePath "$env:RUNNER_TEMP/terminalv-test-sshd.exe" -ArgumentList ('"' + $portFile + '"') -PassThru -WindowStyle Hidden
+          try {
+            $deadline = [DateTime]::UtcNow.AddSeconds(20)
+            $port = 0
+            while ($port -lt 1 -or $port -gt 65535) {
+              if ($server.HasExited -or [DateTime]::UtcNow -ge $deadline) { throw 'SSH test server did not start.' }
+              if (Test-Path -LiteralPath $portFile) {
+                [void][int]::TryParse((Get-Content -LiteralPath $portFile -Raw), [ref]$port)
+              }
+              Start-Sleep -Milliseconds 100
+            }
+            $env:TERMINALV_TEST_SSH_PORT = [string]$port
+            dotnet run --project tests/TerminalV.Ssh.Tests -c Release
+            if ($LASTEXITCODE -ne 0) { throw 'SSH terminal checks failed.' }
+          } finally {
+            if (-not $server.HasExited) { Stop-Process -Id $server.Id -ErrorAction SilentlyContinue }
+          }
+      - name: Check mobile bridge with the same SSH dependency
+        run: dotnet run --project tests/TerminalV.Mobile.Tests -c Release

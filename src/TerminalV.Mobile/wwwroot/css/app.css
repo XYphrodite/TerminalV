@@ -25,3 +25,66 @@ h1:focus { outline: none; }
 
 /* xterm isolation: ensure terminal is not clipped by Blazor layout */
 #terminal-container .xterm-viewport { overflow-y: auto !important; }
+
+/* Mobile chrome uses the selected desktop theme, with targets sized for touch. */
+#app #sidebar { padding-top:env(safe-area-inset-top); min-height:0; }
+#app .sidebar-head { flex-shrink:0; padding-left:12px; padding-right:8px; }
+#app .sidebar-head .icon-btn { width:44px; height:44px; flex-shrink:0; }
+#app .sidebar-foot { padding-bottom:max(12px, env(safe-area-inset-bottom)); }
+#app .session-tools { flex-shrink:0; }
+#app #session-filter { height:44px; font-size:16px; }
+#app .session-filter-wrap > [data-icon] { top:15px; }
+#app #hidden-sessions { min-height:40px; }
+#app:not(.collapsed) .tab { grid-template-columns:minmax(0,1fr) 44px 44px; gap:4px; min-height:64px; padding:8px; }
+#app:not(.collapsed) .tab-symbol { display:none; }
+#app:not(.collapsed) .tab .tab-close,
+#app:not(.collapsed) .tab .tab-options { width:44px; height:44px; }
+#app:not(.collapsed) #new-tab, #app:not(.collapsed) .new-tab-arrow,
+#app:not(.collapsed) #launch-profiles-btn { min-height:44px; }
+#app .new-tab-arrow { width:44px; }
+#app .new-tab-shortcut, #app .empty-shortcuts { display:none; }
+#app input:not([type=checkbox]):not([type=range]), #app select, #app textarea { font-size:16px; }
+
+#mobile-connection {
+    display:flex; align-items:center; gap:10px; width:100%; min-width:0;
+    min-height:64px; margin:0 0 10px; padding:10px 12px;
+    border:1px solid var(--border-soft); border-radius:10px;
+    background:var(--surface); color:var(--text); text-align:left;
+    font:13px/1.4 var(--font-ui); cursor:pointer;
+}
+#mobile-connection:hover { border-color:var(--accent-dim); background:var(--tab-hover); }
+#mobile-connection .connection-icon { flex:0 0 auto; color:var(--label); }
+#mobile-connection .connection-icon .ui-icon { width:22px; height:22px; }
+#mobile-connection .connection-copy { display:flex; flex:1; min-width:0; flex-direction:column; gap:3px; }
+#mobile-connection .connection-name { font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+#mobile-connection .connection-status { color:var(--label); font-size:12px; }
+#mobile-connection .connection-chevron { flex:0 0 auto; transform:rotate(-90deg); color:var(--label); }
+#mobile-connection[data-state=unconfigured] .connection-name { white-space:normal; }
+#mobile-connection[data-state=connected] .connection-icon { color:var(--accent); }
+#mobile-connection[data-state=disconnected] .connection-status { color:var(--danger); }
+#app.collapsed #mobile-connection { width:44px; min-height:44px; padding:10px; margin:0 auto 10px; justify-content:center; }
+#app.collapsed #mobile-connection .connection-copy,
+#app.collapsed #mobile-connection .connection-chevron { display:none; }
+#app.collapsed .sidebar-foot { padding-left:9px; padding-right:9px; }
+#app.collapsed #new-tab, #app.collapsed #launch-profiles-btn,
+#app.collapsed .new-tab-split { width:44px; min-height:44px; }
+
+#mobile-toolbar { display:none; flex-shrink:0; padding:0 8px; background:var(--surface); border-bottom:1px solid var(--border-soft); }
+#mobile-sessions-open { display:inline-flex; align-items:center; gap:8px; min-height:44px; padding:8px 12px; border:0; border-radius:8px; color:var(--text); background:transparent; font:600 13px var(--font-ui); }
+#mobile-sessions-open:hover { background:var(--tab-hover); }
+@media (max-width:700px) {
+    #app.collapsed #mobile-toolbar { display:flex; padding-top:env(safe-area-inset-top); }
+    #app:not(.collapsed) .sidebar-head { min-height:58px; }
+    #app #main .pane-toolbar { padding-left:10px; padding-right:10px; gap:6px; }
+    #app .pane-toolbar button { min-width:40px; min-height:40px; padding:0 8px; }
+    #app .pane-toolbar .action-label, #app #pane-count { display:none; }
+}
+/* With the keyboard open, footer controls remain reachable by scrolling. */
+@media (max-height:550px) {
+    #app #sidebar { overflow-y:auto; overscroll-behavior:contain; }
+    #app .sidebar-foot { overflow:visible; }
+    #app #tabs { flex:0 0 auto; min-height:44px; max-height:min(40dvh, 180px); }
+}
+@media (prefers-reduced-motion:reduce) {
+    #app #sidebar { transition:none; }
+}

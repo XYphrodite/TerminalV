@@ -130,10 +130,10 @@ internal sealed class TerminalBridge : IDisposable
             Hidden = s.Hidden, SortOrder = s.SortOrder, Active = s.Active
         }).ToArray());
 
-    private async Task AttachDesktopAsync(string id)
+    private async Task AttachDesktopAsync(string id, int cols, int rows)
     {
         Exception? failure = null;
-        try { await GatewayBackend.AttachDesktopAsync(id).ConfigureAwait(false); }
+        try { await GatewayBackend.AttachDesktopAsync(id, cols, rows).ConfigureAwait(false); }
         catch (Exception ex) { failure = ex; }
         await _dispatcher.InvokeAsync(() =>
         {
@@ -222,7 +222,7 @@ internal sealed class TerminalBridge : IDisposable
                 if (message.Id is { } attachingId && !_attachBacklog.ContainsKey(attachingId))
                 {
                     _attachBacklog[attachingId] = new Queue<string>();
-                    _ = AttachDesktopAsync(attachingId);
+                    _ = AttachDesktopAsync(attachingId, message.Cols, message.Rows);
                 }
                 break;
             case "write":
@@ -276,7 +276,7 @@ internal sealed class TerminalBridge : IDisposable
                 {
                     if (_host.Ensure())
                     {
-                        _host.Resize(message.Id, message.Cols, message.Rows);
+                        GatewayBackend.ResizeDesktop(message.Id, message.Cols, message.Rows);
                     }
                     else if (_sessions.TryGetValue(message.Id, out var resizing))
                     {
@@ -596,7 +596,7 @@ internal sealed class TerminalBridge : IDisposable
             if (!isWsl) Post(new { type = "cwd", id = message.Id, cwd = cwd.Path, notice = cwd.Notice });
             if (_host.Ensure())
             {
-                GatewayBackend.SessionCreated(message.Id, desktopAttached: true);
+                GatewayBackend.SessionCreated(message.Id, desktopAttached: true, cols: message.Cols, rows: message.Rows);
                 _host.Create(message.Id, Math.Max(message.Cols, 1), Math.Max(message.Rows, 1),
                     isWsl || message.Cwd is null ? null : cwd.Path, message.Shell, message.StartupCommand, message.WslDistribution);
                 return;

@@ -195,6 +195,8 @@ internal sealed class GatewayServer : IDisposable
         var bound = new HashSet<string>();
         var boundGate = new object();
         string? defaultId = null;
+        var geometryBackend = _backend as IGatewayGeometryBackend;
+        var terminalGeometry = false;
 
         bool IsBound(string id)
         {
@@ -249,10 +251,16 @@ internal sealed class GatewayServer : IDisposable
             if (IsBound(id) || defaultId is null) _ = SendAsync(GatewayProtocol.ErrorMessage(id, message));
         }
 
+        void OnGeometry(string id, int cols, int rows)
+        {
+            if (terminalGeometry && IsBound(id)) _ = SendAsync(GatewayProtocol.GeometryMessage(id, cols, rows));
+        }
+
         _backend.Data += OnData;
         _backend.Exited += OnExit;
         _backend.DirectoryChanged += OnCwd;
         _backend.Error += OnError;
+        if (geometryBackend is not null) geometryBackend.GeometryChanged += OnGeometry;
 
         try
         {
@@ -270,6 +278,8 @@ internal sealed class GatewayServer : IDisposable
                 await CloseAsync(ws).ConfigureAwait(false);
                 return;
             }
+            // Older APKs render unknown control frames as terminal text.
+            terminalGeometry = handshake.TerminalGeometry;
 
             if (!handshake.Control)
             {
@@ -280,7 +290,7 @@ internal sealed class GatewayServer : IDisposable
                     {
                         try
                         {
-                            await AttachBackendAsync(id, Bind, SendAsync, serverToken).ConfigureAwait(false);
+                            await AttachBackendAsync(id, Bind, SendAsync, serverToken, terminalGeometry).ConfigureAwait(false);
                             await SendAsync(GatewayProtocol.AttachedReply(id)).ConfigureAwait(false);
                         }
                         catch (Exception ex)
@@ -325,7 +335,7 @@ internal sealed class GatewayServer : IDisposable
                 }
 
                 await DispatchAsync(Encoding.UTF8.GetString(frame.Value.bytes), Bind, Unbind,
-                    () => defaultId, SendAsync, serverToken).ConfigureAwait(false);
+                    () => defaultId, SendAsync, serverToken, terminalGeometry).ConfigureAwait(false);
             }
         }
         catch (WebSocketException) { }
@@ -336,13 +346,14 @@ internal sealed class GatewayServer : IDisposable
             _backend.Exited -= OnExit;
             _backend.DirectoryChanged -= OnCwd;
             _backend.Error -= OnError;
+            if (geometryBackend is not null) geometryBackend.GeometryChanged -= OnGeometry;
             sendGate.Dispose();
             await CloseAsync(ws).ConfigureAwait(false);
         }
     }
 
     private async Task DispatchAsync(string text, Action<string> bind,
-        Action<string> unbind, Func<string?> defaultId, Func<string, Task> send, CancellationToken ct)
+        Action<string> unbind, Func<string?> defaultId, Func<string, Task> send, CancellationToken ct, bool terminalGeometry)
     {
         string? type;
         try
@@ -375,7 +386,7 @@ internal sealed class GatewayServer : IDisposable
                         {
                             try
                             {
-                                await AttachBackendAsync(attachId, bind, send, ct).ConfigureAwait(false);
+                                await AttachBackendAsync(attachId, bind, send, ct, terminalGeometry).ConfigureAwait(false);
                                 await send(GatewayProtocol.AttachedReply(attachId)).ConfigureAwait(false);
                             }
                             catch (Exception ex)
@@ -442,19 +453,30 @@ internal sealed class GatewayServer : IDisposable
         catch (JsonException) { }
     }
 
-    private async Task AttachBackendAsync(string id, Action<string> bind, Func<string, Task> send, CancellationToken ct)
+    private async Task AttachBackendAsync(string id, Action<string> bind, Func<string, Task> send, CancellationToken ct, bool terminalGeometry)
     {
+        var geometrySent = Task.CompletedTask;
+        void BeforeReplay()
+        {
+            if (terminalGeometry && _backend is IGatewayGeometryBackend geometryBackend)
+            {
+                var size = geometryBackend.EnsureGeometry(id);
+                geometrySent = send(GatewayProtocol.GeometryMessage(id, size.Columns, size.Rows));
+            }
+        }
         if (_backend is IGatewayReplayBackend replayBackend)
         {
             var replaySent = Task.CompletedTask;
             await replayBackend.ReplayAndBindAsync(id,
                 data => replaySent = send(GatewayProtocol.DataMessage(id, data)),
-                () => bind(id), ct).ConfigureAwait(false);
-            await replaySent.ConfigureAwait(false);
+                () => bind(id), ct, BeforeReplay).ConfigureAwait(false);
+            await Task.WhenAll(geometrySent, replaySent).ConfigureAwait(false);
         }
         else
         {
             // Independent backends may synchronously emit history from Attach.
+            BeforeReplay();
+            await geometrySent.ConfigureAwait(false);
             bind(id);
             _backend.Attach(id);
         }

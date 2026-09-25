@@ -1,24 +1,60 @@
 @page "/"
 @using TerminalV.Mobile.Host
 @using TerminalV.Ssh
+@using System.Text.Json
 @inject IJSRuntime JS
 @inject SshService Ssh
 @inject MobileDataStore Store
 @inject MobileBridge Bridge
+@inject TerminalV.Mobile.Tailscale.TailnetAccount Account
 @implements IAsyncDisposable
 
-<div id="mobile-config-host" style="@(showConfig ? "" : "display:none")">
+<div id="mobile-config-host" role="dialog" aria-modal="true" aria-labelledby="connection-title" style="@(showConfig ? "" : "display:none")">
 <div class="mobile-root">
     <div class="connect-card">
         <div class="card-head">
-            <h1>TerminalV Mobile — подключение</h1>
-            <p>Настройте SSH/шлюз один раз — далее используйте интерфейс как на десктопе (сайдбар, табы, сплиты, поиск). Данные хранятся в Preferences.</p>
+            <div><div class="connection-eyebrow">TERMINALV MOBILE</div><h1 id="connection-title">Подключение</h1></div>
+            <button id="connection-close" type="button" class="connection-close" @onclick="CloseConfig" aria-label="Закрыть подключение" title="Закрыть">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg>
+            </button>
         </div>
+        <p class="connection-intro">Выберите компьютер, чтобы продолжить его сессии на телефоне.</p>
+        @if (CanReconnectGateway)
+        {
+            <div class="saved-computer"><span>Выбранный компьютер</span><strong>@SavedComputerName</strong><button class="ghost" disabled="@accountBusy" @onclick="ReconnectAsync">Переподключиться</button></div>
+        }
+        <button class="primary" disabled="@accountBusy" @onclick="LoginAsync">@(string.IsNullOrEmpty(accountLogin) ? "Войти через Tailscale" : "Найти компьютеры")</button>
+        @if (!string.IsNullOrEmpty(accountLogin))
+        {
+            <div class="connection-account"><span title="@accountLogin">@accountLogin</span><button class="ghost" disabled="@accountBusy" @onclick="LogoutAsync">Выйти</button></div>
+        }
+        @if (accountBusy) { <button class="ghost operation-cancel" @onclick="CancelAccount">Отменить операцию</button> }
+        @if (!string.IsNullOrEmpty(accountStatus)) { <p class="connection-status" role="status">@accountStatus</p> }
+        @if (computers.Count > 0)
+        {
+            <div class="connection-computers" aria-label="Доступные компьютеры">
+            @foreach (var computer in computers)
+            {
+                <button class="computer-choice" disabled="@accountBusy" @onclick="() => ConnectComputerAsync(computer)">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 4h18v13H3zM8 21h8M12 17v4" /></svg>
+                    <span class="computer-choice-copy"><strong>@computer.Name</strong><span>@(computer.Approved ? "Открыть сессии" : "Подтвердить доступ на компьютере")</span></span>
+                    <span aria-hidden="true">›</span>
+                </button>
+            }
+            </div>
+        }
+        @if (!string.IsNullOrEmpty(accountError)) { <div class="error" role="alert">@accountError</div> }
+        <details class="connection-details">
+            <summary>Другой порт шлюза</summary>
+            <label class="field"><span>Порт TerminalV на ПК</span><input type="number" min="1" max="65535" @bind="discoveryPort" /></label>
+        </details>
+        <details class="connection-details">
+        <summary>Ручное подключение по SSH или токену</summary>
         <div class="form-grid">
             <label class="field"><span>Хост</span><input @bind="host" placeholder="100.119.48.15" /></label>
             <label class="field field-sm"><span>Порт</span><input type="number" @bind="port" /></label>
-            <label class="field"><span>Пользователь</span><input @bind="username" /></label>
-            <label class="field"><span>Пароль</span><input type="password" @bind="password" /></label>
+            <label class="field field-wide"><span>Пользователь</span><input @bind="username" /></label>
+            <label class="field field-wide"><span>Пароль</span><input type="password" @bind="password" /></label>
             <label class="field field-check"><input type="checkbox" @bind="useGateway" @bind:after="OnGatewayToggled" disabled="@useTailscale" /><span>Через шлюз TerminalV</span></label>
             @if (useGateway)
             {
@@ -33,30 +69,55 @@
             }
         </div>
         @if (!string.IsNullOrEmpty(error)) { <div class="error">@error</div> }
-        <div class="hint">После сохранения — закройте окно и используйте «Новая вкладка» в основном интерфейсе. Каждая вкладка = SSH-сессия к настроенному хосту.</div>
+        <div class="hint">Новые вкладки будут открываться на этом компьютере. После сохранения можно вернуться к сессиям.</div>
+        @if (!useGateway) { <div class="hint">Для повторного подключения сохранённой SSH-сессии нажмите «Перезапустить» в терминале.</div> }
         <button class="primary" @onclick="SaveAndClose">Сохранить и показать терминал</button>
-        <button class="ghost" style="margin-top:8px;width:100%" @onclick="CloseConfig">Отмена</button>
+        </details>
+        <button class="ghost connection-done" @onclick="CloseConfig">Вернуться к сессиям</button>
     </div>
 </div>
 </div>
 
-<button id="mobile-config-fab" @onclick="OpenConfig" title="Настройка подключения" style="position:fixed;bottom:calc(12px + env(safe-area-inset-bottom));right:calc(12px + env(safe-area-inset-right));z-index:9999;background:#1E2631;color:#E8EEF5;border:1px solid #2A3340;border-radius:999px;padding:8px 12px;font-size:12px;max-width:42vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;@(showConfig ? "display:none" : "")">⚙ Подключение</button>
-
 <style>
-.mobile-root { max-width: 560px; margin: 0 auto; padding: 16px; color: #E8EEF5; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Cascadia Code", monospace; }
-#mobile-config-host { position:fixed; inset:0; z-index:10000; background:rgba(11,13,16,0.92); overflow-y:auto; overflow-x:hidden; -webkit-overflow-scrolling:touch; overscroll-behavior:contain; padding:16px; padding-bottom: max(16px, env(safe-area-inset-bottom)); display:flex; flex-direction:column; align-items:stretch; }
-.connect-card { background: #0F1318; border: 1px solid #1E2631; padding: 18px; max-width:560px; width:100%; margin: 0 auto; flex-shrink:0; max-height:none; }
-.card-head h1 { font-size: 18px; margin:0 0 6px; }
-.card-head p { font-size: 13px; color:#8A96A6; }
-.form-grid { display:grid; grid-template-columns: 1fr 96px; gap:10px; }
-.field { display:flex; flex-direction:column; gap:5px; min-width:0; }
-.field span { font-size:12px; color:#9AA8BC; }
-.field input:not([type=checkbox]) { background:#0B0D10; border:1px solid #26303D; color:#E8EEF5; padding:8px 10px; font-size:16px; }
-.field-check { flex-direction:row; align-items:center; grid-column:1/-1; gap:8px; }
-.error { background:#2B1212; border:1px solid #5A1E1E; color:#FF9E9E; padding:8px; margin:10px 0; }
-.primary { width:100%; background:#0F766E; color:#fff; border:1px solid #115E57; padding:10px; font-weight:600; cursor:pointer; }
-.hint { font-size:11px; color:#6E7C90; margin:8px 0; }
-@@media (max-width: 400px) { .form-grid { grid-template-columns: 1fr; } .field.field-sm { grid-column:1/-1; } }
+#mobile-config-host { position:fixed; inset:0; top:var(--connection-viewport-top, 0px); bottom:auto; height:var(--connection-viewport-height, 100dvh); z-index:10000; background:color-mix(in srgb, var(--bg) 92%, transparent); overflow-y:auto; overflow-x:hidden; -webkit-overflow-scrolling:touch; overscroll-behavior:contain; padding:max(16px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left)); display:flex; align-items:flex-start; }
+#mobile-config-host .mobile-root { width:100%; max-width:520px; margin:auto; color:var(--text); font-family:var(--font-ui); }
+#mobile-config-host .connect-card { background:var(--sidebar); border:1px solid var(--border-soft); border-radius:16px; padding:20px; width:100%; }
+#mobile-config-host .card-head { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+#mobile-config-host .connection-eyebrow { font-size:10px; letter-spacing:.12em; color:var(--label); margin-bottom:6px; }
+#mobile-config-host h1 { font-size:22px; line-height:1.2; margin:0; font-weight:600; }
+#mobile-config-host .connection-close { width:44px; height:44px; flex-shrink:0; padding:10px; border:1px solid var(--border-soft); border-radius:10px; color:var(--text); background:var(--surface); }
+#mobile-config-host svg { width:22px; height:22px; flex-shrink:0; }
+#mobile-config-host .connection-intro, #mobile-config-host .connection-status { font-size:14px; line-height:1.55; color:var(--label); margin:16px 0; overflow-wrap:anywhere; }
+#mobile-config-host .primary { width:100%; min-height:48px; background:var(--accent); color:var(--ink); border:1px solid transparent; border-radius:10px; padding:12px 16px; font:600 14px var(--font-ui); cursor:pointer; }
+#mobile-config-host button:disabled { opacity:.55; cursor:default; }
+#mobile-config-host .ghost { min-height:44px; border-radius:10px; padding:10px 12px; font:14px var(--font-ui); }
+#mobile-config-host .connection-account { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:8px; font-size:12px; color:var(--label); }
+#mobile-config-host .connection-account > span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+#mobile-config-host .connection-account > button { flex-shrink:0; }
+#mobile-config-host .operation-cancel { width:100%; margin-top:8px; }
+#mobile-config-host .connection-computers { display:grid; gap:8px; margin:16px 0; }
+#mobile-config-host .saved-computer { display:grid; gap:6px; background:var(--surface); border:1px solid var(--border-soft); border-radius:12px; padding:12px; margin:16px 0; }
+#mobile-config-host .saved-computer > span { font-size:12px; color:var(--label); }
+#mobile-config-host .saved-computer > strong { font-size:14px; overflow-wrap:anywhere; }
+#mobile-config-host .saved-computer > button { margin-top:6px; }
+#mobile-config-host .computer-choice { display:flex; align-items:center; gap:12px; width:100%; min-height:68px; padding:12px; text-align:left; color:var(--text); background:var(--surface); border:1px solid var(--border-soft); border-radius:12px; }
+#mobile-config-host .computer-choice:hover { border-color:var(--accent); background:var(--accent-wash); }
+#mobile-config-host .computer-choice-copy { display:flex; flex:1; min-width:0; flex-direction:column; gap:4px; }
+#mobile-config-host .computer-choice-copy strong { font-size:14px; font-weight:600; overflow-wrap:anywhere; }
+#mobile-config-host .computer-choice-copy > span { font-size:12px; color:var(--label); }
+#mobile-config-host .connection-details { margin-top:16px; border-top:1px solid var(--border-soft); padding-top:4px; }
+#mobile-config-host summary { min-height:48px; padding:14px 0; font-size:13px; cursor:pointer; color:var(--label); }
+#mobile-config-host .form-grid { display:grid; grid-template-columns:minmax(0,1fr) 96px; gap:12px; }
+#mobile-config-host .field { display:flex; flex-direction:column; gap:6px; min-width:0; }
+#mobile-config-host .field-wide { grid-column:1/-1; }
+#mobile-config-host .field span { font-size:12px; color:var(--label); }
+#mobile-config-host .field input:not([type=checkbox]) { width:100%; min-width:0; min-height:46px; background:var(--bg); border:1px solid var(--border-soft); border-radius:8px; color:var(--text); padding:10px 12px; font:16px var(--font-ui); user-select:text; }
+#mobile-config-host .field-check { flex-direction:row; align-items:center; grid-column:1/-1; gap:10px; min-height:44px; }
+#mobile-config-host .field-check input { width:20px; height:20px; flex-shrink:0; accent-color:var(--accent); }
+#mobile-config-host .error { background:color-mix(in srgb,var(--danger) 9%,var(--sidebar)); border:1px solid color-mix(in srgb,var(--danger) 50%,var(--sidebar)); color:var(--danger); border-radius:10px; padding:12px; margin:12px 0; font-size:13px; line-height:1.5; overflow-wrap:anywhere; }
+#mobile-config-host .hint { font-size:12px; color:var(--label); line-height:1.5; margin:12px 0; }
+#mobile-config-host .connection-done { width:100%; margin-top:20px; }
+@@media (max-width:400px) { #mobile-config-host .connect-card { padding:16px; } #mobile-config-host .form-grid { grid-template-columns:1fr; } #mobile-config-host .field.field-sm { grid-column:1/-1; } }
 </style>
 
 @code {
@@ -72,7 +133,111 @@
     private string tailscaleHostname = "terminalv-mobile";
     private string error = "";
     private bool showConfig = false;
-    private bool bridgeReady = false;
+    private DotNetObjectReference<Home>? bridgeReference;
+    private bool? reportedConfigVisibility;
+    private bool accountBusy;
+    private string accountLogin = "", accountStatus = "", accountError = "";
+    private int discoveryPort = 5454;
+    private List<TerminalV.Mobile.Tailscale.TailnetComputer> computers = new();
+    private CancellationTokenSource? accountOperation;
+
+    private bool CanReconnectGateway => Microsoft.Maui.Storage.Preferences.Default.Get("useGateway", false)
+        && !string.IsNullOrWhiteSpace(Microsoft.Maui.Storage.Preferences.Default.Get("gatewayUrl", ""));
+    private string SavedComputerName
+    {
+        get
+        {
+            if (Microsoft.Maui.Storage.Preferences.Default.Get("tailnetGateway", false))
+            {
+                var name = Microsoft.Maui.Storage.Preferences.Default.Get("tailnetComputerName", "");
+                if (!string.IsNullOrWhiteSpace(name)) return name;
+            }
+            var url = Microsoft.Maui.Storage.Preferences.Default.Get("gatewayUrl", "");
+            return Uri.TryCreate(url, UriKind.Absolute, out var address) ? address.Host : "Компьютер";
+        }
+    }
+
+    private async Task ReconnectAsync()
+    {
+        if (accountBusy) return;
+        accountBusy = true;
+        showConfig = false;
+        try { await Bridge.SendInitAsync(reconnect: true); }
+        catch (Exception ex) { accountError = ex.Message; showConfig = true; }
+        finally { accountBusy = false; }
+    }
+
+    private void CancelAccount() => accountOperation?.Cancel();
+    private async Task LoginAsync()
+    {
+        if (accountBusy) return;
+        if (discoveryPort is < 1 or > 65535) { accountError = "Порт должен быть от 1 до 65535."; return; }
+        accountOperation?.Dispose();
+        accountOperation = new CancellationTokenSource(TimeSpan.FromMinutes(3));
+        var ct = accountOperation.Token;
+        accountBusy = true; accountError = ""; accountStatus = "Подключение к Tailscale…"; computers.Clear();
+        try
+        {
+            var status = await Account.StatusAsync(true, ct);
+            var opened = false;
+            while (!status.Running)
+            {
+                if (!opened && Uri.TryCreate(status.AuthUrl, UriKind.Absolute, out var url)
+                    && url.Scheme == "https" && (url.Host == "tailscale.com" || url.Host.EndsWith(".tailscale.com", StringComparison.OrdinalIgnoreCase)))
+                {
+                    await Microsoft.Maui.ApplicationModel.Browser.Default.OpenAsync(url, Microsoft.Maui.ApplicationModel.BrowserLaunchMode.External);
+                    opened = true;
+                }
+                accountStatus = status.State == "NeedsMachineAuth" ? "Подтвердите устройство в панели Tailscale." : "Завершите вход в браузере и вернитесь в TerminalV.";
+                StateHasChanged();
+                await Task.Delay(1000, ct);
+                status = await Account.StatusAsync(false, ct);
+            }
+            accountLogin = status.Login;
+            accountStatus = "Ищу компьютеры с запущенным TerminalV…";
+            StateHasChanged();
+            computers = await Account.FindComputersAsync(status, discoveryPort, ct);
+            accountStatus = computers.Count == 0 ? "ПК не найден. Запустите новую версию TerminalV на компьютере, включите шлюз в настройках и проверьте доступ через Tailscale." : "Выберите компьютер.";
+        }
+        catch (OperationCanceledException) { accountStatus = "Вход или поиск остановлен. Можно повторить."; }
+        catch (Exception ex) { accountError = ex.Message; accountStatus = ""; }
+        finally { accountBusy = false; }
+    }
+    private async Task ConnectComputerAsync(TerminalV.Mobile.Tailscale.TailnetComputer computer)
+    {
+        accountOperation?.Dispose(); accountOperation = new CancellationTokenSource(TimeSpan.FromSeconds(70));
+        accountBusy = true; accountError = ""; accountStatus = "Подтвердите доступ в окне TerminalV на ПК.";
+        try
+        {
+            await Account.PairAsync(computer, accountOperation.Token);
+            Microsoft.Maui.Storage.Preferences.Default.Set("tailnetGateway", true);
+            Microsoft.Maui.Storage.Preferences.Default.Set("useGateway", true);
+            Microsoft.Maui.Storage.Preferences.Default.Set("useTailscale", false);
+            Microsoft.Maui.Storage.Preferences.Default.Set("gatewayUrl", $"ws://{computer.Ip}:{computer.Port}");
+            Microsoft.Maui.Storage.Preferences.Default.Set("tailnetComputerId", computer.Id);
+            Microsoft.Maui.Storage.Preferences.Default.Set("tailnetComputerName", computer.Name);
+            Microsoft.Maui.Storage.Preferences.Default.Set("tailnetComputerPort", computer.Port);
+            useGateway = true; useTailscale = false; gatewayUrl = $"ws://{computer.Ip}:{computer.Port}";
+            showConfig = false;
+            await Bridge.SendInitAsync(reconnect: true);
+            accountStatus = "";
+        }
+        catch (Exception ex) { accountError = ex is OperationCanceledException ? "Подключение отменено." : ex.Message; }
+        finally { accountBusy = false; }
+    }
+    private async Task LogoutAsync()
+    {
+        accountBusy = true;
+        try
+        {
+            foreach (var session in Ssh.List()) Ssh.Remove(session.Id);
+            await Account.LogoutAsync(CancellationToken.None);
+            accountLogin = ""; computers.Clear(); accountStatus = "Вы вышли из Tailscale.";
+            await Bridge.SendInitAsync(reconnect: true, connect: false);
+        }
+        catch (Exception ex) { accountError = ex.Message; }
+        finally { accountBusy = false; }
+    }
 
     protected override void OnInitialized()
     {
@@ -88,7 +253,7 @@
             useTailscale = Microsoft.Maui.Storage.Preferences.Default.Get(nameof(useTailscale), useTailscale);
             tailscaleAuthKey = Microsoft.Maui.Storage.Preferences.Default.Get(nameof(tailscaleAuthKey), tailscaleAuthKey);
             tailscaleHostname = Microsoft.Maui.Storage.Preferences.Default.Get(nameof(tailscaleHostname), tailscaleHostname);
-            // First launch with no sessions -> show config, otherwise show desktop UI (FAB to re-open)
+            // First launch shows configuration; the sidebar connection card reopens it.
             if (Store.LoadSessions().Count == 0)
             {
                 showConfig = true;
@@ -103,16 +268,38 @@
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (!firstRender) return;
         try
         {
-            Bridge.SetJS(JS);
-            // Let shim know DotNet is ready
-            await JS.InvokeVoidAsync("eval", "window.__mobileBridgeReady = true");
-            Bridge.SendInit();
-            bridgeReady = true;
+            if (firstRender)
+            {
+                Bridge.SetJS(JS);
+                bridgeReference = DotNetObjectReference.Create(this);
+                await JS.InvokeVoidAsync("__tvSetBridge", bridgeReference);
+            }
+            if (reportedConfigVisibility != showConfig)
+            {
+                reportedConfigVisibility = showConfig;
+                await JS.InvokeVoidAsync("__tvConnectionConfig", showConfig);
+            }
         }
-        catch { }
+        catch (Exception ex) { error = ex.Message; showConfig = true; StateHasChanged(); }
+    }
+
+    [JSInvokable]
+    public async Task HandleMessage(string json)
+    {
+        try
+        {
+            using var message = JsonDocument.Parse(json);
+            if (message.RootElement.ValueKind == JsonValueKind.Object
+                && message.RootElement.TryGetProperty("type", out var type) && type.ValueKind == JsonValueKind.String)
+            {
+                if (type.GetString() == "open-connection") { await InvokeAsync(OpenConfig); return; }
+                if (type.GetString() == "close-connection") { await InvokeAsync(CloseConfig); return; }
+            }
+        }
+        catch (JsonException) { return; }
+        await Bridge.Handle(json);
     }
 
     private void SavePreferences()
@@ -141,18 +328,24 @@
     }
 
     private void OpenConfig() { showConfig = true; StateHasChanged(); }
-    private void CloseConfig() { showConfig = false; StateHasChanged(); }
-    private void SaveAndClose()
+    private void CloseConfig() { CancelAccount(); showConfig = false; StateHasChanged(); }
+    private async Task SaveAndClose()
     {
         if (string.IsNullOrWhiteSpace(host)) { error = "Заполни хост."; return; }
         if (port < 1 || port > 65535) { error = "Порт 1..65535."; return; }
         SavePreferences();
+        Microsoft.Maui.Storage.Preferences.Default.Set("tailnetGateway", false);
         error = "";
         showConfig = false;
         // Re-init bridge so next create uses new prefs
-        try { Bridge.SendInit(); } catch { }
+        await Bridge.SendInitAsync(reconnect: true);
         StateHasChanged();
     }
 
-    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    public async ValueTask DisposeAsync()
+    {
+        accountOperation?.Cancel(); accountOperation?.Dispose();
+        try { await JS.InvokeVoidAsync("__tvSetBridge", (object?)null); } catch { }
+        bridgeReference?.Dispose();
+    }
 }

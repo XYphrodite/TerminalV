@@ -1,0 +1,314 @@
+<!doctype html><meta charset="utf-8">
+<script type="module">
+  const results = [];
+  const delay = (ms = 150) => new Promise(resolve => setTimeout(resolve, ms));
+  const source = await (await fetch("/mobile/index.html")).text();
+  const frame = document.createElement("iframe");
+  frame.style = "width:100%;height:700px";
+  frame.srcdoc = source.replace('<base href="/" />', `<base href="${location.origin}/mobile/">`)
+    .replace('<script src="js/mobile-bridge.js"></' + 'script>', '<script src="js/mobile-bridge.js"></' + 'script><script src="/tests/mobile-host.js"></' + 'script>')
+    .replace(/<script src="_framework\/blazor.webview.js"[^>]*><\/script>/, "");
+  const loaded = new Promise(resolve => frame.onload = resolve);
+  document.body.append(frame);
+  await loaded;
+  const app = frame.contentWindow, doc = frame.contentDocument;
+  const check = async (name, run) => {
+    try { await run(); results.push({ name, ok: true }); }
+    catch (error) { results.push({ name, ok: false, error: error.stack }); }
+  };
+  const equal = (a, b) => { if (a !== b) throw new Error(`${a} != ${b}`); };
+  const sync = ids => app.sendHost({ type:"init",mobile:true,liveIds:ids,sessions:ids.map(id => ({id,title:id})) });
+  await delay();
+  await check("empty mobile startup does not create an unsolicited remote shell", () => {
+    equal(app.hostMessages.filter(m => m.type === "create").length, 0);
+  });
+  await check("mobile version arrives before session init and never requests desktop updates", () => {
+    const version = doc.getElementById("app-version");
+    equal(version.textContent, "v9.8.7");
+    equal(version.disabled, true);
+    equal(version.title.includes("мобильного приложения"), true);
+    const checks = app.hostMessages.filter(m => m.type === "update-check").length;
+    version.click();
+    equal(app.hostMessages.filter(m => m.type === "update-check").length, checks);
+  });
+  await check("connection status is explicit, safe for host names, and opens the dialog once", async () => {
+    const button = doc.getElementById("mobile-connection");
+    equal(doc.getElementById("mobile-connection-name").textContent, "Подключиться к компьютеру");
+    const name = '<img src=x onerror="window.hostNameExecuted=true">';
+    app.sendHost({ type: "connection-state", name, state: "connected" });
+    equal(doc.getElementById("mobile-connection-name").textContent, name);
+    equal(doc.querySelectorAll("#mobile-connection img").length, 0);
+    equal(doc.getElementById("mobile-connection-status").textContent, "Подключено");
+    equal(button.title, `${name} · Подключено`);
+    const opens = app.hostMessages.filter(m => m.type === "open-connection").length;
+    button.focus(); button.click();
+    await delay();
+    equal(app.hostMessages.filter(m => m.type === "open-connection").length, opens + 1);
+    equal(doc.getElementById("app").inert, true);
+    equal(button.getAttribute("aria-expanded"), "true");
+    equal(doc.activeElement.id, "connection-close");
+    const creates = app.hostMessages.filter(m => m.type === "create" || m.type === "write").length;
+    doc.getElementById("fixture-connection-input").focus();
+    doc.getElementById("fixture-connection-input").dispatchEvent(new app.KeyboardEvent("keydown", { key: "T", code: "KeyT", ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true }));
+    await delay();
+    equal(app.hostMessages.filter(m => m.type === "create" || m.type === "write").length, creates);
+    doc.getElementById("connection-close").focus();
+    doc.dispatchEvent(new app.KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true, cancelable: true }));
+    equal(doc.activeElement.id, "fixture-connection-last");
+    doc.dispatchEvent(new app.KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }));
+    equal(doc.activeElement.id, "connection-close");
+    doc.dispatchEvent(new app.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    await delay();
+    equal(doc.getElementById("app").inert, false);
+    equal(doc.activeElement, button);
+    equal(button.getAttribute("aria-expanded"), "false");
+    app.sendHost({ type: "connection-state", name: "Xeon", state: "disconnected" });
+    equal(doc.getElementById("mobile-connection-status").textContent, "Нет связи");
+  });
+  await check("narrow drawer keeps connection above new tab, footer clear, and an explicit sessions opener", async () => {
+    frame.style.width = "320px"; frame.style.height = "640px";
+    const shell = doc.getElementById("app");
+    shell.classList.remove("collapsed");
+    app.sendHost({ type: "connection-state", name: "DESKTOP-VERY-LONG-COMPUTER-NAME-0123456789", state: "connected" });
+    await delay(300);
+    const rect = id => doc.getElementById(id).getBoundingClientRect();
+    equal(rect("mobile-connection").height >= 44, true);
+    equal(rect("mobile-connection").bottom <= rect("new-tab-split").top, true);
+    equal(rect("app-version").bottom < rect("sidebar").bottom, true);
+    equal(rect("mobile-connection").right <= rect("sidebar").right, true);
+    const name = doc.getElementById("mobile-connection-name");
+    equal(name.scrollWidth > name.clientWidth, true);
+    doc.getElementById("collapse-btn").click();
+    await delay(300);
+    equal(shell.classList.contains("collapsed"), true);
+    equal(rect("mobile-sessions-open").height >= 44, true);
+    equal(rect("mobile-toolbar").bottom <= rect("panes").top, true);
+    doc.getElementById("mobile-sessions-open").click();
+    await delay(300);
+    equal(shell.classList.contains("collapsed"), false);
+    equal(doc.getElementById("mobile-sessions-open").getAttribute("aria-expanded"), "true");
+    frame.style.height = "280px";
+    await delay();
+    const sidebar = doc.getElementById("sidebar");
+    equal(sidebar.scrollHeight > sidebar.clientHeight, true);
+    sidebar.scrollTop = sidebar.scrollHeight;
+    equal(rect("app-version").bottom <= rect("sidebar").bottom, true);
+    equal(rect("app-version").top >= rect("sidebar").top, true);
+    sidebar.scrollTop = 0;
+    frame.style.width = "800px"; frame.style.height = "700px";
+    shell.classList.add("collapsed");
+    await delay(300);
+    equal(rect("mobile-connection").width >= 44, true);
+    equal(app.getComputedStyle(doc.querySelector(".connection-copy")).display, "none");
+    equal(rect("mobile-connection").right <= rect("sidebar").right, true);
+    shell.classList.remove("collapsed");
+    frame.style.width = "100%";
+    await delay();
+  });
+  await check("mobile drawer state persists through host synchronization and theme changes", async () => {
+    frame.style.width = "320px";
+    const shell = doc.getElementById("app");
+    app.__terminalvSetSidebarCollapsed(false);
+    doc.getElementById("collapse-btn").click();
+    await delay();
+    equal(shell.classList.contains("collapsed"), true);
+    const saved = JSON.parse(app.hostMessages.filter(m => m.type === "persist-settings").at(-1).data);
+    equal(saved.sidebarCollapsed, true);
+    app.sendHost({ type: "init", mobile: true, sessions: [], liveIds: [], settings: saved });
+    await delay();
+    equal(shell.classList.contains("collapsed"), true);
+    app.sendHost({ type: "init", mobile: true, sessions: [], liveIds: [], settings: { ...saved, themeId: "dark" } });
+    await delay();
+    equal(shell.classList.contains("collapsed"), true);
+    doc.getElementById("mobile-sessions-open").click();
+    await delay();
+    equal(shell.classList.contains("collapsed"), false);
+    equal(JSON.parse(app.hostMessages.filter(m => m.type === "persist-settings").at(-1).data).sidebarCollapsed, false);
+    frame.style.width = "100%";
+    await delay();
+  });
+  await check("mobile settings hide desktop administration while keeping terminal and backup controls", async () => {
+    doc.getElementById("settings-btn").click();
+    for (const selector of ["#gateway-settings", "#gateway-enabled", "#gateway-port", "#gateway-token", "#shortcut-settings", "#create-shortcuts"]) {
+      equal(doc.querySelector(selector).getClientRects().length, 0);
+    }
+    for (const selector of ["#theme-grid", "#font-family", "#font-size", "#session-density", "#bg-pick", "#hardware-rendering", "#export-json", "#import-json"]) {
+      equal(doc.querySelector(selector).getClientRects().length > 0, true);
+    }
+    const fontSize = doc.getElementById("font-size");
+    fontSize.value = "16";
+    fontSize.dispatchEvent(new app.Event("input", { bubbles: true }));
+    fontSize.dispatchEvent(new app.Event("change", { bubbles: true }));
+    await delay();
+    equal(JSON.parse(app.hostMessages.filter(m => m.type === "persist-settings").at(-1).data).fontSize, 16);
+    doc.getElementById("settings-close").click();
+  });
+  await check("mobile profiles retain name and colour without unsupported local launch fields", async () => {
+    const profilesButton = doc.getElementById("launch-profiles-btn");
+    equal(profilesButton.textContent.trim(), "Профили");
+    const requests = app.hostMessages.filter(m => m.type === "list-launch-targets").length;
+    profilesButton.click();
+    equal(doc.querySelector("[data-launch-targets]").getClientRects().length, 0);
+    equal(doc.querySelector("[data-launch-refresh]").getClientRects().length, 0);
+    equal(app.hostMessages.filter(m => m.type === "list-launch-targets").length, requests);
+    doc.querySelector("[data-launch-new]").click();
+    for (const selector of ["#profile-shell", "#profile-cwd", "#profile-command"]) {
+      equal(doc.querySelector(selector).getClientRects().length, 0);
+    }
+    equal(doc.getElementById("profile-title").getClientRects().length > 0, true);
+    equal(doc.getElementById("profile-color").getClientRects().length > 0, true);
+    doc.getElementById("profile-title").value = "Мой сервер";
+    const color = doc.getElementById("profile-color");
+    color.selectedIndex = 1;
+    doc.querySelector("#launch-profiles form").requestSubmit(doc.querySelector("[data-profile-save]"));
+    await delay();
+    const profile = app.hostMessages.filter(m => m.type === "persist-profiles").at(-1).profiles[0];
+    equal(profile.title, "Мой сервер");
+    equal(profile.color, color.value);
+    doc.querySelector("[data-profile-cancel]").click();
+  });
+  sync(["desktop"]);
+  await delay();
+  await check("saved remote session is attached after its terminal exists", () => {
+    equal(doc.querySelectorAll('.tab[data-id="desktop"]').length, 1);
+    equal(app.hostMessages.filter(m => m.type === "attach" && m.id === "desktop").length, 1);
+  });
+  sync(["desktop", "another"]);
+  await delay();
+  await check("later synchronization adds tabs instead of discarding the new list", () => {
+    equal(doc.querySelectorAll('.tab[data-id="another"]').length, 1);
+    equal(app.hostMessages.filter(m => m.type === "attach" && m.id === "desktop").length, 1);
+    equal(app.hostMessages.filter(m => m.type === "attach" && m.id === "another").length, 1);
+  });
+  app.sendHost({ type:"data",id:"desktop",data:"MOBILE-SNAPSHOT\r\n" });
+  await delay();
+  await check("soft keyboard input events reach the session without keypress", async () => {
+    doc.querySelector('.tab[data-id="desktop"]').click();
+    const input = doc.querySelector('.pane.active .xterm-helper-textarea');
+    input.value = "я";
+    input.dispatchEvent(new app.InputEvent("input", {data:"я",inputType:"insertText",bubbles:true,composed:true}));
+    await delay();
+    equal(app.hostMessages.filter(m => m.type === "write" && m.id === "desktop" && m.data === "я").length, 1);
+  });
+  await check("remote output renders and keyboard input reaches the session", async () => {
+    doc.querySelector('.tab[data-id="desktop"]').click();
+    const input = doc.querySelector('.pane.active .xterm-helper-textarea');
+    input.dispatchEvent(new app.KeyboardEvent("keypress", {key:"a",code:"KeyA",charCode:97,keyCode:97,which:97,bubbles:true,cancelable:true}));
+    await delay();
+    equal(app.hostMessages.some(m => m.type === "write" && m.id === "desktop" && m.data === "a"), true);
+    doc.querySelector('.tab[data-id="another"]').click();
+    await delay(1200);
+    const snapshot = app.hostMessages.filter(m => m.type === "persist-sessions").at(-1);
+    equal(snapshot.sessions.find(s => s.id === "desktop").buffer.includes("MOBILE-SNAPSHOT"), true);
+    equal(app.hostErrors.length, 0);
+  });
+  await check("typing in a disconnected session preserves its error and restart sends a new create", async () => {
+    doc.querySelector('.tab[data-id="desktop"]').click();
+    app.sendHost({ type:"error",id:"desktop",message:"Connection failed" });
+    const writes = app.hostMessages.filter(m => m.type === "write").length;
+    const input = doc.querySelector('.pane.active .xterm-helper-textarea');
+    input.dispatchEvent(new app.KeyboardEvent("keypress", {key:"a",code:"KeyA",charCode:97,keyCode:97,which:97,bubbles:true,cancelable:true}));
+    await delay();
+    equal(app.hostMessages.filter(m => m.type === "write").length, writes);
+    equal(doc.querySelector('.pane.active .overlay span').textContent, "Connection failed");
+    doc.querySelector('.pane.active .overlay button').click();
+    await delay();
+    equal(app.hostMessages.filter(m => m.type === "create" && m.id === "desktop").length, 1);
+    input.dispatchEvent(new app.KeyboardEvent("keypress", {key:"b",code:"KeyB",charCode:98,keyCode:98,which:98,bubbles:true,cancelable:true}));
+    await delay();
+    equal(app.hostMessages.some(m => m.type === "write" && m.id === "desktop" && m.data === "b"), true);
+  });
+  await check("authoritative second init removes legacy ghosts and updates existing titles, order and hidden flags", async () => {
+    app.sendHost({ type: "init", mobile: true, liveIds: ["desktop", "another"], sessions: [
+      { id: "ghost-8173", title: "Сессия 8173", buffer: "PRESERVE-OLD-SCREEN" },
+      { id: "ghost-6ee0", title: "Сессия 6ee0", buffer: "OTHER-OLD-SCREEN" }
+    ] });
+    await delay();
+    const pane = doc.querySelector('.pane[data-id="desktop"] .xterm');
+    const attaches = app.hostMessages.filter(m => m.type === "attach" && m.id === "desktop").length;
+    const kills = app.hostMessages.filter(m => m.type === "kill").length;
+    app.sendHost({ type: "init", mobile: true, sessionsAuthoritative: true,
+      liveIds: ["desktop", "another", "third", "hidden-1", "hidden-2", "hidden-3", "hidden-4"],
+      sessions: [
+        { id: "another", title: "Other shell", customTitle: "Desktop label", active: true },
+        { id: "desktop", title: "Actual desktop title", customTitle: null },
+        { id: "third", title: "Third open tab" },
+        ...[1, 2, 3, 4].map(n => ({ id: `hidden-${n}`, title: `Hidden ${n}`, hidden: true }))
+      ] });
+    await delay(700);
+    equal([...doc.querySelectorAll('.tab')].map(tab => tab.dataset.id).join(','), 'another,desktop,third');
+    equal(doc.getElementById("session-count").textContent, "3");
+    equal(doc.querySelector('[data-hidden-label]').textContent, "Скрытые · 4");
+    equal(doc.querySelector('.tab[data-id="another"] .tab-title').textContent, "Desktop label");
+    equal(doc.querySelector('.tab[data-id="desktop"] .tab-title').textContent, "Actual desktop title");
+    equal(doc.querySelector('.pane.active').dataset.id, "desktop");
+    equal(doc.querySelector('.pane[data-id="desktop"] .xterm'), pane);
+    equal(app.hostMessages.filter(m => m.type === "attach" && m.id === "desktop").length, attaches);
+    equal(app.hostMessages.filter(m => m.type === "kill").length, kills);
+    const snapshot = app.hostMessages.filter(m => m.type === "persist-sessions").at(-1);
+    equal(snapshot.sessions.length, 7);
+    equal(snapshot.sessions.some(s => s.id.startsWith("ghost-")), false);
+    const archive = app.hostMessages.filter(m => m.type === "archive-sessions").at(-1);
+    equal(archive.sessions.find(s => s.id === "ghost-8173").buffer.includes("PRESERVE-OLD-SCREEN"), true);
+    equal(doc.querySelector('.pane[data-id="ghost-8173"]'), null);
+  });
+  await check("background catalog updates reflect desktop changes without replaying existing live terminals", async () => {
+    const attaches = app.hostMessages.filter(m => m.type === "attach").length;
+    const kills = app.hostMessages.filter(m => m.type === "kill").length;
+    const pane = doc.querySelector('.pane[data-id="desktop"] .xterm');
+    app.sendHost({ type: "mobile-session-catalog", sessionsAuthoritative: true,
+      liveIds: ["desktop", "another", "third"], sessions: [
+        { id: "third", title: "Third moved first" },
+        { id: "desktop", title: "Title changed on PC", active: true },
+        { id: "another", title: "Another now hidden", hidden: true }
+      ] });
+    await delay();
+    equal([...doc.querySelectorAll('.tab')].map(tab => tab.dataset.id).join(','), 'third,desktop');
+    equal(doc.querySelector('[data-hidden-label]').textContent, "Скрытые · 1");
+    equal(doc.querySelector('.pane.active').dataset.id, "desktop");
+    equal(doc.querySelector('.pane[data-id="desktop"] .xterm'), pane);
+    equal(app.hostMessages.filter(m => m.type === "attach").length, attaches);
+    equal(app.hostMessages.filter(m => m.type === "kill").length, kills);
+    equal(doc.querySelector('.tab[data-id="desktop"] .tab-title').textContent, "Title changed on PC");
+    app.sendHost({ type: "init", mobile: true, reconnect: true, sessionsAuthoritative: false,
+      connectionError: "Offline", liveIds: [], sessions: [] });
+    await delay();
+    equal(doc.querySelectorAll('.tab').length, 2);
+    equal(doc.querySelectorAll('.pane').length, 3);
+  });
+  await check("an authoritative empty catalog clears phone views without killing desktop sessions", async () => {
+    const kills = app.hostMessages.filter(m => m.type === "kill").length;
+    app.sendHost({ type: "mobile-session-catalog", sessionsAuthoritative: true, liveIds: [], sessions: [] });
+    await delay();
+    equal(doc.querySelectorAll('.tab').length, 0);
+    equal(doc.querySelectorAll('.pane').length, 0);
+    equal(app.hostMessages.filter(m => m.type === "kill").length, kills);
+    equal(app.hostMessages.filter(m => m.type === "persist-sessions").at(-1).sessions.length, 0);
+    sync(["desktop"]);
+    await delay();
+  });
+  await check("desktop host retains gateway, shortcuts, updates and local launch settings", async () => {
+    app.sendHost({ type: "init", mobile: false, version: "0.7.9", updateSupported: true, shortcutsSupported: true });
+    await delay();
+    const version = doc.getElementById("app-version");
+    equal(version.textContent, "v0.7.9");
+    equal(version.disabled, false);
+    const checks = app.hostMessages.filter(m => m.type === "update-check").length;
+    version.click();
+    await delay();
+    equal(app.hostMessages.filter(m => m.type === "update-check").length, checks + 1);
+    doc.getElementById("settings-btn").click();
+    equal(doc.getElementById("gateway-enabled").getClientRects().length > 0, true);
+    equal(doc.getElementById("create-shortcuts").getClientRects().length > 0, true);
+    equal(doc.getElementById("create-shortcuts").disabled, false);
+    doc.getElementById("settings-close").click();
+    doc.getElementById("launch-profiles-btn").click();
+    equal(doc.querySelector("[data-launch-refresh]").getClientRects().length > 0, true);
+    doc.querySelector("[data-launch-new]").click();
+    for (const selector of ["#profile-shell", "#profile-cwd", "#profile-command"]) {
+      equal(doc.querySelector(selector).getClientRects().length > 0, true);
+    }
+    equal(app.hostErrors.length, 0);
+  });
+  document.body.dataset.testResult = btoa(unescape(encodeURIComponent(JSON.stringify(results))));
+</script>

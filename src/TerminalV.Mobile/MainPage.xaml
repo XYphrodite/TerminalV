@@ -3,6 +3,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
              xmlns:local="clr-namespace:TerminalV.Mobile"
              x:Class="TerminalV.Mobile.MainPage"
+             SafeAreaEdges="SoftInput"
              BackgroundColor="#0B0D10">
     <BlazorWebView x:Name="blazorWebView" HostPage="wwwroot/index.html">
         <BlazorWebView.RootComponents>

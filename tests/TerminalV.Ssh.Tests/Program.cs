@@ -571,6 +571,82 @@ CheckAsync("Mirror gateway end-to-end: list, attach, write, resize, auth", async
     }
 });
 
+foreach (var sessionType in new[] { typeof(SshNetSession), typeof(TsnetSshSession) })
+{
+    CheckAsync($"{sessionType.Name} sends short input immediately through a buffered shell", async () =>
+    {
+        var options = new SshConnectionOptions { Host = "localhost", Username = "test", Password = "test" };
+        options.Tailscale.Enabled = sessionType == typeof(TsnetSshSession);
+        using SshSessionBase session = options.Tailscale.Enabled
+            ? new TsnetSshSession("input", options, new TailscaleStubConnector())
+            : new SshNetSession("input", options);
+        using var received = new MemoryStream();
+        using var shell = new BufferedStream(received, 1024);
+        sessionType.GetField("_shellStream", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.SetValue(session, shell);
+        typeof(SshSessionBase).GetProperty("State")!.SetValue(session, SshSessionState.Connected);
+        var expected = "";
+        foreach (var input in new[] { "a", "я", "\r", "\u007f", "\u0003" })
+        {
+            await session.WriteAsync(input);
+            expected += input;
+            if (System.Text.Encoding.UTF8.GetString(received.ToArray()) != expected)
+                throw new Exception("Input stayed buffered instead of reaching the remote side.");
+        }
+    });
+}
+
+foreach (var tsnet in new[] { false, true })
+{
+    Check($"Keyboard-interactive is offered by {(tsnet ? "Tailscale" : "direct SSH")}", () =>
+    {
+        var options = new SshConnectionOptions { Host = "localhost", Username = "test", Password = "test-password" };
+        options.Tailscale.Enabled = tsnet;
+        using SshSessionBase session = tsnet ? new TsnetSshSession("auth", options, new TailscaleStubConnector()) : new SshNetSession("auth", options);
+        var flags = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
+        using var client = (Renci.SshNet.SshClient)(tsnet
+            ? typeof(TsnetSshSession).GetMethod("CreateClientOverLoopback", flags)!.Invoke(session, new object[] { 22 })!
+            : typeof(SshNetSession).GetMethod("CreateClient", flags)!.Invoke(session, null)!);
+        var keyboard = client.ConnectionInfo.AuthenticationMethods.OfType<Renci.SshNet.KeyboardInteractiveAuthenticationMethod>().Single();
+        var handler = (EventHandler<Renci.SshNet.Common.AuthenticationPromptEventArgs>)typeof(Renci.SshNet.KeyboardInteractiveAuthenticationMethod)
+            .GetField("AuthenticationPrompt", flags)!.GetValue(keyboard)!;
+        var prompt = new Renci.SshNet.Common.AuthenticationPrompt(0, false, "Password:");
+        handler(keyboard, new("test", "", "", new[] { prompt }));
+        if (prompt.Response != "test-password") throw new Exception("Password challenge was not answered.");
+        var otp = new Renci.SshNet.Common.AuthenticationPrompt(0, false, "Verification code:");
+        try { handler(keyboard, new("test", "", "", new[] { otp })); throw new Exception("Unexpected challenge was accepted."); }
+        catch (Renci.SshNet.Common.SshAuthenticationException) { }
+        if (otp.Response == "test-password") throw new Exception("Password leaked into a non-password challenge.");
+    });
+}
+
+CheckAsync("SSH and Tailscale preserve fragmented UTF-8 and forward window changes", SshStreamChecks.Run);
+
+if (int.TryParse(Environment.GetEnvironmentVariable("TERMINALV_TEST_SSH_PORT"), out var sshTestPort))
+{
+    foreach (var tsnet in new[] { false, true })
+    {
+        CheckAsync($"Real SSH login, input echo and window changes ({(tsnet ? "Tailscale transport" : "direct")})", async () =>
+        {
+            var options = new SshConnectionOptions { Host = "127.0.0.1", Port = sshTestPort, Username = "test", Password = "test-password", AutoReconnect = false };
+            options.Tailscale.Enabled = tsnet;
+            using SshSessionBase session = tsnet ? new TsnetSshSession("auth-live", options, new LoopbackTestConnector()) : new SshNetSession("auth-live", options);
+            var output = new System.Collections.Concurrent.ConcurrentQueue<string>();
+            session.DataReceived += output.Enqueue;
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            await session.ConnectAsync(deadline.Token);
+            await session.WriteAsync("keyboard-test\r", deadline.Token);
+            while (!string.Concat(output).Contains("keyboard-test\r")) await Task.Delay(20, deadline.Token);
+            foreach (var (cols, rows) in new[] { (48, 32), (96, 18) })
+            {
+                await session.ResizeAsync(cols, rows, deadline.Token);
+                var marker = $"TV_WINDOW {cols} {rows} 0 0";
+                while (!string.Concat(output).Contains(marker)) await Task.Delay(20, deadline.Token);
+            }
+            await session.DisconnectAsync();
+        });
+    }
+}
+
 CheckAsync("Tailnet gateway access", TailnetChecks.Run);
 CheckAsync("Gateway shares the desktop pipe and replays only to the new subscriber", SharedGatewayChecks.Run);
 CheckAsync("Gateway preserves terminal modes across host and live replay truncation", GatewayReplayBufferChecks.Run);
@@ -585,6 +661,21 @@ sealed class AmbiguousStream : System.IO.MemoryStream
 {
     public new int Read(System.Span<byte> buffer) => 0;
     public new void Write(System.ReadOnlySpan<byte> buffer) { }
+}
+
+sealed class LoopbackTestConnector : ITailscaleConnector
+{
+    public bool IsRunning { get; private set; }
+    public string? LastError => null;
+    public Task StartAsync(TailscaleOptions options, CancellationToken ct = default) { IsRunning = true; return Task.CompletedTask; }
+    public Task StopAsync() { IsRunning = false; return Task.CompletedTask; }
+    public async Task<Stream> DialAsync(string host, int port, CancellationToken ct = default)
+    {
+        var client = new System.Net.Sockets.TcpClient();
+        try { await client.ConnectAsync(host, port, ct); return new System.Net.Sockets.NetworkStream(client.Client, ownsSocket: true); }
+        catch { client.Dispose(); throw; }
+    }
+    public void Dispose() { }
 }
 
 sealed class FakeGatewayBackend : TerminalV.Gateway.IGatewaySessionBackend

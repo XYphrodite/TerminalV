@@ -1,0 +1,71 @@
+<!doctype html><meta charset="utf-8">
+<script type="module">
+  const results = [];
+  const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+  const equal = (actual, expected, label) => {
+    if (actual !== expected) throw new Error(`${label}: expected ${expected}, got ${actual}`);
+  };
+  const check = async (name, run) => {
+    try { await run(); results.push({ name, ok: true }); }
+    catch (error) { results.push({ name, ok: false, error: error.stack }); }
+  };
+  const frame = document.createElement("iframe");
+  frame.style = "width:384px;height:700px";
+  const source = await (await fetch("/mobile/index.html")).text();
+  const styles = ["/node_modules/@xterm/xterm/css/xterm.css", "/src/styles.css", "/src/chrome.css", "/src/extensions.css"];
+  frame.srcdoc = source.replace('<base href="/" />', `<base href="${location.origin}/mobile/">`)
+    .replace('src="./assets/mobile.js"', 'src="/tests/source-main.js"')
+    .replace(/<link[^>]+href="\.\/assets\/mobile.css"[^>]*>/, styles.map(href => `<link rel="stylesheet" href="${href}">`).join(""))
+    .replace('<script src="js/mobile-bridge.js"></' + 'script>', '<script src="js/mobile-bridge.js"></' + 'script><script src="/tests/mobile-host.js"></' + 'script>')
+    .replace(/<script src="_framework\/blazor.webview.js"[^>]*><\/script>/, "");
+  const loaded = new Promise(resolve => frame.onload = resolve);
+  document.body.append(frame);
+  await loaded;
+  const app = frame.contentWindow, doc = frame.contentDocument;
+  for (let i = 0; !app.__sourceTabs && i < 100; i++) await delay(20);
+  await check("current mobile source initializes a DOM terminal", async () => {
+    equal(Array.isArray(app.__sourceTabs), true, `source module loaded (${JSON.stringify(app.hostErrors)})`);
+    app.sendHost({ type: "init", mobile: true, liveIds: ["fit"], sessions: [{ id: "fit", title: "fit" }] });
+    // Let initial fitting and layout observers settle first.
+    await delay(650);
+    equal(app.__sourceTabs.length, 1, "terminal count");
+    equal(!!doc.querySelector(".xterm-rows"), true, "DOM renderer");
+    equal(app.hostErrors.length, 0, "page errors");
+  });
+  const tab = app.__sourceTabs?.[0];
+  if (tab) {
+    app.sendHost({ type: "data", id: "fit", data: "\x1b[?1049h\x1b[?1003h\x1b[2J\x1b[HHEADER\r\nBODY" });
+    await delay(50);
+    const assertFit = () => {
+      const expected = tab.fit.proposeDimensions();
+      equal(tab.term.rows, expected.rows, "terminal rows after drawer settles");
+      equal(tab.term.cols, expected.cols, "terminal columns after drawer settles");
+      const resize = app.hostMessages.filter(message => message.type === "resize").at(-1);
+      equal(resize?.rows, expected.rows, "remote PTY rows");
+      equal(resize?.cols, expected.cols, "remote PTY columns");
+    };
+    await check("closing the mobile drawer eventually fits after the 200ms pause", async () => {
+      app.hostMessages.length = 0;
+      doc.getElementById("collapse-btn").click();
+      await delay(350);
+      equal(doc.getElementById("app").classList.contains("collapsed"), true, "drawer closed");
+      assertFit();
+    });
+    await check("opening the mobile drawer sends the final PTY size", async () => {
+      app.hostMessages.length = 0;
+      doc.getElementById("mobile-sessions-open").click();
+      await delay(350);
+      equal(doc.getElementById("app").classList.contains("collapsed"), false, "drawer open");
+      assertFit();
+    });
+    await check("another layout change during the pause uses the latest dimensions", async () => {
+      app.hostMessages.length = 0;
+      doc.getElementById("collapse-btn").click();
+      await delay(70);
+      frame.style.height = "480px";
+      await delay(350);
+      assertFit();
+    });
+  }
+  document.body.dataset.testResult = btoa(unescape(encodeURIComponent(JSON.stringify(results))));
+</script>

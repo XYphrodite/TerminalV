@@ -11,3 +11,6 @@ artifacts/
 *.WebView2/
 smoke-result.txt
 startup-args.txt
+tools/tsnet-bridge/*.aar
+tools/tsnet-bridge/*-sources.jar
+src/TerminalV.Mobile/Platforms/Android/libs/*.aar

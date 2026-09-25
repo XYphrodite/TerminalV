@@ -14,6 +14,7 @@ const uiRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const appRoot = process.env.TERMINALV_TEST_APP_ROOT
   ? resolve(process.env.TERMINALV_TEST_APP_ROOT)
   : resolve(uiRoot, "../src/TerminalV/wwwroot");
+const mobileRoot = resolve(uiRoot, "../src/TerminalV.Mobile/wwwroot");
 
 async function runBrowserFixture(t, fixture) {
   const browser = [
@@ -26,8 +27,8 @@ async function runBrowserFixture(t, fixture) {
   const server = createServer(async (request, response) => {
     try {
       const pathname = decodeURIComponent(new URL(request.url, "http://localhost").pathname);
-      const root = pathname.startsWith("/app/") ? appRoot : uiRoot;
-      const path = resolve(root, "." + (root === appRoot ? pathname.slice(4) : pathname));
+      const root = pathname.startsWith("/app/") ? appRoot : pathname.startsWith("/mobile/") ? mobileRoot : uiRoot;
+      const path = resolve(root, "." + (root === appRoot ? pathname.slice(4) : root === mobileRoot ? pathname.slice(7) : pathname));
       if (!path.startsWith(root + sep)) {
         response.writeHead(403).end();
         return;
@@ -56,7 +57,7 @@ async function runBrowserFixture(t, fixture) {
       fixture === "close-ui" ? process.env.TERMINALV_CLOSE_SCREENSHOT :
       fixture === "search-ui" ? process.env.TERMINALV_SEARCH_SCREENSHOT :
       fixture === "paste-confirmation" && process.env.TERMINALV_TEST_SCREENSHOT;
-    const output = ["viewport-restore", "synchronized-output", "terminal-geometry", "terminal-scroll"].includes(fixture)
+    const output = ["viewport-restore", "synchronized-output", "terminal-geometry", "terminal-scroll", "mobile-fit", "mirror-geometry"].includes(fixture)
       ? await runFrameFixture(browser, profile, `http://127.0.0.1:${server.address().port}/tests/${fixture}.fixture.html`)
       : await new Promise((resolve, reject) => {
       const child = spawn(browser, [
@@ -101,6 +102,8 @@ test("scroll position when reopening xterm panes", (t) => runBrowserFixture(t, "
 test("synchronized TUI output in real xterm DOM", (t) => runBrowserFixture(t, "synchronized-output"));
 test("terminal geometry stays consistent during restore and unhide", (t) => runBrowserFixture(t, "terminal-geometry"));
 test("terminal scrolling survives TUI mode changes", (t) => runBrowserFixture(t, "terminal-scroll"));
+test("mobile terminal fits after drawer transitions", (t) => runBrowserFixture(t, "mobile-fit"));
+test("mobile session synchronization and input", (t) => runBrowserFixture(t, "mobile-sessions"));
 test("multiline paste confirmation in xterm.js", (t) => runBrowserFixture(t, "paste-confirmation"));
 test("terminal search in xterm.js", (t) => runBrowserFixture(t, "terminal-search"));
 test("search in the built TerminalV interface", (t) => runBrowserFixture(t, "search-ui"));
@@ -116,3 +119,4 @@ test("split panes in the built TerminalV interface", (t) => runBrowserFixture(t,
 test("appearance in the built TerminalV interface", (t) => runBrowserFixture(t, "appearance-ui"));
 test("shortcuts in the built TerminalV interface", (t) => runBrowserFixture(t, "shortcuts-ui"));
 test("extension interface in the built TerminalV application", (t) => runBrowserFixture(t, "extensions-ui"));
+test("mobile mirror keeps the desktop terminal geometry", (t) => runBrowserFixture(t, "mirror-geometry"));

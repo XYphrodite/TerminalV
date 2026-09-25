@@ -24,6 +24,7 @@ import { normalizeLayouts, layoutFor, leafIds, splitSession, detachSession, layo
   neighborPane, paneShortcut, MAX_PANES, MIN_PANE_WIDTH, MIN_PANE_HEIGHT, isSplitChild, isSplitParent, splitIndentLevel, splitWouldNest } from "./pane-layout.js";
 import { createPaneView } from "./pane-view.js";
 import { syncTerminalViewport } from "./terminal-viewport.js";
+import { attachMirrorPan, layoutMirrorViewport, setMirrorSize } from "./mirror-viewport.js";
 import { SynchronizedOutputAddon } from "./synchronized-output.js";
 import { createShortcuts } from "./shortcuts.js";
 import { WRITE_CHUNK, chunkText } from "./write-chunk.js";
@@ -80,7 +81,7 @@ let layouts = [];
 let shellName = "PowerShell";
 let buildNumber = 22621;
 let nextIndex = 1;
-let appVersion = "0.5.5";
+let appVersion = "";
 let updateSupported = false;
 let fitTimer = 0;
 let fitRaf = 0;
@@ -334,7 +335,7 @@ hiddenSessionsBtn.addEventListener("click", () => {
 });
 
 function host() {
-  return window.chrome?.webview ?? null;
+  return window.__terminalvHost ?? window.chrome?.webview ?? null;
 }
 
 function post(message) {
@@ -397,6 +398,7 @@ function applyChrome() {
   root.style.colorScheme = theme.kind;
   root.dataset.themeKind = theme.kind;
   appEl.classList.toggle("collapsed", settings.sidebarCollapsed);
+  window.__tvSidebarState?.(settings.sidebarCollapsed);
   appEl.classList.toggle("session-minimal", settings.sessionDensity === "minimal");
   collapseBtn.setAttribute("aria-expanded", String(!settings.sidebarCollapsed));
   collapseBtn.title = settings.sidebarCollapsed
@@ -452,6 +454,11 @@ function syncScrollLock(tab) {
 }
 
 function applyFit(tab, notifyHost = true) {
+  if (tab.remoteGeometry) {
+    layoutMirrorViewport(tab);
+    syncTerminalViewport(tab.term);
+    return false;
+  }
   if (!isPaneVisible(tab)) {
     return false;
   }
@@ -1305,6 +1312,7 @@ function newTab(options = {}) {
     schedulePersist();
   });
   attachCopyPaste(tab);
+  attachMirrorPan(tab);
   tab.term.buffer.onBufferChange(() => syncScrollLock(tab));
   // xterm routes wheel events to native scrollback, requested mouse reports,
   // or alternate-buffer cursor keys. Reserve Ctrl/Meta+wheel for UI zoom.
@@ -1337,12 +1345,12 @@ function newTab(options = {}) {
     queueMicrotask(() => {
       if (!tabs.includes(tab)) return;
       applyFit(tab, false);
-      post({ type: "attach", id });
+      post({ type: "attach", id, cols: tab.term.cols, rows: tab.term.rows });
       // Request replay before a PTY resize can emit a fresh repaint. Its old
       // size is unknown, even when xterm happens to fit at the default 80x24.
       applyFit(tab);
     });
-  } else if (tab.hidden || options.restored) {
+  } else if (options.offline || tab.hidden || options.restored) {
     // The shell is gone (e.g. Windows restarted). Keep the saved screen, but
     // do not run a new shell over it: ConPTY startup clears the viewport, which
     // would then replace the saved history on the next autosave.
@@ -1381,7 +1389,8 @@ function restart(tab) {
   tab.overlay.classList.remove("visible");
   notifications.acknowledge(tab);
   tab.output.reset();
-  tab.fit.fit();
+  if (tab.remoteGeometry) layoutMirrorViewport(tab);
+  else tab.fit.fit();
   post({ type: "create", id: tab.id, cols: tab.term.cols, rows: tab.term.rows, cwd: tab.cwd,
     shell: tab.shell, startupCommand: tab.startupCommand, wslDistribution: tab.wslDistribution });
   tab.ptySize = { cols: tab.term.cols, rows: tab.term.rows };
@@ -1487,6 +1496,18 @@ function renderThemeGrid() {
   }
 }
 
+function applyPlatformSettings(mobile) {
+  document.documentElement.classList.toggle("mobile-ui", mobile);
+  for (const element of document.querySelectorAll("[data-desktop-only]")) element.hidden = mobile;
+  for (const element of document.querySelectorAll("[data-mobile-only]")) element.hidden = !mobile;
+  const profilesButton = document.getElementById("launch-profiles-btn");
+  const profilesLabel = mobile ? "Профили" : "Профили и оболочки";
+  profilesButton.title = profilesLabel;
+  profilesButton.setAttribute("aria-label", profilesLabel);
+  profilesButton.querySelector(".profile-button-label").textContent = profilesLabel;
+  launchMenu.setMobile(mobile);
+}
+
 function syncGatewayForm() {
   const normalized = normalizeGatewaySettings(settings);
   settings.gatewayEnabled = normalized.enabled;
@@ -1532,7 +1553,11 @@ function closeSettings() {
 }
 
 function toggleSidebar() {
-  settings.sidebarCollapsed = !settings.sidebarCollapsed;
+  setSidebarCollapsed(!settings.sidebarCollapsed);
+}
+
+function setSidebarCollapsed(collapsed) {
+  settings.sidebarCollapsed = !!collapsed;
   applyChrome();
   persistSettings();
   ignoreFitUntil = Date.now() + 200;
@@ -1540,10 +1565,13 @@ function toggleSidebar() {
   scheduleFit();
 }
 
-function restoreSessions(records, savedLayouts) {
+// The mobile drawer and desktop controls share one persisted preference and fit path.
+window.__terminalvSetSidebarCollapsed = setSidebarCollapsed;
+
+function restoreSessions(records, savedLayouts, mobile = false) {
   if (!records?.length) {
     readyForPersist = true;
-    newTab();
+    if (!mobile) newTab();
     persistSessions();
     return;
   }
@@ -1563,6 +1591,7 @@ function restoreSessions(records, savedLayouts) {
       wslDistribution: record.wslDistribution,
       startupCommand: record.startupCommand,
       restored: true,
+      offline: mobile && !isLive,
       live: isLive,
       skipActivate: true
     });
@@ -1581,6 +1610,97 @@ function restoreSessions(records, savedLayouts) {
   persistSessions();
 }
 
+function applyAppInfo(message) {
+  if (typeof message.version === "string" && message.version.trim()) {
+    appVersion = message.version.trim();
+    versionBtn.textContent = `v${appVersion}`;
+  }
+  const mobile = message.mobile === true;
+  updateSupported = Boolean(message.updateSupported);
+  versionBtn.disabled = mobile || !appVersion;
+  versionBtn.setAttribute("aria-label", `${mobile ? "TerminalV Mobile" : "TerminalV"}: ${appVersion ? `версия ${appVersion}` : "версия загружается"}`);
+  versionBtn.title = mobile
+    ? `Версия мобильного приложения${appVersion ? `: ${appVersion}` : ""}`
+    : updateSupported ? "Проверить обновления" : "Самообновление работает в установленной копии";
+}
+
+function reconcileMobileSessions(message) {
+  const records = message.sessions || [];
+  const live = new Set(message.liveIds || []);
+  const authoritative = message.sessionsAuthoritative === true;
+  if (authoritative) {
+    const ids = new Set(records.map(record => record.id));
+    const retired = tabs.filter(tab => !ids.has(tab.id));
+    if (retired.length) {
+      // Keep the last phone screen in its archive. Removing a mirror view must
+      // never send kill or otherwise stop its desktop process.
+      post({ type: "archive-sessions", sessions: retired.map(tab => ({
+        id: tab.id, title: tab.title, customTitle: tab.customTitle ?? null,
+        ...sessionMetadata(tab), buffer: serializeSessionBuffer(tab), cwd: tab.cwd || null,
+        shell: tab.shell || null
+      })) });
+      for (const tab of retired) {
+        sessionOptions.cancel(tab);
+        closeController.cancel();
+        if (activeId === tab.id) {
+          searchController.close({ focus: false });
+          activeId = null;
+        }
+        pasteController.cancel(tab);
+        notifications.acknowledge(tab);
+        tabs.splice(tabs.indexOf(tab), 1);
+        dropWebgl(tab);
+        tab.output.dispose();
+        tab.resizeObserver?.disconnect();
+        tab.term.dispose();
+        tab.pane.remove();
+      }
+    }
+  }
+  for (const tab of tabs) {
+    if (live.has(tab.id) || (!authoritative && !message.reconnect)) continue;
+    tab.exited = true;
+    tab.overlayText.textContent = "Сессия не подключена. Сохранённый вывод доступен.";
+    tab.overlay.classList.add("visible");
+  }
+  for (const record of records) {
+    const existing = tabs.find(tab => tab.id === record.id);
+    if (!existing) {
+      newTab({ ...record, ...sessionMetadata(record), restored: true,
+        live: live.has(record.id), offline: !live.has(record.id), skipActivate: true });
+      continue;
+    }
+    if (authoritative) {
+      existing.title = record.title || existing.title;
+      existing.customTitle = record.customTitle || undefined;
+      Object.assign(existing, sessionMetadata(record));
+    }
+    if (live.has(record.id) && (existing.exited || message.reconnect)) {
+      existing.output.reset();
+      existing.exited = false;
+      existing.ptySize = null;
+      existing.overlay.classList.remove("visible");
+      post({ type: "attach", id: record.id, cols: existing.term.cols, rows: existing.term.rows });
+      scheduleFit(existing);
+    }
+  }
+  if (authoritative) {
+    const order = new Map(records.map((record, index) => [record.id, index]));
+    tabs.sort((a, b) => order.get(a.id) - order.get(b.id));
+  }
+  layouts = normalizeLayouts(layouts, tabs);
+  const selected = tabs.find(tab => tab.id === activeId && !tab.hidden);
+  if (!selected) activeId = null;
+  const next = selected || tabs.find(tab => !tab.hidden && records.some(record => record.id === tab.id && record.active)) || openTabs()[0];
+  if (next && !activeId) {
+    showHiddenSessions = false;
+    activate(next.id, { focus: false });
+  }
+  renderTabs();
+  renderPaneLayout();
+  persistSessions();
+}
+
 function handleHost(message) {
   if (!message || typeof message !== "object") {
     return;
@@ -1588,7 +1708,20 @@ function handleHost(message) {
 
   if (extensions.receive(message)) return;
 
+  if (message.type === "app-info") {
+    applyAppInfo(message);
+    applyPlatformSettings(message.mobile === true);
+    return;
+  }
+
+  if (message.type === "mobile-session-catalog") {
+    window.__liveIds = message.liveIds || [];
+    reconcileMobileSessions(message);
+    return;
+  }
+
   if (message.type === "init") {
+    applyPlatformSettings(message.mobile === true);
     extensions.initialize(message);
     shortcuts.setSupported(message.shortcutsSupported);
     launchProfiles.setProfiles(message.profiles);
@@ -1598,28 +1731,23 @@ function handleHost(message) {
     if (message.buildNumber) {
       buildNumber = message.buildNumber;
     }
-    if (message.version) {
-      appVersion = message.version;
-      versionBtn.textContent = `v${appVersion}`;
-    }
-    updateSupported = Boolean(message.updateSupported);
-    versionBtn.title = updateSupported
-      ? "Проверить обновления"
-      : "Самообновление работает в установленной копии";
+    applyAppInfo(message);
     if (message.settings) {
       Object.assign(settings, message.settings);
     }
     gatewayState = message.gateway ?? null;
     fillFonts(message.fonts);
     window.__liveIds = message.liveIds || [];
-    legacyHostNotice = message.cwdTrackingSupported === false
+    legacyHostNotice = message.connectionError || (message.cwdTrackingSupported === false
       ? "Фоновый процесс TerminalV старой версии: текущая папка пока не отслеживается. После завершения нужных задач перезагрузите Windows. Работающие сессии не прерываются."
       : message.environmentRefreshSupported === false
         ? "Фоновый процесс TerminalV старой версии: PATH для новых вкладок пока не обновляется. Сохраните работу и перезагрузите Windows, чтобы включить исправление. Работающие сессии не прерываются."
-        : "";
+        : "");
     syncSettingsForm();
     if (tabs.length === 0) {
-      restoreSessions(message.sessions, message.layouts);
+      restoreSessions(message.sessions, message.layouts, message.mobile === true);
+    } else if (message.mobile === true) {
+      reconcileMobileSessions(message);
     } else {
       renderTabs();
     }
@@ -1724,6 +1852,11 @@ function handleHost(message) {
       tab.unread = true;
       patchTabRow(tab);
     }
+    return;
+  }
+
+  if (message.type === "terminal-size") {
+    setMirrorSize(tab, message.cols, message.rows);
     return;
   }
 

@@ -7,6 +7,7 @@ export function createLaunchMenu({ dialog, trigger, post, getProfiles, onLaunch,
   const status = dialog.querySelector("[data-launch-status]");
   const refresh = dialog.querySelector("[data-launch-refresh]");
   let targets = [], pending = null, loaded = false;
+  let mobile = false;
   let activeTrigger = trigger;
 
   function position() {
@@ -69,7 +70,7 @@ export function createLaunchMenu({ dialog, trigger, post, getProfiles, onLaunch,
     const focused = dialog.contains(document.activeElement) ? document.activeElement?.dataset.launchKey : null;
     const profiles = getProfiles();
     profilesEl.replaceChildren(...profiles.map(profile => row("profile:" + profile.id, profile.title,
-      [PROFILE_SHELLS[profile.shell], profile.cwd].filter(Boolean).join(" · "),
+      mobile ? "Настроенное подключение" : [PROFILE_SHELLS[profile.shell], profile.cwd].filter(Boolean).join(" · "),
       () => onLaunch(profileSession(profile)), () => onEdit(profile.id), profile.shell)));
     if (!profiles.length) {
       const empty = document.createElement("p");
@@ -88,7 +89,7 @@ export function createLaunchMenu({ dialog, trigger, post, getProfiles, onLaunch,
     position();
   }
   function request() {
-    if (pending) return;
+    if (pending || mobile) return;
     const requestId = crypto.randomUUID();
     status.textContent = "Поиск оболочек и дистрибутивов WSL…";
     refresh.disabled = true;
@@ -118,14 +119,14 @@ export function createLaunchMenu({ dialog, trigger, post, getProfiles, onLaunch,
     if (event.repeat && ["Enter", " "].includes(event.key)) { event.preventDefault(); return; }
     if (event.ctrlKey || event.altKey || event.metaKey) return;
     if (event.key === "Tab") {
-      const buttons = [...dialog.querySelectorAll("button:not(:disabled)")];
+      const buttons = [...dialog.querySelectorAll("button:not(:disabled)")].filter(button => button.getClientRects().length);
       if (event.shiftKey && document.activeElement === buttons[0]) { event.preventDefault(); buttons.at(-1)?.focus(); }
       else if (!event.shiftKey && document.activeElement === buttons.at(-1)) { event.preventDefault(); buttons[0]?.focus(); }
       return;
     }
     if (["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
       event.preventDefault();
-      const buttons = [...dialog.querySelectorAll("button:not(:disabled)")];
+      const buttons = [...dialog.querySelectorAll("button:not(:disabled)")].filter(button => button.getClientRects().length);
       const current = buttons.indexOf(document.activeElement);
       const next = event.key === "Home" ? 0 : event.key === "End" ? buttons.length - 1 :
         (current + (event.key === "ArrowDown" ? 1 : -1) + buttons.length) % buttons.length;
@@ -135,6 +136,10 @@ export function createLaunchMenu({ dialog, trigger, post, getProfiles, onLaunch,
   window.addEventListener("resize", position);
   return {
     get isOpen() { return dialog.open; },
+    setMobile(value) {
+      mobile = value === true;
+      render();
+    },
     refreshProfiles: render,
     open(anchor = null) {
       const nextTrigger = anchor || trigger;

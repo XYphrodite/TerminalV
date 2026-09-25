@@ -40,7 +40,11 @@ public sealed class SshService : IDisposable
         // Auto-remove on close
         session.Closed += _ =>
         {
-            lock (_lock) { _sessions.Remove(id); }
+            lock (_lock)
+            {
+                if (_sessions.TryGetValue(id, out var current) && ReferenceEquals(current, session))
+                    _sessions.Remove(id);
+            }
         };
         return session;
     }
@@ -48,6 +52,13 @@ public sealed class SshService : IDisposable
     public ISshSession? TryGet(string id)
     {
         lock (_lock) return _sessions.TryGetValue(id, out var s) ? s : null;
+    }
+
+    public void Remove(string id)
+    {
+        ISshSession? session;
+        lock (_lock) _sessions.Remove(id, out session);
+        session?.Dispose();
     }
 
     public IReadOnlyCollection<ISshSession> List()

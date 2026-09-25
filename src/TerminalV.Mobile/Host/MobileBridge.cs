@@ -1,5 +1,4 @@
 using System.Collections.Concurrent;
-using System.Security.Cryptography;
 using System.Text.Json;
 using Microsoft.JSInterop;
 using TerminalV.Data;
@@ -23,128 +22,167 @@ internal sealed class MobileBridge : IDisposable
 
     private readonly SshService _ssh;
     private readonly MobileDataStore _store;
+    private readonly ITailscaleConnector? _account;
     private IJSRuntime? _js;
-    private readonly ConcurrentDictionary<string, ISshSession> _extra = new();
+    private readonly ConcurrentDictionary<string, Task> _connecting = new();
+    private readonly ConcurrentDictionary<string, SessionObservation> _observedSessions = new();
+    private readonly object _connectionLock = new();
+    private readonly SemaphoreSlim _initGate = new(1, 1);
+    private HashSet<string> _remoteIds = new();
+    private string _connectionFallback = "idle";
+    private bool _connectionEnabled = true;
+    private int _connectionEpoch;
+    private int _checkingConnection;
+    private string? _catalogJson;
     private bool _disposed;
 
-    public MobileBridge(SshService ssh, MobileDataStore store)
+    public MobileBridge(SshService ssh, MobileDataStore store, ITailscaleConnector? account = null)
     {
         _ssh = ssh;
         _store = store;
-        MobileJsInterop.Bridge = this;
+        _account = account;
     }
 
     public void SetJS(IJSRuntime js)
     {
         _js = js;
-        MobileJsInterop.JS = js;
     }
 
-    public void SendInit()
-    {
-        var settings = _store.LoadSettings();
-        if (settings.GatewayEnabled && string.IsNullOrEmpty(settings.GatewayToken))
-        {
-            settings.GatewayToken = GenerateToken();
-            _store.SaveSettings(settings);
-        }
-        var allSessions = _store.LoadSessions();
-        var live = LiveIds();
-        var liveSet = new HashSet<string>(live);
-        var sessions = allSessions.Where(s => liveSet.Contains(s.Id) || !string.IsNullOrEmpty(s.Buffer)).ToList();
-        var layouts = _store.LoadLayouts();
-        if (sessions.Count != allSessions.Count)
-        {
-            layouts = PaneLayout.Normalize(layouts, sessions);
-        }
-        Post(new
-        {
-            type = "init",
-            shellName = "SSH",
-            buildNumber = 22621,
-            version = AppInfo.Version,
-            updateSupported = false,
-            shortcutsSupported = false,
-            settings,
-            sessions,
-            layouts,
-            profiles = _store.LoadProfiles(),
-            liveIds = live,
-            cwdTrackingSupported = true,
-            launchProfilesSupported = true,
-            environmentRefreshSupported = true,
-            fonts = Array.Empty<string>(),
-            gateway = DescribeGateway(settings)
-        });
-        // Fire-and-forget: pull desktop sessions via gateway and mirror them (enables write + text)
-        _ = Task.Run(async () => { try { await SyncGatewaySessionsAsync(settings); } catch { } });
-    }
+    public void SendInit() => _ = SendInitAsync();
 
-    private async Task SyncGatewaySessionsAsync(AppSettings settings)
+    public async Task SendInitAsync(bool reconnect = false, bool connect = true)
     {
+        await _initGate.WaitAsync();
         try
         {
-            var useGwPref = Microsoft.Maui.Storage.Preferences.Default.Get("useGateway", false);
-            var gwUrlPref = Microsoft.Maui.Storage.Preferences.Default.Get("gatewayUrl", "ws://100.119.48.15:5454");
-            var gwTokenPref = Microsoft.Maui.Storage.Preferences.Default.Get("gatewayToken", "");
-            var useGw = useGwPref || settings.GatewayEnabled;
-            var gwUrl = !string.IsNullOrWhiteSpace(gwUrlPref) ? gwUrlPref : (settings.GatewayEnabled ? $"ws://127.0.0.1:{settings.GatewayPort}" : null);
-            var gwToken = !string.IsNullOrWhiteSpace(gwTokenPref) ? gwTokenPref : settings.GatewayToken;
-            if (!useGw || string.IsNullOrWhiteSpace(gwUrl)) return;
-
-            using var client = new GatewayControlClient(gwUrl, string.IsNullOrWhiteSpace(gwToken) ? null : gwToken);
-            var remoteIds = await client.ListAsync().ConfigureAwait(false);
-            if (remoteIds.Count == 0) return;
-
-            var storeSessions = _store.LoadSessions();
-            var storeIds = new HashSet<string>(storeSessions.Select(s => s.Id));
-            var liveSet = new HashSet<string>(LiveIds());
-            var added = new List<SessionRecord>();
-            foreach (var rid in remoteIds)
+            if (_disposed) return;
+            // App metadata must not wait for a remote gateway or Tailscale login.
+            Post(new { type = "app-info", mobile = true, version = AppInfo.Version, updateSupported = false });
+            lock (_connectionLock)
             {
-                if (storeIds.Contains(rid) || liveSet.Contains(rid)) continue;
-                // Check if already has a live GatewaySshSession
-                if (_ssh.TryGet(rid) != null) continue;
-                var rec = new SessionRecord
+                _connectionEpoch++;
+                _connectionEnabled = connect;
+                // Invalidate callbacks before disposing the old transports. Their
+                // read loops may still report a close while replacements connect.
+                if (reconnect || !connect) _observedSessions.Clear();
+            }
+            if (reconnect || !connect)
+            {
+                foreach (var session in _ssh.List()) _ssh.Remove(session.Id);
+                _connecting.Clear();
+            }
+            var configured = HasConnectionSettings();
+            SetConnectionFallback(!configured ? "unconfigured" : connect && UsesGateway() ? "connecting" : "idle");
+            var settings = _store.LoadSettings();
+            var sessions = _store.LoadSessions();
+            // Keep gateway snapshots offline, including empty saved tabs. Legacy
+            // gateways retain their existing live-id/cache reconciliation.
+            var filterUnbufferedSessions = !UsesGateway();
+            var sessionsAuthoritative = false;
+            _catalogJson = null;
+            string? connectionError = null;
+            _remoteIds = new HashSet<string>();
+            try
+            {
+                if (configured && connect && UsesGateway())
                 {
-                    Id = rid,
-                    Title = $"Сессия {rid[..Math.Min(4, rid.Length)]}",
-                    Active = true,
-                    Shell = "ssh",
-                    Buffer = null
-                };
-                added.Add(rec);
-                var opts = BuildOptions(80, 24, null, null, null);
-                opts.MirrorSessionId = rid;
-                opts.GatewayUrl = gwUrl;
-                opts.GatewayToken = gwToken;
-                try
-                {
-                    var sess = _ssh.Create(rid, opts);
-                    HookSession(sess);
-                    _ = sess.ConnectAsync();
+                    var options = BuildOptions(80, 24, null, null, null);
+                    if (options.GatewayTailnetIdentity)
+                    {
+                        await (_account ?? throw new InvalidOperationException("Вход через Tailscale недоступен.")).StartAsync(new TailscaleOptions());
+                        options = BuildOptions(80, 24, null, null, null);
+                    }
+                    using var client = new GatewayControlClient(options.GatewayUrl!, options.GatewayToken,
+                        tailnetIdentity: options.GatewayTailnetIdentity, dial: options.GatewayDial);
+                    var catalog = await client.ListCatalogAsync();
+                    if (catalog.Sessions is { } desktopSessions)
+                    {
+                        sessions = ApplyDesktopCatalog(desktopSessions, sessions);
+                        sessionsAuthoritative = true;
+                    }
+                    else
+                    {
+                        filterUnbufferedSessions = true;
+                        _remoteIds = catalog.Ids.ToHashSet();
+                        foreach (var id in _remoteIds)
+                        {
+                            if (sessions.Any(s => s.Id == id)) continue;
+                            sessions.Add(new SessionRecord { Id = id, Title = $"Сессия {id[..Math.Min(4, id.Length)]}", Shell = "ssh" });
+                        }
+                    }
+                    SetConnectionFallback("connected");
                 }
-                catch { }
             }
-            if (added.Count > 0)
+            catch (Exception ex)
             {
-                var all = _store.LoadSessions();
-                all.AddRange(added);
-                _store.SaveSessions(all);
-                var layouts = _store.LoadLayouts();
-                layouts = PaneLayout.Normalize(layouts, all);
-                _store.SaveLayouts(layouts);
-                // Re-push full init so desktop UI (main.js) re-renders tabs/panes with the pulled sessions
-                SendInit();
+                SetConnectionFallback("disconnected");
+                connectionError = $"Ошибка подключения: {ex.Message}. Откройте подключение в списке сессий.";
             }
+            var live = LiveIds().Concat(_remoteIds).Distinct().ToArray();
+            var liveSet = new HashSet<string>(live);
+            if (filterUnbufferedSessions)
+                sessions = sessions.Where(s => liveSet.Contains(s.Id) || !string.IsNullOrEmpty(s.Buffer)).ToList();
+            var layouts = PaneLayout.Normalize(_store.LoadLayouts(), sessions);
+            _store.SaveSessions(sessions);
+            _store.SaveLayouts(layouts);
+            // The UI must create each terminal BEFORE attach can replay its output.
+            Post(new
+            {
+                type = "init", mobile = true, reconnect, connectionError, sessionsAuthoritative,
+                shellName = "SSH", buildNumber = 22621, version = AppInfo.Version,
+                updateSupported = false, shortcutsSupported = false, settings, sessions, layouts,
+                profiles = _store.LoadProfiles(), liveIds = live,
+                cwdTrackingSupported = true, launchProfilesSupported = true,
+                environmentRefreshSupported = true, fonts = Array.Empty<string>(),
+                gateway = DescribeGateway(settings)
+            });
         }
-        catch (Exception ex)
-        {
-            System.Diagnostics.Debug.WriteLine($"[gateway sync] {ex.Message}");
-        }
+        finally { _initGate.Release(); }
     }
 
-    public void Handle(string json)
+    private List<SessionRecord> ApplyDesktopCatalog(IReadOnlyList<GatewaySessionInfo> desktopSessions, List<SessionRecord> cachedSessions)
+    {
+        var ids = desktopSessions.Select(s => s.Id).ToHashSet();
+        _store.ArchiveSessions(cachedSessions.Where(s => !ids.Contains(s.Id)));
+        _remoteIds = desktopSessions.Where(s => s.Live).Select(s => s.Id).ToHashSet();
+        var sessions = ReconcileCatalog(desktopSessions, cachedSessions);
+        RetireMissingTransports(_remoteIds);
+        _catalogJson = JsonSerializer.Serialize(desktopSessions, JsonOptions);
+        return sessions;
+    }
+
+    private static List<SessionRecord> ReconcileCatalog(IReadOnlyList<GatewaySessionInfo> desktopSessions,
+        List<SessionRecord> cachedSessions)
+    {
+        var cached = cachedSessions.ToLookup(s => s.Id);
+        return desktopSessions.OrderBy(s => s.SortOrder).Select(desktop =>
+        {
+            // Buffers and working directories remain local snapshots for the same
+            // desktop tab; membership and display metadata come from the desktop.
+            var session = cached[desktop.Id].FirstOrDefault() ?? new SessionRecord { Id = desktop.Id, Shell = "ssh" };
+            session.Title = desktop.Title;
+            session.CustomTitle = desktop.CustomTitle;
+            session.Hidden = desktop.Hidden;
+            session.SortOrder = desktop.SortOrder;
+            session.Active = desktop.Active;
+            return session;
+        }).ToList();
+    }
+
+    private void RetireMissingTransports(HashSet<string> liveIds)
+    {
+        // Invalidate callbacks before closing only the phone's WebSockets.
+        // Removing a catalog entry must never kill the desktop shell.
+        lock (_connectionLock)
+            foreach (var id in _observedSessions.Keys.Where(id => !liveIds.Contains(id)))
+                _observedSessions.TryRemove(id, out _);
+        foreach (var id in _connecting.Keys.Where(id => !liveIds.Contains(id)))
+            _connecting.TryRemove(id, out _);
+        foreach (var session in _ssh.List().Where(s => !liveIds.Contains(s.Id)))
+            _ssh.Remove(session.Id);
+    }
+
+    public async Task Handle(string json)
     {
         IncomingMessage? message;
         try { message = JsonSerializer.Deserialize<IncomingMessage>(json, JsonOptions); }
@@ -156,18 +194,22 @@ internal sealed class MobileBridge : IDisposable
             case "ready":
                 SendInit();
                 break;
+            case "connection-check":
+                // A sidebar refresh must not hold the ordered terminal-input queue.
+                _ = CheckConnectionAsync();
+                break;
             case "create":
                 HandleCreate(message);
                 break;
             case "attach":
-                if (message.Id is not null) TryAttach(message.Id);
+                if (message.Id is not null) TryAttach(message.Id, message.Cols, message.Rows);
                 break;
             case "write":
                 if (message.Id is not null && message.Data is not null)
-                    HandleWrite(message.Id, message.Data);
+                    await HandleWrite(message.Id, message.Data);
                 break;
             case "resize":
-                if (message.Id is not null) HandleResize(message.Id, message.Cols, message.Rows);
+                if (message.Id is not null) await HandleResize(message.Id, message.Cols, message.Rows);
                 break;
             case "kill":
                 if (message.Id is not null) HandleKill(message.Id);
@@ -200,6 +242,9 @@ internal sealed class MobileBridge : IDisposable
                 break;
             case "persist-sessions":
                 PersistSessions(message);
+                break;
+            case "archive-sessions":
+                if (message.Sessions is not null) _store.ArchiveSessions(message.Sessions);
                 break;
             case "persist-profiles":
                 try
@@ -244,66 +289,111 @@ internal sealed class MobileBridge : IDisposable
     private void HandleCreate(IncomingMessage message)
     {
         if (string.IsNullOrWhiteSpace(message.Id)) return;
+        StartSession(message.Id, message.Cols, message.Rows, mirror: _remoteIds.Contains(message.Id));
+    }
+
+    private void StartSession(string id, int cols, int rows, bool mirror)
+    {
         try
         {
-            var opts = BuildOptions(message.Cols, message.Rows, message.Cwd, message.Shell, message.StartupCommand);
-            var session = _ssh.Create(message.Id!, opts);
-            HookSession(session);
-            _ = session.ConnectAsync().ContinueWith(t =>
-            {
-                if (t.IsFaulted && t.Exception != null)
-                {
-                    var msg = t.Exception.GetBaseException().Message;
-                    Post(new { type = "error", id = message.Id, message = msg });
-                    Post(new { type = "data", id = message.Id, data = $"\r\n\x1b[31mОшибка подключения: {msg}\x1b[0m\r\nПроверьте \u2699 Подключение (хост/порт/токен шлюза).\r\n" });
-                }
-            }, TaskContinuationOptions.OnlyOnFaulted);
+            if (!HasConnectionSettings())
+                throw new InvalidOperationException("Выберите компьютер в настройках подключения.");
+            var options = BuildOptions(cols, rows, null, null, null);
+            if (mirror) options.MirrorSessionId = id;
+            lock (_connectionLock) _observedSessions.TryRemove(id, out _);
+            var session = _ssh.Create(id, options);
+            var observed = HookSession(session);
+            _connecting[id] = ConnectSessionAsync(observed);
         }
         catch (Exception ex)
         {
-            Post(new { type = "error", id = message.Id, message = ex.Message });
-            Post(new { type = "data", id = message.Id, data = $"\r\n\x1b[31m{ex.Message}\x1b[0m\r\n" });
+            SetConnectionFallback("disconnected");
+            ReportConnectionError(id, ex.Message);
         }
     }
 
-    private void TryAttach(string id)
+    private async Task ConnectSessionAsync(SessionObservation observed)
     {
-        var s = _ssh.TryGet(id) ?? (_extra.TryGetValue(id, out var e) ? e : null);
-        if (s != null)
+        var session = observed.Session;
+        try
         {
-            // Re-ensure hooks
-            HookSession(s);
+            await session.ConnectAsync();
+            lock (_connectionLock)
+            {
+                if (!IsCurrent(observed) || observed.State != "connecting") return;
+                observed.State = session.State == SshSessionState.Connected ? "connected" : "idle";
+                PublishConnectionState();
+            }
+        }
+        catch (Exception ex)
+        {
+            lock (_connectionLock)
+            {
+                if (!IsCurrent(observed)) return;
+                observed.State = "disconnected";
+                _connectionFallback = "disconnected";
+                PublishConnectionState();
+                ReportConnectionError(session.Id, ex.Message);
+            }
         }
     }
 
-    private void HandleWrite(string id, string data)
+    private void ReportConnectionError(string id, string message)
     {
-        var s = _ssh.TryGet(id) ?? (_extra.TryGetValue(id, out var e) ? e : null);
-        if (s != null)
+        Post(new { type = "error", id, message });
+        Post(new { type = "data", id, data = $"\r\n\x1b[31mОшибка подключения: {message}\x1b[0m\r\nОткройте подключение в списке сессий.\r\n" });
+    }
+
+    private void TryAttach(string id, int cols, int rows)
+    {
+        var session = _ssh.TryGet(id);
+        if (session is null || !HasHealthyObservation(id))
+            StartSession(id, cols, rows, mirror: _remoteIds.Contains(id));
+        else HookSession(session);
+    }
+
+    private bool HasHealthyObservation(string id)
+    {
+        var session = _ssh.TryGet(id);
+        lock (_connectionLock)
+            return _observedSessions.TryGetValue(id, out var observed) &&
+                ReferenceEquals(session, observed.Session) &&
+                observed.State is "connected" or "connecting" &&
+                observed.Session.State is SshSessionState.Connected or SshSessionState.Connecting;
+    }
+
+    private async Task HandleWrite(string id, string data)
+    {
+        ISshSession? session = null;
+        try
         {
-            try { _ = s.WriteAsync(data); } catch (Exception ex) { Post(new { type = "error", id, message = ex.Message }); }
+            if (_connecting.TryGetValue(id, out var connecting)) await connecting;
+            session = _ssh.TryGet(id) ?? throw new InvalidOperationException("Сессия не найдена.");
+            await session.WriteAsync(data);
         }
-        else
+        catch (Exception ex)
         {
-            Post(new { type = "error", id, message = "Сессия не найдена." });
+            if (session is not null && !RecordSessionFailure(session)) return;
+            Post(new { type = "error", id, message = ex.Message });
         }
     }
 
-    private void HandleResize(string id, int cols, int rows)
+    private async Task HandleResize(string id, int cols, int rows)
     {
-        var s = _ssh.TryGet(id) ?? (_extra.TryGetValue(id, out var e) ? e : null);
-        try { _ = s?.ResizeAsync(cols, rows); } catch { }
+        try
+        {
+            if (_connecting.TryGetValue(id, out var connecting)) await connecting;
+            if (_ssh.TryGet(id) is { } session) await session.ResizeAsync(cols, rows);
+        }
+        catch (Exception ex) { Post(new { type = "error", id, message = ex.Message }); }
     }
 
     private void HandleKill(string id)
     {
-        var s = _ssh.TryGet(id);
-        if (s != null)
-        {
-            _ = s.DisconnectAsync();
-            s.Dispose();
-        }
-        _extra.TryRemove(id, out _);
+        _connecting.TryRemove(id, out _);
+        lock (_connectionLock) _observedSessions.TryRemove(id, out _);
+        _ssh.Remove(id);
+        SetConnectionFallback("idle");
     }
 
     private async void HandleClipboardRead(string? requestId)
@@ -421,6 +511,7 @@ internal sealed class MobileBridge : IDisposable
                 ExportedAt = DateTime.UtcNow,
                 AppSettings = _store.LoadSettings(),
                 Sessions = _store.LoadSessions(),
+                ArchivedSessions = _store.LoadArchivedSessions(),
                 Layouts = _store.LoadLayouts(),
                 Profiles = _store.LoadProfiles(),
                 Connection = new ExportConnection
@@ -485,6 +576,7 @@ internal sealed class MobileBridge : IDisposable
             // Replace all (recommended)
             if (dto.AppSettings != null) _store.SaveSettings(dto.AppSettings);
             if (dto.Sessions != null) _store.SaveSessions(dto.Sessions);
+            if (dto.ArchivedSessions != null) _store.ArchiveSessions(dto.ArchivedSessions);
             if (dto.Layouts != null) _store.SaveLayouts(dto.Layouts);
             if (dto.Profiles != null) _store.SaveProfiles(dto.Profiles);
             if (dto.Connection != null)
@@ -520,11 +612,11 @@ internal sealed class MobileBridge : IDisposable
         var username = Microsoft.Maui.Storage.Preferences.Default.Get("username", "local");
         var password = Microsoft.Maui.Storage.Preferences.Default.Get("password", "5454");
         var useGatewayPref = Microsoft.Maui.Storage.Preferences.Default.Get("useGateway", false);
-        var useGateway = useGatewayPref || appSettings.GatewayEnabled;
+        var useGateway = useGatewayPref;
         var gatewayUrlPref = Microsoft.Maui.Storage.Preferences.Default.Get("gatewayUrl", "");
         var gatewayUrl = !string.IsNullOrWhiteSpace(gatewayUrlPref) ? gatewayUrlPref : (appSettings.GatewayEnabled ? $"ws://{host}:{appSettings.GatewayPort}" : "ws://100.119.48.15:5454");
         var gatewayTokenPref = Microsoft.Maui.Storage.Preferences.Default.Get("gatewayToken", "");
-        var gatewayToken = !string.IsNullOrWhiteSpace(gatewayTokenPref) ? gatewayTokenPref : appSettings.GatewayToken;
+        var gatewayToken = gatewayTokenPref;
         var useTailscale = Microsoft.Maui.Storage.Preferences.Default.Get("useTailscale", false);
         var tailscaleAuthKey = Microsoft.Maui.Storage.Preferences.Default.Get("tailscaleAuthKey", "");
         var tailscaleHostname = Microsoft.Maui.Storage.Preferences.Default.Get("tailscaleHostname", "terminalv-mobile");
@@ -535,6 +627,9 @@ internal sealed class MobileBridge : IDisposable
             Port = port,
             Username = username.Trim(),
             Password = password,
+            // A failed connection must be visible and retryable by the UI; an
+            // invisible transport reconnect would replay output into an exited tab.
+            AutoReconnect = false,
             Columns = Math.Clamp(cols <= 0 ? 80 : cols, 1, 1000),
             Rows = Math.Clamp(rows <= 0 ? 24 : rows, 1, 1000)
         };
@@ -542,6 +637,12 @@ internal sealed class MobileBridge : IDisposable
         {
             opts.GatewayUrl = string.IsNullOrWhiteSpace(gatewayUrl) ? null : gatewayUrl.Trim();
             opts.GatewayToken = string.IsNullOrWhiteSpace(gatewayToken) ? null : gatewayToken.Trim();
+            if (Microsoft.Maui.Storage.Preferences.Default.Get("tailnetGateway", false))
+            {
+                opts.GatewayTailnetIdentity = true;
+                opts.GatewayDial = _account is null ? null : _account.DialAsync;
+                opts.Password = null; opts.Username = ""; opts.Host = ""; opts.GatewayToken = null;
+            }
         }
         if (useTailscale && !useGateway)
         {
@@ -555,19 +656,181 @@ internal sealed class MobileBridge : IDisposable
         return opts;
     }
 
-    private void HookSession(ISshSession session)
+    private sealed class SessionObservation(ISshSession session)
     {
-        var id = session.Id;
-        // Avoid double hook by removing previous closures (use local wrappers)
-        // We store per-session handlers via closure to capture id
-        session.DataReceived += data => Post(new { type = "data", id, data, replay = false });
-        session.ErrorReceived += message => Post(new { type = "error", id, message });
-        session.Closed += code => Post(new { type = "exit", id, code });
+        public ISshSession Session { get; } = session;
+        public string State { get; set; } = session.State == SshSessionState.Connected ? "connected" : "connecting";
+    }
+
+    private SessionObservation HookSession(ISshSession session)
+    {
+        lock (_connectionLock)
+        {
+            var id = session.Id;
+            if (_observedSessions.TryGetValue(id, out var existing) && ReferenceEquals(existing.Session, session))
+                return existing;
+            var observed = new SessionObservation(session);
+            _observedSessions[id] = observed;
+            if (session is GatewaySshSession gateway)
+            {
+                gateway.TerminalSizeChanged += (cols, rows) =>
+                {
+                    lock (_connectionLock)
+                        if (IsCurrent(observed)) Post(new { type = "terminal-size", id, cols, rows });
+                };
+                if (gateway.TerminalColumns > 0 && gateway.TerminalRows > 0)
+                    Post(new { type = "terminal-size", id, cols = gateway.TerminalColumns, rows = gateway.TerminalRows });
+            }
+            session.DataReceived += data =>
+            {
+                lock (_connectionLock)
+                    if (IsCurrent(observed)) Post(new { type = "data", id, data, replay = false });
+            };
+            session.ErrorReceived += message =>
+            {
+                lock (_connectionLock)
+                {
+                    if (!IsCurrent(observed)) return;
+                    observed.State = "disconnected";
+                    _connectionFallback = "disconnected";
+                    PublishConnectionState();
+                    Post(new { type = "error", id, message });
+                }
+            };
+            session.Closed += code =>
+            {
+                lock (_connectionLock)
+                {
+                    if (!IsCurrent(observed)) return;
+                    _observedSessions.TryRemove(id, out _);
+                    // An explicit shell exit says the gateway is still reachable.
+                    // A transport close with no exit code means the link was lost.
+                    _connectionFallback = code.HasValue
+                        ? session.Options.UseGateway ? "connected" : "idle"
+                        : "disconnected";
+                    PublishConnectionState();
+                    Post(new { type = "exit", id, code });
+                }
+            };
+            PublishConnectionState();
+            return observed;
+        }
+    }
+
+    private bool IsCurrent(SessionObservation observed) => !_disposed &&
+        _observedSessions.TryGetValue(observed.Session.Id, out var current) && ReferenceEquals(current, observed);
+
+    private bool RecordSessionFailure(ISshSession session)
+    {
+        lock (_connectionLock)
+        {
+            if (!_observedSessions.TryGetValue(session.Id, out var observed) || !ReferenceEquals(observed.Session, session))
+                return false;
+            observed.State = "disconnected";
+            _connectionFallback = "disconnected";
+            PublishConnectionState();
+            return true;
+        }
+    }
+
+    private static bool UsesGateway() => Microsoft.Maui.Storage.Preferences.Default.Get("useGateway", false);
+
+    private static bool HasConnectionSettings() => !string.IsNullOrWhiteSpace(
+        Microsoft.Maui.Storage.Preferences.Default.Get(UsesGateway() ? "gatewayUrl" : "host", ""));
+
+    private static string ConnectionName()
+    {
+        var preferences = Microsoft.Maui.Storage.Preferences.Default;
+        if (!UsesGateway()) return preferences.Get("host", "").Trim();
+        if (preferences.Get("tailnetGateway", false))
+        {
+            var name = preferences.Get("tailnetComputerName", "").Trim();
+            if (name.Length > 0) return name;
+        }
+        // Only a hostname is presentation data; credentials, query strings and
+        // tokens from a manually entered URL must never reach this summary.
+        return Uri.TryCreate(preferences.Get("gatewayUrl", ""), UriKind.Absolute, out var uri) ? uri.Host : "";
+    }
+
+    private void SetConnectionFallback(string state)
+    {
+        lock (_connectionLock)
+        {
+            _connectionFallback = state;
+            PublishConnectionState();
+        }
+    }
+
+    private void PublishConnectionState()
+    {
+        // Called under _connectionLock so callbacks retain their ordering.
+        var state = !HasConnectionSettings() ? "unconfigured"
+            : !_connectionEnabled ? "idle"
+            : _observedSessions.Values.Any(s => s.State == "connected") ? "connected"
+            : _observedSessions.Values.Any(s => s.State == "connecting") ? "connecting"
+            : _connectionFallback;
+        Post(new { type = "connection-state", name = ConnectionName(), state });
+    }
+
+    private async Task CheckConnectionAsync()
+    {
+        if (_disposed || _initGate.CurrentCount == 0 || Interlocked.Exchange(ref _checkingConnection, 1) != 0) return;
+        try
+        {
+            int epoch;
+            lock (_connectionLock)
+            {
+                PublishConnectionState();
+                if (!_connectionEnabled || !HasConnectionSettings() || !UsesGateway()) return;
+                epoch = _connectionEpoch;
+            }
+            var state = "disconnected";
+            GatewaySessionCatalog? catalog = null;
+            try
+            {
+                var options = BuildOptions(80, 24, null, null, null);
+                using var client = new GatewayControlClient(options.GatewayUrl!, options.GatewayToken,
+                    timeout: TimeSpan.FromSeconds(5), tailnetIdentity: options.GatewayTailnetIdentity, dial: options.GatewayDial);
+                catalog = await client.ListCatalogAsync();
+                state = "connected";
+            }
+            catch { /* A failed probe is status, not a terminal error or a shell restart. */ }
+            // The probe runs without blocking terminal input or a reconnect. Its
+            // result may only change membership while holding the same gate as
+            // init, and only if that connection generation is still current.
+            await _initGate.WaitAsync();
+            try
+            {
+                lock (_connectionLock)
+                {
+                    if (_disposed || epoch != _connectionEpoch || !_connectionEnabled) return;
+                }
+                if (catalog?.Sessions is { } desktopSessions &&
+                    (JsonSerializer.Serialize(desktopSessions, JsonOptions) != _catalogJson ||
+                        desktopSessions.Any(session => session.Live && !HasHealthyObservation(session.Id))))
+                {
+                    var sessions = ApplyDesktopCatalog(desktopSessions, _store.LoadSessions());
+                    var layouts = PaneLayout.Normalize(_store.LoadLayouts(), sessions);
+                    _store.SaveSessions(sessions);
+                    _store.SaveLayouts(layouts);
+                    Post(new { type = "mobile-session-catalog", sessionsAuthoritative = true,
+                        sessions, layouts, liveIds = _remoteIds.ToArray() });
+                }
+                lock (_connectionLock)
+                {
+                    if (_disposed) return;
+                    _connectionFallback = state;
+                    PublishConnectionState();
+                }
+            }
+            finally { _initGate.Release(); }
+        }
+        finally { Volatile.Write(ref _checkingConnection, 0); }
     }
 
     private string[] LiveIds()
     {
-        try { return _ssh.List().Select(s => s.Id).ToArray(); } catch { return []; }
+        try { return _ssh.List().Where(s => s.State is SshSessionState.Connected or SshSessionState.Connecting).Select(s => s.Id).ToArray(); } catch { return []; }
     }
 
     private object DescribeGateway(AppSettings settings)
@@ -591,31 +854,12 @@ internal sealed class MobileBridge : IDisposable
         catch { }
     }
 
-    private static string GenerateToken()
-    {
-        var bytes = RandomNumberGenerator.GetBytes(24);
-        return Convert.ToBase64String(bytes).Replace('+', '-').Replace('/', '_').TrimEnd('=');
-    }
-
     public void Dispose()
     {
         if (_disposed) return;
         _disposed = true;
-        foreach (var kv in _extra) try { kv.Value.Dispose(); } catch { }
-        _extra.Clear();
-    }
-}
-
-internal static class MobileJsInterop
-{
-    public static MobileBridge? Bridge;
-    public static IJSRuntime? JS;
-
-    [JSInvokable]
-    public static Task HandleMessage(string json)
-    {
-        Bridge?.Handle(json);
-        return Task.CompletedTask;
+        lock (_connectionLock) _observedSessions.Clear();
+        _ssh.Dispose();
     }
 }
 
@@ -625,6 +869,7 @@ internal sealed class ExportDto
     public DateTime ExportedAt { get; set; }
     public AppSettings? AppSettings { get; set; }
     public List<SessionRecord>? Sessions { get; set; }
+    public List<SessionRecord>? ArchivedSessions { get; set; }
     public List<PaneLayout>? Layouts { get; set; }
     public List<LaunchProfile>? Profiles { get; set; }
     public ExportConnection? Connection { get; set; }
@@ -646,5 +891,5 @@ internal sealed class ExportConnection
 
 internal static class AppInfo
 {
-    public static string Version => "0.7.5";
+    public static string Version => Microsoft.Maui.ApplicationModel.AppInfo.Current.VersionString;
 }

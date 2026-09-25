@@ -2,6 +2,7 @@ package tsnet
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -20,6 +21,58 @@ type Tsnet struct {
 	mu     sync.Mutex
 	srv    *tsnet.Server
 	cancel context.CancelFunc
+}
+
+// Account is the non-blocking browser-login API used by the mobile UI.
+// The account state lives separately from legacy auth-key connections.
+func (t *Tsnet) Account(command, payload string) (string, error) {
+	if command == "begin" {
+		var args struct { Hostname string; StateDir string }
+		if err := json.Unmarshal([]byte(payload), &args); err != nil { return "", err }
+		if args.StateDir == "" { return "", fmt.Errorf("state directory required") }
+		t.mu.Lock()
+		if t.srv == nil {
+			files := filepath.Dir(args.StateDir)
+			_ = os.Setenv("HOME", files)
+			_ = os.Setenv("TMPDIR", files)
+			_ = os.Setenv("XDG_CACHE_HOME", filepath.Join(files, "cache"))
+			_ = os.Setenv("XDG_CONFIG_HOME", files)
+			_ = os.MkdirAll(filepath.Join(files, "cache"), 0700)
+			srv := &tsnet.Server{Dir: args.StateDir, Hostname: args.Hostname, Ephemeral: false, Logf: func(string, ...any) {}}
+			if err := srv.Start(); err != nil { t.mu.Unlock(); return "", err }
+			t.srv = srv
+		}
+		t.mu.Unlock()
+	}
+	t.mu.Lock(); srv := t.srv; t.mu.Unlock()
+	if srv == nil { return "", fmt.Errorf("account not started") }
+	lc, err := srv.LocalClient()
+	if err != nil { return "", err }
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if command == "logout" {
+		if err := lc.Logout(ctx); err != nil { return "", err }
+		return "{}", t.Stop()
+	}
+	status, err := lc.Status(ctx)
+	if err != nil { return "", err }
+	if command == "begin" && status.BackendState == "NeedsLogin" {
+		if err := lc.StartLoginInteractive(ctx); err != nil { return "", err }
+	}
+	type peer struct { ID string `json:"id"`; Name string `json:"name"`; IP string `json:"ip"` }
+	peers := []peer{}
+	for _, p := range status.Peer {
+		if !p.Online || p.OS != "windows" { continue }
+		for _, addr := range p.TailscaleIPs {
+			if addr.Is4() { peers = append(peers, peer{string(p.ID), p.HostName, addr.String()}); break }
+		}
+	}
+	login := ""
+	if status.Self != nil { if u, ok := status.User[status.Self.UserID]; ok { login = u.LoginName } }
+	result, err := json.Marshal(struct {
+		Running bool `json:"running"`; State string `json:"state"`; AuthURL string `json:"authUrl"`; Login string `json:"login"`; Peers []peer `json:"peers"`
+	}{status.BackendState == "Running", status.BackendState, status.AuthURL, login, peers})
+	return string(result), err
 }
 
 var global *Tsnet
@@ -111,7 +164,8 @@ func (t *Tsnet) Dial(host string, port int) (net.Conn, error) {
 		return nil, fmt.Errorf("tsnet not started — call Start first")
 	}
 	// tsnet.Server.Dial — userspace dial без системного TUN
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
 	addr := net.JoinHostPort(host, fmt.Sprintf("%d", port))
 	// Проверяем что host резолвится в tailnet
 	if ip, err := netip.ParseAddr(host); err == nil {

@@ -36,7 +36,7 @@
             <div id="update-text" class="update-text"></div>
             <button id="update-apply" type="button">Обновить</button>
           </div>
-          <div class="sidebar-signature"><span class="wordmark">Terminal<span>V</span></span><button id="app-version" type="button" class="version" title="Проверить обновления">v0.5.5</button></div>
+          <div class="sidebar-signature"><span class="wordmark">Terminal<span>V</span></span><button id="app-version" type="button" class="version" title="Версия загружается" aria-label="Версия загружается" disabled>…</button></div>
           <div class="author-credit">Автор: <a id="author-link" href="https://github.com/XYphrodite" target="_blank" rel="noopener noreferrer" title="Профиль XYphrodite на GitHub — открыть в браузере" aria-label="Автор XYphrodite — открыть профиль GitHub в браузере">XYphrodite</a></div>
         </div>
       </aside>
@@ -118,7 +118,8 @@
         <input id="bg-opacity" type="range" min="0" max="80" step="1" value="25" />
         <div class="settings-section-label">Рендеринг</div>
         <label class="shortcut-option"><input id="hardware-rendering" type="checkbox" checked /> Аппаратный рендеринг (WebGL)</label>
-        <div class="settings-section-label">Удалённый доступ (TerminalV Mobile)</div>
+        <section id="gateway-settings" data-desktop-only aria-labelledby="gateway-title">
+        <h3 id="gateway-title" class="settings-section-label">Удалённый доступ (TerminalV Mobile)</h3>
         <label class="shortcut-option"><input id="gateway-enabled" type="checkbox" checked /> Шлюз зеркала сессий (ws://:5454)</label>
         <label class="field-label" for="gateway-port">Порт шлюза</label>
         <input id="gateway-port" type="number" min="1" max="65535" value="5454" />
@@ -132,7 +133,8 @@
         <p id="gateway-hint" class="shortcut-hint"></p>
         <p class="shortcut-hint">Вход с телефона через Tailscale: выберите этот ПК в приложении и подтвердите доступ здесь.</p>
         <button id="tailnet-revoke" type="button" class="ghost">Отозвать доступ телефонов</button>
-        <section id="shortcut-settings" aria-labelledby="shortcuts-title">
+        </section>
+        <section id="shortcut-settings" data-desktop-only aria-labelledby="shortcuts-title">
           <h3 id="shortcuts-title" class="settings-section-label">Ярлыки приложения</h3>
           <p class="shortcut-hint" id="shortcuts-hint">Быстрый запуск этой копии TerminalV, в том числе из ZIP. При переносе папки приложения старые ярлыки нужно заменить.</p>
           <label class="shortcut-option"><input id="shortcut-start-menu" type="checkbox" checked disabled /> Меню «Пуск»</label>
@@ -199,12 +201,12 @@
       <div class="launch-menu-head"><h2 id="launch-menu-title">Новая сессия</h2><button type="button" class="icon-btn" data-launch-close aria-label="Закрыть меню" title="Закрыть (Esc)" data-icon="close"></button></div>
       <div class="launch-section-label">Сохранённые профили</div>
       <div data-launch-profiles></div>
-      <div class="launch-section-label">Оболочки</div>
-      <div data-launch-targets></div>
+      <div class="launch-section-label" data-desktop-only>Оболочки</div>
+      <div data-launch-targets data-desktop-only></div>
       <p class="launch-status" data-launch-status role="status" aria-live="polite"></p>
       <div class="launch-menu-foot">
         <button type="button" data-launch-new data-launch-key="new"><span data-icon="plus"></span>Создать профиль</button>
-        <button type="button" class="icon-btn" data-launch-refresh data-launch-key="refresh" aria-label="Обновить список оболочек и WSL" title="Обновить список оболочек и WSL" data-icon="restore"></button>
+        <button type="button" class="icon-btn" data-launch-refresh data-desktop-only data-launch-key="refresh" aria-label="Обновить список оболочек и WSL" title="Обновить список оболочек и WSL" data-icon="restore"></button>
       </div>
     </dialog>
     <dialog id="launch-profiles" class="confirmation-dialog" aria-labelledby="launch-profiles-title">
@@ -215,15 +217,16 @@
             <legend class="sr-only">Параметры запуска</legend>
             <label class="field-label" for="profile-title">Название вкладки</label>
             <input id="profile-title" data-profile-title type="text" maxlength="80" required autocomplete="off" />
+            <p class="notification-hint" data-mobile-only hidden>Подключение и оболочка задаются на выбранном компьютере.</p>
             <div class="profile-columns">
-              <div><label class="field-label" for="profile-shell">Оболочка</label><select id="profile-shell" data-profile-shell></select></div>
+              <div data-desktop-only><label class="field-label" for="profile-shell">Оболочка</label><select id="profile-shell" data-profile-shell></select></div>
               <div><label class="field-label" for="profile-color">Цветовая метка</label><select id="profile-color" data-profile-color><option value="">Без метки</option></select></div>
             </div>
-            <label class="field-label" for="profile-cwd">Стартовая папка</label>
-            <input id="profile-cwd" data-profile-cwd type="text" maxlength="2048" placeholder="Домашняя папка" autocomplete="off" spellcheck="false" />
-            <label class="field-label" for="profile-command">Стартовая команда (необязательно)</label>
-            <textarea id="profile-command" data-profile-command rows="3" maxlength="4096" spellcheck="false" placeholder="Например: muse"></textarea>
-            <p class="notification-hint">Команда выполняется при явном запуске или перезапуске сессии, но не при подключении к работающей. Вводите только команды, которым доверяете. Для cmd — одна строка.</p>
+            <label class="field-label" for="profile-cwd" data-desktop-only>Стартовая папка</label>
+            <input id="profile-cwd" data-profile-cwd data-desktop-only type="text" maxlength="2048" placeholder="Домашняя папка" autocomplete="off" spellcheck="false" />
+            <label class="field-label" for="profile-command" data-desktop-only>Стартовая команда (необязательно)</label>
+            <textarea id="profile-command" data-profile-command data-desktop-only rows="3" maxlength="4096" spellcheck="false" placeholder="Например: muse"></textarea>
+            <p class="notification-hint" data-desktop-only>Команда выполняется при явном запуске или перезапуске сессии, но не при подключении к работающей. Вводите только команды, которым доверяете. Для cmd — одна строка.</p>
             <div class="profile-actions">
               <button type="submit" class="ghost" data-profile-save>Сохранить</button>
               <button type="submit" class="paste-confirm" data-profile-launch>Создать и запустить</button>

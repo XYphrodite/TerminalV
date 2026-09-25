@@ -11,8 +11,8 @@
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <Product>TerminalV</Product>
     <AssemblyTitle>TerminalV</AssemblyTitle>
-    <Version>0.7.15</Version>
-    <InformationalVersion>0.7.15</InformationalVersion>
+    <Version>0.7.16</Version>
+    <InformationalVersion>0.7.16</InformationalVersion>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\TerminalV.ico</ApplicationIcon>
   </PropertyGroup>
@@ -32,7 +32,7 @@
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4191.47" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="9.0.8" />
     <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.3" />
-    <PackageReference Include="SSH.NET" Version="2025.0.0" />
+    <PackageReference Include="SSH.NET" Version="2026.0.0" />
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="9.0.8" />
   </ItemGroup>
 

@@ -3,7 +3,8 @@
 # Результат: tools/tsnet-bridge/tsnet.aar -> копируется в src/TerminalV.Mobile/Platforms/Android/libs/
 param(
     [string]$AndroidSdk = "$env:LOCALAPPDATA\Android\Sdk",
-    [string]$OutputAAR = "$PSScriptRoot\tsnet.aar"
+    [string]$OutputAAR = "$PSScriptRoot\tsnet.aar",
+    [string]$Target = "android/arm64,android/amd64"
 )
 
 Set-StrictMode -Version Latest
@@ -47,12 +48,15 @@ Set-Location $PSScriptRoot
     }
     Write-Host "==> go mod tidy"
     go mod tidy
+    if ($LASTEXITCODE -ne 0) { throw "go mod tidy failed" }
 
-    Write-Host "==> gomobile bind -target android -androidapi 21 -ldflags=-checklinkname=0 -o $OutputAAR org.terminalv.tsnet"
-    # gomobile bind собирает AAR с Java классом org.terminalv.tsnet.Tsnet
+    Write-Host "==> gomobile bind -target $Target -androidapi 21 -ldflags=-checklinkname=0 -o $OutputAAR org.terminalv.tsnet"
+    # gomobile maps package tsnet + type Tsnet to Java class tsnet.Tsnet_.
     # anet (Android net.Interfaces fix) requires -checklinkname=0 on Go 1.23+
     if (Test-Path $OutputAAR) { Remove-Item $OutputAAR -Force }
-    gomobile bind -target android -androidapi 21 -ldflags="-checklinkname=0" -o $OutputAAR ./...
+    # NDK r26 needs explicit ELF alignment for devices with 16 KB memory pages.
+    $linkerFlags = '-checklinkname=0 -extldflags=-Wl,-z,max-page-size=16384,-z,common-page-size=16384'
+    gomobile bind -target $Target -androidapi 21 -ldflags $linkerFlags -o $OutputAAR ./...
     if ($LASTEXITCODE -ne 0) { throw "gomobile bind failed" }
 
     if (-not (Test-Path $OutputAAR)) { throw "AAR не создан: $OutputAAR" }

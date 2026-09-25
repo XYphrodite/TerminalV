@@ -148,7 +148,7 @@ public sealed class TsnetSshSession : SshSessionBase
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            TrySendWindowChange(_shellStream, (uint)cols, (uint)rows);
+            SshShell.Resize(_shellStream, (uint)cols, (uint)rows);
         }
         finally { _gate.Release(); }
     }
@@ -240,6 +240,8 @@ public sealed class TsnetSshSession : SshSessionBase
     private async Task ReadLoop(CancellationToken token)
     {
         var buf = new byte[4096];
+        var decoder = Encoding.UTF8.GetDecoder();
+        var chars = new char[Encoding.UTF8.GetMaxCharCount(buf.Length)];
         while (!token.IsCancellationRequested && State == SshSessionState.Connected)
         {
             try
@@ -249,8 +251,9 @@ public sealed class TsnetSshSession : SshSessionBase
                 if (stream is null) break;
                 read = await Task.Run(() => DynamicRead(stream, buf, 0, buf.Length), token).ConfigureAwait(false);
                 if (read <= 0) { await Task.Delay(50, token).ConfigureAwait(false); continue; }
-                var text = Encoding.UTF8.GetString(buf, 0, read);
-                if (!string.IsNullOrEmpty(text)) RaiseData(text);
+                // SSH reads may end in the middle of a Unicode character.
+                var count = decoder.GetChars(buf, 0, read, chars, 0, flush: false);
+                if (count > 0) RaiseData(new string(chars, 0, count));
             }
             catch (OperationCanceledException) { break; }
             catch (Exception ex)
@@ -289,7 +292,10 @@ public sealed class TsnetSshSession : SshSessionBase
         var privateKeyType = asm.GetType("Renci.SshNet.PrivateKeyFile");
         var privateKeyAuthType = asm.GetType("Renci.SshNet.PrivateKeyAuthenticationMethod");
         if (!string.IsNullOrEmpty(password))
+        {
             authMethods.Add(Activator.CreateInstance(authType, _options.Username, password)!);
+            authMethods.Add(SshKeyboardAuthentication.Create(_options.Username, password));
+        }
         if (hasKeyContent)
         {
             using var ms = new MemoryStream(Encoding.UTF8.GetBytes(_options.PrivateKeyContent!));
@@ -363,29 +369,14 @@ public sealed class TsnetSshSession : SshSessionBase
     }
     private static void DynamicWrite(object stream, byte[] buf, int off, int len)
     {
-        try { stream.GetType().GetMethod("Write", new[] { typeof(byte[]), typeof(int), typeof(int) })!.Invoke(stream, new object[] { buf, off, len }); }
-        catch (System.Reflection.TargetInvocationException tie) when (tie.InnerException != null) { System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw(); throw; }
+        var shell = (Stream)stream;
+        shell.Write(buf, off, len);
+        // ShellStream buffers byte writes, including Enter, until explicitly flushed.
+        shell.Flush();
     }
     private static int DynamicRead(object stream, byte[] buf, int off, int len)
     {
         try { return (int)stream.GetType().GetMethod("Read", new[] { typeof(byte[]), typeof(int), typeof(int) })!.Invoke(stream, new object[] { buf, off, len })!; }
         catch (System.Reflection.TargetInvocationException tie) when (tie.InnerException != null) { System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw(); throw; }
-    }
-    private static bool TrySendWindowChange(object stream, uint cols, uint rows)
-    {
-        try
-        {
-            var t = stream.GetType();
-            var mi = t.GetMethod("SendWindowChangeRequest", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public);
-            if (mi is not null) { try { mi.Invoke(stream, new object[] { cols, rows, 0u, 0u }); return true; } catch { } try { mi.Invoke(stream, new object[] { cols, rows, (uint)1024, (uint)1024 }); return true; } catch { } try { mi.Invoke(stream, new object[] { (int)cols, (int)rows }); return true; } catch { } }
-            var chanProp = t.GetProperty("Channel", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public);
-            if (chanProp?.GetValue(stream) is object ch)
-            {
-                var cmi = ch.GetType().GetMethod("SendWindowChangeRequest");
-                if (cmi is not null) { try { cmi.Invoke(ch, new object[] { cols, rows }); return true; } catch { } try { cmi.Invoke(ch, new object[] { (int)cols, (int)rows }); return true; } catch { } }
-            }
-        }
-        catch { }
-        return false;
     }
 }

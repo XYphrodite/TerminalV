@@ -1,0 +1,93 @@
+<!doctype html><meta charset="utf-8">
+<script type="module">
+  const results = [];
+  const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+  const equal = (actual, expected, label) => {
+    if (JSON.stringify(actual) !== JSON.stringify(expected))
+      throw new Error(`${label}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
+  };
+  const check = async (name, run) => {
+    try { await run(); results.push({ name, ok: true }); }
+    catch (error) { results.push({ name, ok: false, error: error.stack }); }
+  };
+  const frame = document.createElement("iframe");
+  frame.style = "width:384px;height:700px";
+  const source = await (await fetch("/mobile/index.html")).text();
+  const styles = ["/node_modules/@xterm/xterm/css/xterm.css", "/src/styles.css", "/src/chrome.css", "/src/extensions.css"];
+  frame.srcdoc = source.replace('<base href="/" />', `<base href="${location.origin}/mobile/">`)
+    .replace('src="./assets/mobile.js"', 'src="/tests/source-main.js"')
+    .replace(/<link[^>]+href="\.\/assets\/mobile.css"[^>]*>/, styles.map(href => `<link rel="stylesheet" href="${href}">`).join(""))
+    .replace('<script src="js/mobile-bridge.js"></' + 'script>', '<script src="js/mobile-bridge.js"></' + 'script><script src="/tests/mobile-host.js"></' + 'script>')
+    .replace(/<script src="_framework\/blazor.webview.js"[^>]*><\/script>/, "");
+  const loaded = new Promise(resolve => frame.onload = resolve);
+  document.body.append(frame);
+  await loaded;
+  const app = frame.contentWindow, doc = frame.contentDocument;
+  for (let i = 0; !app.__sourceTabs && i < 100; i++) await delay(20);
+  let tab;
+  const parsed = () => new Promise(resolve => tab.output.whenParsed(resolve));
+  const size = () => ({ cols: tab.term.cols, rows: tab.term.rows });
+  const draw = (cols, rows, label) => `\x1b[?1049h\x1b[2J\x1b[H${label}\x1b[1;${cols}HR\x1b[${rows};1HFOOTER\x1b[${rows};${cols}HZ`;
+  const assertScreen = (cols, rows, label) => {
+    equal(size(), { cols, rows }, "shared grid");
+    const buffer = tab.term.buffer.active;
+    equal(buffer.getLine(0).translateToString(false).slice(0, label.length), label, "header");
+    equal(buffer.getLine(0).translateToString(false)[cols - 1], "R", "right edge");
+    equal(buffer.getLine(rows - 1).translateToString(false).slice(0, 6), "FOOTER", "last row");
+    equal(buffer.getLine(rows - 1).translateToString(false)[cols - 1], "Z", "bottom right");
+  };
+  await check("mobile mirror parses the first desktop frame at the desktop grid", async () => {
+    app.sendHost({ type: "init", mobile: true, liveIds: ["mirror"], sessions: [{ id: "mirror", title: "Mirror" }] });
+    await delay(550);
+    tab = app.__sourceTabs.find(item => item.id === "mirror");
+    equal(!!tab, true, "terminal created");
+    app.sendHost({ type: "terminal-size", id: "mirror", cols: 160, rows: 45 });
+    app.sendHost({ type: "data", id: "mirror", data: draw(160, 45, "DESKTOP") });
+    await parsed();
+    await delay(80);
+    assertScreen(160, 45, "DESKTOP");
+    equal(tab.host.scrollWidth > tab.host.clientWidth, true, "wide grid is horizontally reachable");
+    equal(tab.host.scrollHeight > tab.host.clientHeight, true, "tall grid is vertically reachable");
+  });
+  if (tab) {
+    await check("keyboard, rotation and drawer changes do not resize the shared PTY", async () => {
+      app.hostMessages.length = 0;
+      doc.getElementById("collapse-btn").click();
+      frame.style.height = "390px";
+      await delay(400);
+      frame.style.width = "680px";
+      frame.style.height = "330px";
+      app.dispatchEvent(new app.Event("resize"));
+      await delay(400);
+      assertScreen(160, 45, "DESKTOP");
+      equal(app.hostMessages.filter(message => message.type === "resize"), [], "no phone resize requests");
+    });
+    await check("desktop size changes stay ordered between old and new terminal output", async () => {
+      app.sendHost({ type: "data", id: "mirror", data: draw(160, 45, "OLD") });
+      app.sendHost({ type: "terminal-size", id: "mirror", cols: 102, rows: 33 });
+      app.sendHost({ type: "data", id: "mirror", data: draw(102, 33, "NEW") });
+      await parsed();
+      assertScreen(102, 33, "NEW");
+      equal(app.hostMessages.filter(message => message.type === "resize"), [], "server size is never echoed back");
+    });
+    await check("touch pans the desktop canvas without sending terminal input", async () => {
+      await delay(100);
+      tab.host.scrollLeft = tab.host.scrollTop = 0;
+      app.hostMessages.length = 0;
+      const target = tab.term.element.querySelector(".xterm-screen");
+      const touch = (type, x, y) => {
+        const point = new app.Touch({ identifier: 1, target, clientX: x, clientY: y });
+        target.dispatchEvent(new app.TouchEvent(type, { bubbles: true, cancelable: true,
+          touches: type === "touchend" ? [] : [point], changedTouches: [point] }));
+      };
+      touch("touchstart", 280, 150); touch("touchmove", 100, 150); touch("touchend", 100, 150);
+      equal(tab.host.scrollLeft > 100, true, "horizontal drag moves viewport");
+      touch("touchstart", 100, 240); touch("touchmove", 100, 100); touch("touchend", 100, 100);
+      equal(tab.host.scrollTop > 100, true, "vertical drag moves viewport");
+      equal(app.hostMessages.filter(message => ["resize", "write"].includes(message.type)), [], "pan is local only");
+      assertScreen(102, 33, "NEW");
+    });
+  }
+  await check("mirror has no browser errors", async () => equal(app.hostErrors, [], "page errors"));
+  document.body.dataset.testResult = btoa(unescape(encodeURIComponent(JSON.stringify(results))));
+</script>

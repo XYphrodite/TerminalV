@@ -50,6 +50,7 @@ public static class GatewayProtocol
     public const string Exit = "exit";
     public const string Error = "error";
     public const string Cwd = "cwd";
+    public const string Geometry = "geometry";
 
     private static readonly JsonSerializerOptions Json = new()
     {
@@ -62,7 +63,7 @@ public static class GatewayProtocol
     /// (session bookkeeping instead of terminal output).
     /// </summary>
     public static bool IsControlReply(string? type) =>
-        type is Attached or Created or Sessions or Cwd;
+        type is Attached or Created or Sessions or Cwd or Geometry;
 
     public static string ConnectHandshake(string? sessionId, bool control, int cols, int rows, string? term) =>
         JsonSerializer.Serialize(new
@@ -121,6 +122,9 @@ public static class GatewayProtocol
     public static string DataMessage(string id, string data) =>
         JsonSerializer.Serialize(new { type = Data, id, data }, Json);
 
+    public static string GeometryMessage(string id, int cols, int rows) =>
+        JsonSerializer.Serialize(new { type = Geometry, id, cols, rows }, Json);
+
     public static string ErrorMessage(string? id, string message) =>
         JsonSerializer.Serialize(new { type = Error, id, message }, Json);
 
@@ -150,6 +154,7 @@ public static class GatewayProtocol
     {
         public string? SessionId { get; set; }
         public bool Control { get; set; }
+        public bool TerminalGeometry { get; set; }
         public int Cols { get; set; } = 80;
         public int Rows { get; set; } = 24;
         public string Term { get; set; } = DefaultTerm;
@@ -175,6 +180,8 @@ public static class GatewayProtocol
                 h.SessionId = s.GetString();
             if (root.TryGetProperty("control", out var c) && c.ValueKind == JsonValueKind.True)
                 h.Control = true;
+            if (root.TryGetProperty("terminalGeometry", out var geometry) && geometry.ValueKind == JsonValueKind.True)
+                h.TerminalGeometry = true;
             if (root.TryGetProperty("cols", out var cols) && cols.TryGetInt32(out var ci))
                 h.Cols = Math.Clamp(ci, 1, 1000);
             if (root.TryGetProperty("rows", out var rows) && rows.TryGetInt32(out var ri))

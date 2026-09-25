@@ -3,12 +3,14 @@ using TerminalV.Host;
 namespace TerminalV.Gateway;
 
 /// <summary>Shares the desktop's only connection to an existing session host.</summary>
-internal sealed class SessionClientBackend : IGatewaySessionBackend, IGatewayReplayBackend, IDisposable
+internal sealed class SessionClientBackend : IGatewaySessionBackend, IGatewayReplayBackend, IGatewayGeometryBackend, IDisposable
 {
     private const int SnapshotCapacity = 1_500_000;
     private readonly SessionClient _client;
     private readonly object _gate = new();
     private readonly Dictionary<string, Snapshot> _snapshots = new();
+    private readonly Queue<(string Id, Snapshot Snapshot, GatewayTerminalGeometry Geometry)> _pendingResizes = new();
+    private bool _resizeWorkerRunning;
     private bool _disposed;
 
     private sealed class Snapshot
@@ -18,6 +20,8 @@ internal sealed class SessionClientBackend : IGatewaySessionBackend, IGatewayRep
         public bool Prepared { get; set; }
         public bool DesktopAttached { get; set; }
         public Task? DesktopReplay { get; set; }
+        public GatewayTerminalGeometry? Geometry { get; set; }
+        public bool DesktopOwnsGeometry { get; set; }
     }
 
     public SessionClientBackend(SessionClient client)
@@ -36,6 +40,7 @@ internal sealed class SessionClientBackend : IGatewaySessionBackend, IGatewayRep
     public event Action<string, string>? Error;
     public event Action<string, string, bool>? DesktopData;
     public event Action<string, string?, string?, string?, string?>? Created;
+    public event Action<string, int, int>? GeometryChanged;
 
     public string[] LiveIds()
     {
@@ -46,38 +51,46 @@ internal sealed class SessionClientBackend : IGatewaySessionBackend, IGatewayRep
     public void Create(string id, int cols, int rows, string? cwd, string? shell, string? startupCommand, string? wslDistribution)
     {
         Ensure();
-        SessionCreated(id);
+        SessionCreated(id, cols: cols, rows: rows);
         _client.Create(id, cols, rows, cwd, shell, startupCommand, wslDistribution);
         Created?.Invoke(id, cwd, shell, startupCommand, wslDistribution);
     }
 
-    public void SessionCreated(string id, bool desktopAttached = false)
+    public void SessionCreated(string id, bool desktopAttached = false, int? cols = null, int? rows = null)
     {
         lock (_gate)
         {
             ThrowIfDisposed();
             if (_snapshots.Remove(id, out var previous)) previous.Ready.TrySetCanceled();
-            var snapshot = new Snapshot { DesktopAttached = desktopAttached };
+            var snapshot = new Snapshot
+            {
+                DesktopAttached = desktopAttached,
+                DesktopOwnsGeometry = desktopAttached,
+                Geometry = cols is { } c && rows is { } r ? Geometry(c, r) : null
+            };
             snapshot.Ready.SetResult(true);
             _snapshots[id] = snapshot;
+            if (snapshot.Geometry is { } size) GeometryChanged?.Invoke(id, size.Columns, size.Rows);
         }
     }
 
-    public Task AttachDesktopAsync(string id)
+    public Task AttachDesktopAsync(string id, int cols = 0, int rows = 0)
     {
         lock (_gate)
         {
             var snapshot = GetSnapshot(id);
+            // Reserve ownership before waiting for a restored host's replay.
+            if (cols > 0 && rows > 0) snapshot.DesktopOwnsGeometry = true;
             // Duplicate requests before initial history arrives share one replay.
             if (snapshot.DesktopReplay is { IsCompleted: false }) return snapshot.DesktopReplay;
             var completed = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
             snapshot.DesktopReplay = completed.Task;
-            _ = AttachDesktopCoreAsync(id, snapshot, completed);
+            _ = AttachDesktopCoreAsync(id, snapshot, completed, cols, rows);
             return completed.Task;
         }
     }
 
-    private async Task AttachDesktopCoreAsync(string id, Snapshot snapshot, TaskCompletionSource<bool> completed)
+    private async Task AttachDesktopCoreAsync(string id, Snapshot snapshot, TaskCompletionSource<bool> completed, int cols, int rows)
     {
         try
         {
@@ -85,6 +98,11 @@ internal sealed class SessionClientBackend : IGatewaySessionBackend, IGatewayRep
             lock (_gate)
             {
                 AssertCurrent(id, snapshot);
+                if (cols > 0 && rows > 0)
+                {
+                    snapshot.DesktopOwnsGeometry = true;
+                    SetGeometry(id, snapshot, Geometry(cols, rows));
+                }
                 var replay = snapshot.Text.Snapshot();
                 if (replay.Length > 0) DesktopData?.Invoke(id, replay, true);
                 snapshot.DesktopAttached = true;
@@ -140,7 +158,7 @@ internal sealed class SessionClientBackend : IGatewaySessionBackend, IGatewayRep
         await snapshot.Ready.Task.WaitAsync(TimeSpan.FromSeconds(5), ct).ConfigureAwait(false);
     }
 
-    public async Task ReplayAndBindAsync(string id, Action<string> replay, Action bind, CancellationToken ct)
+    public async Task ReplayAndBindAsync(string id, Action<string> replay, Action bind, CancellationToken ct, Action? beforeReplay = null)
     {
         Snapshot snapshot;
         lock (_gate)
@@ -154,6 +172,7 @@ internal sealed class SessionClientBackend : IGatewaySessionBackend, IGatewayRep
             ct.ThrowIfCancellationRequested();
             // OnData holds this same lock: snapshot first, then every subsequent
             // live chunk exactly once. Only the new subscriber gets the replay.
+            beforeReplay?.Invoke();
             var output = snapshot.Text.Snapshot();
             if (output.Length > 0) replay(output);
             bind();
@@ -164,7 +183,90 @@ internal sealed class SessionClientBackend : IGatewaySessionBackend, IGatewayRep
     public void Attach(string id) => throw new InvalidOperationException("Для общего подключения требуется адресное восстановление вывода.");
 
     public void Write(string id, string data) { Ensure(); _client.Write(id, data); }
-    public void Resize(string id, int cols, int rows) { Ensure(); _client.Resize(id, cols, rows); }
+    public GatewayTerminalGeometry? GetGeometry(string id)
+    {
+        lock (_gate) return _snapshots.TryGetValue(id, out var snapshot) ? snapshot.Geometry : null;
+    }
+
+    public GatewayTerminalGeometry EnsureGeometry(string id)
+    {
+        lock (_gate)
+        {
+            var snapshot = GetSnapshot(id);
+            // Older hosts do not expose dimensions. Establish a real baseline
+            // for an otherwise unknown session, never infer it from a phone's
+            // viewport. A later desktop attachment supplies its actual grid.
+            if (snapshot.Geometry is null) SetGeometry(id, snapshot, new(80, 24));
+            return snapshot.Geometry!.Value;
+        }
+    }
+
+    public void ResizeDesktop(string id, int cols, int rows) => ResizeCore(id, cols, rows, desktop: true);
+    public void Resize(string id, int cols, int rows) => ResizeCore(id, cols, rows, desktop: false);
+
+    private static GatewayTerminalGeometry Geometry(int cols, int rows) =>
+        new(Math.Clamp(cols, 1, 1000), Math.Clamp(rows, 1, 1000));
+
+    private void ResizeCore(string id, int cols, int rows, bool desktop)
+    {
+        Ensure();
+        lock (_gate)
+        {
+            var snapshot = GetSnapshot(id);
+            // An old host cannot report a restored session's size. Even while
+            // it is unknown, a phone must not resize an attached desktop TUI.
+            if (!desktop && (snapshot.DesktopOwnsGeometry || snapshot.DesktopAttached))
+            {
+                if (snapshot.Geometry is { } current)
+                    GeometryChanged?.Invoke(id, current.Columns, current.Rows);
+                return;
+            }
+            if (desktop) snapshot.DesktopOwnsGeometry = true;
+            SetGeometry(id, snapshot, Geometry(cols, rows));
+        }
+    }
+
+    private void SetGeometry(string id, Snapshot snapshot, GatewayTerminalGeometry size)
+    {
+        if (snapshot.Geometry == size) return;
+        snapshot.Geometry = size;
+        // Queue geometry before issuing the PTY resize. OnData uses this same
+        // lock, so its resulting repaint cannot overtake this event.
+        GeometryChanged?.Invoke(id, size.Columns, size.Rows);
+        _pendingResizes.Enqueue((id, snapshot, size));
+        if (_resizeWorkerRunning) return;
+        _resizeWorkerRunning = true;
+        _ = Task.Run(DrainResizes);
+    }
+
+    private void DrainResizes()
+    {
+        while (true)
+        {
+            (string Id, Snapshot Snapshot, GatewayTerminalGeometry Geometry) request;
+            lock (_gate)
+            {
+                if (_disposed || !_pendingResizes.TryDequeue(out request))
+                {
+                    _resizeWorkerRunning = false;
+                    return;
+                }
+                // A newer layout or a replacement session supersedes queued
+                // work that has not reached the pipe yet.
+                if (!_snapshots.TryGetValue(request.Id, out var current)
+                    || !ReferenceEquals(current, request.Snapshot) || current.Geometry != request.Geometry) continue;
+            }
+            // A host writing a large replay can stop reading its command pipe.
+            // Never hold the cache lock while waiting for that pipe: the reader
+            // must acquire this lock to drain output and unblock the host.
+            try { _client.Resize(request.Id, request.Geometry.Columns, request.Geometry.Rows); }
+            catch (Exception ex)
+            {
+                lock (_gate)
+                    if (!_disposed) Error?.Invoke(request.Id, ex.Message);
+            }
+        }
+    }
     public void Kill(string id) { Ensure(); _client.Kill(id); }
 
     private void OnData(string id, string data, bool replay)
@@ -231,6 +333,7 @@ internal sealed class SessionClientBackend : IGatewaySessionBackend, IGatewayRep
             _client.ReplayCompleted -= OnReplayCompleted;
             foreach (var snapshot in _snapshots.Values) snapshot.Ready.TrySetCanceled();
             _snapshots.Clear();
+            _pendingResizes.Clear();
         }
         // The desktop owns the borrowed client and the live session host.
     }

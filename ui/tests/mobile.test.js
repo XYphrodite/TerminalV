@@ -73,8 +73,8 @@ test("Mobile parity: wwwroot hosts desktop UI and bridge shim", () => {
   assert.match(html, /id="panes"/, "panes");
   assert.match(html, /id="new-tab-split"/, "new-tab split");
   assert.match(html, /js\/mobile-bridge\.js/, "mobile bridge shim");
-  assert.match(html, /assets\/index-.*\.js/, "desktop bundle");
-  assert.match(html, /assets\/index-.*\.css/, "desktop styles");
+  assert.match(html, /assets\/mobile\.js/, "desktop bundle");
+  assert.match(html, /assets\/mobile\.css/, "desktop styles");
   assert.match(html, /blazor-root/, "blazor root isolated");
   assert.match(html, /blazor\.webview\.js/, "blazor bootstrap");
 });
@@ -93,7 +93,7 @@ test("MobileBridge handles desktop protocol and persists via Preferences", () =>
   const shim = readFileSync(r("src/TerminalV.Mobile/wwwroot/js/mobile-bridge.js"), "utf8");
   assert.match(shim, /chrome\.webview/, "shims chrome.webview");
   assert.match(shim, /__tvDispatch/, "dispatch helper");
-  assert.match(shim, /DotNet\.invokeMethodAsync/, "calls DotNet");
+  assert.match(shim, /dotNetRef\.invokeMethodAsync/, "calls the ready Blazor component");
   const store = readFileSync(r("src/TerminalV.Mobile/Host/MobileDataStore.cs"), "utf8");
   assert.match(store, /Preferences\.Default/, "Preferences storage");
   assert.match(store, /LoadSettings|SaveSettings/, "settings");
@@ -103,7 +103,7 @@ test("MobileBridge handles desktop protocol and persists via Preferences", () =>
 test("Mobile csproj copies desktop UI assets and links Data", () => {
   const csproj = readFileSync(r("src/TerminalV.Mobile/TerminalV.Mobile.csproj"), "utf8");
   assert.match(csproj, /CopyDesktopUi/, "CopyDesktopUi target");
-  assert.match(csproj, /TerminalV\\wwwroot\\assets/, "copies assets");
+  assert.match(csproj, /copy-mobile-ui\.js/, "copies current assets");
   assert.match(csproj, /AppSettings\.cs/, "links AppSettings");
   assert.match(csproj, /SessionRecord\.cs/, "links SessionRecord");
   assert.match(csproj, /PaneLayout\.cs/, "links PaneLayout");
@@ -119,15 +119,17 @@ test("Android immersive hides status and navigation bars", () => {
   assert.match(main, /OnWindowFocusChanged/, "re-hide on focus");
 });
 
-test("Connection overlay scrolls and FAB respects safe-area", () => {
+test("Connection dialog preserves scrolling and uses the sidebar entry instead of a floating button", () => {
   const home = readFileSync(r("src/TerminalV.Mobile/Components/Pages/Home.razor"), "utf8");
   assert.match(home, /overflow-y:auto/, "overlay scroll");
   assert.match(home, /-webkit-overflow-scrolling:touch/, "touch scroll");
   assert.match(home, /env\(safe-area-inset-/, "safe-area");
-  assert.match(home, /font-size:16px/, "16px prevents iOS zoom");
-  assert.match(home, /mobile-config-fab/, "FAB");
-  assert.match(home, /bottom:calc\(.*safe-area-inset-bottom/, "FAB bottom safe-area");
-  assert.match(home, /right:calc\(.*safe-area-inset-right/, "FAB right safe-area");
+  assert.match(home, /font(?:-size)?:16px/, "16px prevents iOS zoom");
+  assert.doesNotMatch(home, /mobile-config-fab/, "floating button removed");
+  const html = readFileSync(r("src/TerminalV.Mobile/wwwroot/index.html"), "utf8");
+  assert.ok(html.indexOf('id="mobile-connection"') < html.indexOf('id="new-tab-split"'), "connection above new session");
+  assert.match(html, /id="mobile-sessions-open"/, "visible drawer entry");
+  assert.match(home, /__tvConnectionConfig/, "modal state reaches the shell");
 });
 
 test("Mobile fixes: scale default, black bar, collapsed swipe, sync empty, write error", () => {

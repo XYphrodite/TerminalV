@@ -5,6 +5,7 @@ namespace TerminalV.Mobile.Host;
 
 internal sealed class MobileDataStore
 {
+    private readonly object _archiveLock = new();
     private static readonly JsonSerializerOptions Json = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -13,6 +14,7 @@ internal sealed class MobileDataStore
 
     private const string KeySettings = "terminalv_app_settings";
     private const string KeySessions = "terminalv_sessions";
+    private const string KeyArchivedSessions = "terminalv_archived_sessions";
     private const string KeyLayouts = "terminalv_layouts";
     private const string KeyProfiles = "terminalv_profiles";
 
@@ -63,6 +65,34 @@ internal sealed class MobileDataStore
             Microsoft.Maui.Storage.Preferences.Default.Set(KeySessions, json);
         }
         catch { }
+    }
+
+    public List<SessionRecord> LoadArchivedSessions()
+    {
+        try
+        {
+            var raw = Microsoft.Maui.Storage.Preferences.Default.Get(KeyArchivedSessions, "");
+            return string.IsNullOrWhiteSpace(raw) ? [] : JsonSerializer.Deserialize<List<SessionRecord>>(raw, Json) ?? [];
+        }
+        catch { return []; }
+    }
+
+    public void ArchiveSessions(IEnumerable<SessionRecord> sessions)
+    {
+        var retired = sessions.ToArray();
+        if (retired.Length == 0) return;
+        lock (_archiveLock)
+        {
+            var archive = LoadArchivedSessions().ToLookup(s => s.Id).ToDictionary(group => group.Key, group => group.Last());
+            foreach (var session in retired)
+            {
+                // An empty view must not erase a previously saved terminal screen.
+                if (archive.TryGetValue(session.Id, out var previous) && string.IsNullOrEmpty(session.Buffer))
+                    session.Buffer = previous.Buffer;
+                archive[session.Id] = session;
+            }
+            Microsoft.Maui.Storage.Preferences.Default.Set(KeyArchivedSessions, JsonSerializer.Serialize(archive.Values, Json));
+        }
     }
 
     public List<PaneLayout> LoadLayouts()

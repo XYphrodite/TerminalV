@@ -7,8 +7,8 @@
     <AssemblyName>TerminalV.Mobile</AssemblyName>
     <ApplicationId>com.terminalv.mobile</ApplicationId>
     <ApplicationTitle>TerminalV</ApplicationTitle>
-    <ApplicationVersion>1</ApplicationVersion>
-    <ApplicationDisplayVersion>1.0.0</ApplicationDisplayVersion>
+    <ApplicationVersion>12</ApplicationVersion>
+    <ApplicationDisplayVersion>1.1.6</ApplicationDisplayVersion>
     <UseMaui>true</UseMaui>
     <SingleProject>true</SingleProject>
     <ImplicitUsings>enable</ImplicitUsings>
@@ -22,10 +22,18 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <MauiIcon Include="Resources\AppIcon\appicon.svg"
+              ForegroundFile="Resources\AppIcon\appiconfg.svg" Color="#161C26">
+      <!-- Keep the whole mark inside Android's adaptive icon safe zone. -->
+      <ForegroundScale Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">0.7</ForegroundScale>
+    </MauiIcon>
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Microsoft.Maui.Controls" Version="10.0.10" />
     <PackageReference Include="Microsoft.Maui.Controls.Compatibility" Version="10.0.10" />
     <PackageReference Include="Microsoft.AspNetCore.Components.WebView.Maui" Version="10.0.10" />
-    <PackageReference Include="SSH.NET" Version="2025.0.0" />
+    <PackageReference Include="SSH.NET" Version="2026.0.0" />
   </ItemGroup>
 
   <ItemGroup>
@@ -46,9 +54,12 @@
     <Compile Include="..\TerminalV\Ssh\ISshSession.cs" Link="Ssh\ISshSession.cs" />
     <Compile Include="..\TerminalV\Ssh\SshSessionBase.cs" Link="Ssh\SshSessionBase.cs" />
     <Compile Include="..\TerminalV\Ssh\SshNetSession.cs" Link="Ssh\SshNetSession.cs" />
+    <Compile Include="..\TerminalV\Ssh\SshShell.cs" Link="Ssh\SshShell.cs" />
+    <Compile Include="..\TerminalV\Ssh\SshKeyboardAuthentication.cs" Link="Ssh\SshKeyboardAuthentication.cs" />
     <Compile Include="..\TerminalV\Ssh\GatewaySshSession.cs" Link="Ssh\GatewaySshSession.cs" />
     <Compile Include="..\TerminalV\Ssh\GatewayProtocol.cs" Link="Ssh\GatewayProtocol.cs" />
     <Compile Include="..\TerminalV\Ssh\GatewayControlClient.cs" Link="Ssh\GatewayControlClient.cs" />
+    <Compile Include="..\TerminalV\Ssh\GatewayTransport.cs" Link="Ssh\GatewayTransport.cs" />
     <Compile Include="..\TerminalV\Ssh\SshService.cs" Link="Ssh\SshService.cs" />
     <Compile Include="..\TerminalV\Data\AppSettings.cs" Link="Data\AppSettings.cs" />
     <Compile Include="..\TerminalV\Data\SessionRecord.cs" Link="Data\SessionRecord.cs" />
@@ -61,6 +72,12 @@
     <AndroidAarLibrary Include="Platforms\Android\libs\tsnet.aar" />
   </ItemGroup>
 
+  <Target Name="RequireTsnetAar" BeforeTargets="PrepareForBuild"
+          Condition="'$(TargetFramework)' == 'net10.0-android' And '$(DesignTimeBuild)' != 'true'">
+    <Error Condition="!Exists('$(MSBuildProjectDirectory)\Platforms\Android\libs\tsnet.aar')"
+           Text="Embedded Tailscale requires tsnet.aar. Run tools/tsnet-bridge/build-aar.ps1 -AndroidSdk &quot;path-to-android-sdk&quot; on the build machine before building Android." />
+  </Target>
+
   <ItemGroup>
         <ProguardConfiguration Include="Platforms\Android\proguard.cfg" />
     <TrimmerRootAssembly Include="Renci.SshNet">
@@ -68,11 +85,13 @@
     </TrimmerRootAssembly>
   </ItemGroup>
 
-  <Target Name="CopyDesktopUi" BeforeTargets="BeforeBuild" Condition="Exists('..\TerminalV\wwwroot\assets')">
+  <Target Name="CopyDesktopUi" BeforeTargets="ResolveProjectStaticWebAssets" Condition="'$(DesignTimeBuild)' != 'true'">
+    <Exec Command="npm run build" WorkingDirectory="..\..\ui" />
+    <Exec Command="node scripts/copy-mobile-ui.js" WorkingDirectory="..\..\ui" />
     <ItemGroup>
-      <_DesktopUiAssets Include="..\TerminalV\wwwroot\assets\**\*" />
+      <!-- Include files generated after project evaluation on a clean checkout. -->
+      <Content Include="wwwroot\assets\**\*" Exclude="@(Content)" />
     </ItemGroup>
-    <Copy SourceFiles="@(_DesktopUiAssets)" DestinationFolder="wwwroot\assets\%(RecursiveDir)" SkipUnchangedFiles="true" />
   </Target>
 
 </Project>

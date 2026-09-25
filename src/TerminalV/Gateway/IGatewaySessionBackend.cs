@@ -24,5 +24,16 @@ internal interface IGatewaySessionBackend
 // subscriber, then bind it atomically with respect to incoming live output.
 internal interface IGatewayReplayBackend
 {
-    Task ReplayAndBindAsync(string id, Action<string> replay, Action bind, CancellationToken ct);
+    Task ReplayAndBindAsync(string id, Action<string> replay, Action bind, CancellationToken ct, Action? beforeReplay = null);
+}
+
+internal readonly record struct GatewayTerminalGeometry(int Columns, int Rows);
+
+// One PTY has one cursor grid. Mirrors must follow its owning desktop rather
+// than resizing that process to each phone's viewport.
+internal interface IGatewayGeometryBackend
+{
+    event Action<string, int, int>? GeometryChanged;
+    GatewayTerminalGeometry? GetGeometry(string id);
+    GatewayTerminalGeometry EnsureGeometry(string id);
 }

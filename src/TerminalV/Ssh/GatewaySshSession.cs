@@ -31,6 +31,9 @@ public sealed class GatewaySshSession : SshSessionBase
     public string? AttachedSessionId { get; private set; }
 
     public event Action<string>? Attached;
+    public int? TerminalColumns { get; private set; }
+    public int? TerminalRows { get; private set; }
+    public event Action<int, int>? TerminalSizeChanged;
 
     public override async Task ConnectAsync(CancellationToken cancellationToken = default)
     {
@@ -42,6 +45,7 @@ public sealed class GatewaySshSession : SshSessionBase
         try
         {
             await DisconnectCoreAsync().ConfigureAwait(false);
+            TerminalColumns = TerminalRows = null;
             var ws = new ClientWebSocket();
             if (_options.GatewayTailnetIdentity) ws.Options.SetRequestHeader("Authorization", "Tailscale");
             else if (!string.IsNullOrWhiteSpace(_options.GatewayToken))
@@ -66,6 +70,7 @@ public sealed class GatewaySshSession : SshSessionBase
                 privateKey = _options.PrivateKeyContent,
                 keyPassphrase = _options.PrivateKeyPassphrase,
                 sessionId = _options.MirrorSessionId,
+                terminalGeometry = true,
                 term = TerminalType,
                 cols = Columns,
                 rows = Rows
@@ -223,6 +228,23 @@ public sealed class GatewaySshSession : SshSessionBase
     {
         if (!GatewayProtocol.TryGetType(text, out var type) || !GatewayProtocol.IsControlReply(type))
             return false;
+        if (type == GatewayProtocol.Geometry)
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(text);
+                var root = doc.RootElement;
+                if (root.TryGetProperty("cols", out var cols) && cols.TryGetInt32(out var c) && c is >= 1 and <= 1000 &&
+                    root.TryGetProperty("rows", out var rows) && rows.TryGetInt32(out var r) && r is >= 1 and <= 1000)
+                {
+                    TerminalColumns = c;
+                    TerminalRows = r;
+                    TerminalSizeChanged?.Invoke(c, r);
+                }
+            }
+            catch (JsonException) { }
+            return true;
+        }
         if ((type == GatewayProtocol.Attached || type == GatewayProtocol.Created))
         {
             try
