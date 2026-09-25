@@ -239,6 +239,125 @@ function Get-ReleaseTag {
     return 'latest'
 }
 
+function Select-TerminalVInstallProcesses {
+    param([string] $InstallDir, [object[]] $Processes)
+    $targetExe = [IO.Path]::GetFullPath((Join-Path $InstallDir 'TerminalV.exe'))
+    foreach ($process in $Processes) {
+        $knownPath = -not [string]::IsNullOrWhiteSpace($process.ExecutablePath)
+        if ($knownPath -and -not [string]::Equals([IO.Path]::GetFullPath($process.ExecutablePath), $targetExe, [StringComparison]::OrdinalIgnoreCase)) { continue }
+        # Only the first argument selects host mode; ignore the quoted EXE path.
+        $arguments = [string]$process.CommandLine -replace '^\s*(?:"[^"]*"|\S+)\s*', ''
+        [pscustomobject]@{
+            Id = $process.ProcessId
+            IsHost = $knownPath -and ($arguments -match '^"?--host"?(?:\s|$)')
+        }
+    }
+}
+
+function Assert-TerminalVExecutable {
+    param([string] $Executable)
+    $info = New-Object Diagnostics.ProcessStartInfo
+    $info.FileName = $Executable
+    $info.Arguments = '--version'
+    $info.UseShellExecute = $false
+    $info.CreateNoWindow = $true
+    $info.RedirectStandardOutput = $true
+    $info.RedirectStandardError = $true
+    $process = [Diagnostics.Process]::Start($info)
+    try {
+        $output = $process.StandardOutput.ReadToEndAsync()
+        $errors = $process.StandardError.ReadToEndAsync()
+        if (-not $process.WaitForExit(15000)) {
+            # Only this isolated --version probe, never a GUI or session host.
+            $process.Kill()
+            $process.WaitForExit()
+            throw 'The new TerminalV executable did not complete its version check.'
+        }
+        $version = $output.GetAwaiter().GetResult().Trim()
+        if ($process.ExitCode -ne 0 -or $version -notmatch '^\d+\.\d+\.\d+') {
+            throw "The new TerminalV executable could not run: $($errors.GetAwaiter().GetResult())"
+        }
+    } finally { $process.Dispose() }
+}
+
+function Install-TerminalVPayload {
+    param([string] $PayloadDir, [string] $InstallDir,
+        [ValidateSet('full', 'light')][string] $Variant, [scriptblock] $Probe)
+    $InstallDir = [IO.Path]::GetFullPath($InstallDir).TrimEnd([IO.Path]::DirectorySeparatorChar)
+    if ($InstallDir -eq [IO.Path]::GetPathRoot($InstallDir).TrimEnd([IO.Path]::DirectorySeparatorChar)) {
+        throw 'Installing into a drive root is not supported.'
+    }
+    foreach ($required in @('TerminalV.exe', 'TerminalV.com', 'wwwroot\index.html')) {
+        if (-not [IO.File]::Exists((Join-Path $PayloadDir $required))) { throw "Package is missing $required" }
+    }
+    if (Test-Path -LiteralPath (Join-Path $InstallDir '.terminalv-pending-ui')) {
+        throw 'A pending TerminalV update exists. Open and close TerminalV to finish it, then retry installation.'
+    }
+    [IO.Directory]::CreateDirectory($InstallDir) | Out-Null
+    $backup = Join-Path $InstallDir ('.terminalv-backup-' + [guid]::NewGuid().ToString('N'))
+    [IO.Directory]::CreateDirectory($backup) | Out-Null
+    $changes = New-Object 'System.Collections.Generic.List[object]'
+    $place = {
+        param([string] $Source, [string] $Name)
+        $destination = [IO.Path]::GetFullPath((Join-Path $InstallDir $Name))
+        if (-not $destination.StartsWith($InstallDir + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'Package entry is outside the install directory.'
+        }
+        $backupPath = [IO.Path]::GetFullPath((Join-Path $backup $Name))
+        if (-not $backupPath.StartsWith($backup + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'Package backup entry is outside the backup directory.'
+        }
+        $change = [pscustomobject]@{ Path = $destination; Backup = $backupPath; OldMoved = $false; NewPlaced = $false }
+        $changes.Add($change)
+        if (Test-Path -LiteralPath $destination) {
+            # Rename keeps a mapped host executable alive. Do not delete it.
+            Move-Item -LiteralPath $destination -Destination $change.Backup -ErrorAction Stop
+            $change.OldMoved = $true
+        }
+        $change.NewPlaced = $true # Also roll back a partial copy if copying fails.
+        Copy-Item -LiteralPath $Source -Destination $destination -Recurse -Force -ErrorAction Stop
+    }
+    try {
+        foreach ($entry in Get-ChildItem -LiteralPath $PayloadDir -Force) {
+            if ($entry.Name -eq '.terminalv-variant') { continue }
+            if ($entry.Name -eq 'TerminalV.exe.WebView2' -or $entry.Name -eq '.terminalv-pending-ui' -or
+                ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Unexpected package entry.' }
+            & $place $entry.FullName $entry.Name
+        }
+        & $Probe (Join-Path $InstallDir 'TerminalV.exe') | Out-Null
+        # Commit the variant only after the installed payload has passed its probe.
+        $marker = Join-Path $PayloadDir '.terminalv-variant'
+        [IO.File]::WriteAllText($marker, $Variant)
+        & $place $marker '.terminalv-variant'
+    } catch {
+        $failure = $_
+        for ($index = $changes.Count - 1; $index -ge 0; $index--) {
+            $change = $changes[$index]
+            try {
+                $resolvedTarget = [IO.Path]::GetFullPath($change.Path)
+                if (-not $resolvedTarget.StartsWith($InstallDir + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+                    throw 'Unsafe rollback path.'
+                }
+                if ($change.NewPlaced -and (Test-Path -LiteralPath $resolvedTarget)) {
+                    Remove-Item -LiteralPath $resolvedTarget -Recurse -Force -ErrorAction Stop
+                }
+                if ($change.OldMoved) { Move-Item -LiteralPath $change.Backup -Destination $resolvedTarget -ErrorAction Stop }
+            } catch { Write-Warning "Rollback needs attention; original files remain in ${backup}: $_" }
+        }
+        throw $failure
+    }
+    return $backup
+}
+
+function Remove-TerminalVTempDirectory {
+    param([string] $Directory)
+    $resolved = [IO.Path]::GetFullPath($Directory)
+    $tempBase = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd([IO.Path]::DirectorySeparatorChar)
+    if (-not $resolved.StartsWith($tempBase + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase) -or
+        [IO.Path]::GetFileName($resolved) -notmatch '^terminalv-[a-f0-9]{8}$') { throw 'Unsafe installer temporary directory.' }
+    Remove-Item -LiteralPath $resolved -Recurse -Force -ErrorAction SilentlyContinue
+}
+
 function Save-ReleaseAsset {
     param(
         [Parameter(Mandatory = $true)][string] $Url,
@@ -325,7 +444,7 @@ try {
     if ($expected) {
         $actual = (Get-FileHash -Path $tempZip -Algorithm SHA256).Hash.ToLowerInvariant()
         if ($actual -ne $expected) {
-            Remove-Item $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            Remove-TerminalVTempDirectory -Directory $tempRoot
             throw "SHA-256 mismatch. Expected $expected, got $actual"
         }
         Write-Step 'SHA-256 verified'
@@ -333,25 +452,31 @@ try {
         Write-Warning 'release has no SHA-256 asset, skipping checksum verification'
     }
 
-    $running = Get-Process -Name 'TerminalV' -ErrorAction SilentlyContinue
-    if ($running) {
-        Remove-Item $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
-        throw "TerminalV is running (pid $($running.Id -join ', ')). Close it and run the installer again."
+    $payload = Join-Path $tempRoot 'payload'
+    Expand-Archive -LiteralPath $tempZip -DestinationPath $payload
+    Assert-TerminalVExecutable -Executable (Join-Path $payload 'TerminalV.exe')
+    $dataDir = Join-Path $env:LOCALAPPDATA 'TerminalV'
+    [IO.Directory]::CreateDirectory($dataDir) | Out-Null
+    try {
+        $desktopLease = [IO.File]::Open((Join-Path $dataDir 'desktop.lock'), [IO.FileMode]::OpenOrCreate,
+            [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+    } catch {
+        throw 'Close the TerminalV window and retry. Background sessions may stay running.'
     }
-
-    if (-not (Test-Path -LiteralPath $InstallDir)) {
-        New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
-    } else {
-        Get-ChildItem -LiteralPath $InstallDir -Force | Where-Object { $_.Name -ne 'TerminalV.exe.WebView2' } | ForEach-Object {
-            Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
+    try {
+        $processes = @(Get-CimInstance Win32_Process -Filter "Name = 'TerminalV.exe'" -ErrorAction Stop)
+        $running = @(Select-TerminalVInstallProcesses -InstallDir $InstallDir -Processes $processes)
+        $blocking = @($running | Where-Object { -not $_.IsHost })
+        if ($blocking.Count) {
+            throw "TerminalV GUI or CLI is running (pid $($blocking.Id -join ', ')). Close it and retry; background sessions may stay running."
         }
-    }
-
-    Write-Step "installing to $InstallDir"
-    Expand-Archive -LiteralPath $tempZip -DestinationPath $InstallDir -Force
-    Remove-Item $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
-    # Records which kind of build this is, so `TerminalV update` keeps the variant.
-    [IO.File]::WriteAllText((Join-Path $InstallDir $VariantMarker), $variantName)
+        Write-Step "installing to $InstallDir"
+        $backup = Install-TerminalVPayload -PayloadDir $payload -InstallDir $InstallDir -Variant $variantName `
+            -Probe { param($path) Assert-TerminalVExecutable -Executable $path }
+        if ($running.Count) { Write-Step 'background sessions kept running' }
+        Write-Step "previous package files retained in $backup"
+    } finally { $desktopLease.Dispose() }
+    Remove-TerminalVTempDirectory -Directory $tempRoot
 
     $exe = Join-Path $InstallDir 'TerminalV.exe'
     if (-not (Test-Path -LiteralPath $exe)) {

@@ -1,0 +1,28 @@
+name: installer
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths: ['install.ps1', 'tests/installer-*.tests.ps1', '.github/workflows/installer.yml']
+  push:
+    branches: [main, 'codex/installer-*']
+    paths: ['install.ps1', 'tests/installer-*.tests.ps1', '.github/workflows/installer.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check installation with a running background host and rollback
+        shell: powershell
+        run: ./tests/installer-running-host.tests.ps1
+      - name: Check full and light variant selection
+        shell: powershell
+        run: ./tests/installer-variant.tests.ps1
+      - name: Check installer shortcuts
+        shell: powershell
+        run: ./tests/installer-shortcuts.tests.ps1
