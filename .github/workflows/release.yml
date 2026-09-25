@@ -88,7 +88,7 @@ jobs:
           try {
             node --test --test-concurrency=1 tests/session-persistence.test.js tests/session-management.test.js tests/notifications.test.js
             if ($LASTEXITCODE -ne 0) { throw "Session persistence timing checks failed" }
-            node --test --test-concurrency=1 --test-name-pattern="close protection|working directory|session management|notification" tests/selection.test.js
+            node --test --test-concurrency=1 --test-name-pattern="cold restore|close protection|working directory|session management|notification|search in the built|launch profiles|quick launch menu|split panes" tests/selection.test.js
             if ($LASTEXITCODE -ne 0) { throw "Session interface checks failed" }
           } finally { Pop-Location }
 

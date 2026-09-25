@@ -1410,14 +1410,14 @@ function newTab(options = {}) {
   if (options.live) {
     post({ type: "attach", id });
     window.setTimeout(() => pulseResize(tab), 300);
-  } else if (tab.hidden || (options.restored && tab.startupCommand)) {
+  } else if (tab.hidden || options.restored) {
     // The shell is gone (e.g. Windows restarted). Keep the saved screen, but
-    // never silently start a new process for a hidden session or a profile with a startup command (would duplicate servers/tests).
-    // Plain shell sessions (no startupCommand) auto-restart — they are just a shell.
+    // do not run a new shell over it: ConPTY startup clears the viewport, which
+    // would then replace the saved history on the next autosave.
     tab.exited = true;
     tab.overlayText.textContent = "Сессия не запущена. Сохранённый вывод доступен; запуск — кнопкой ниже.";
     tab.overlay.classList.add("visible");
-    diag("restore", `exited hidden/startup id=${id}`, id);
+    diag("restore", `saved screen without live process id=${id}`, id);
   } else {
     const createMsg = { type: "create", id, cols, rows, cwd: cwd || undefined,
       shell: tab.shell, startupCommand: tab.startupCommand, wslDistribution: tab.wslDistribution };

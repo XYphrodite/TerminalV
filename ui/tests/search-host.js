@@ -30,14 +30,18 @@ window.chrome.webview = {
           { id: "first", title: "Muse — поиск", active: true },
           { id: "second", title: "PowerShell — логи" }
         ],
+        liveIds: window.testInit?.sessions ? [] : ["first", "second"],
         ...window.testInit
       }));
     }
-    if (message.type === "create") {
-      const data = message.id === "first"
+    const defaultReplay = message.type === "attach" && !window.testInit?.sessions &&
+      ["first", "second"].includes(message.id);
+    if (message.type === "create" || defaultReplay) {
+      const sample = message.id === "first"
         ? "PS C:\\Project> demo\r\nОшибка подключения к серверу\r\nПроверка конфигурации завершена\r\nПовторная ошибка подключения\r\nPS C:\\Project> "
         : "Другая вкладка\r\nunique second\r\nPS C:\\Project> ";
-      queueMicrotask(() => window.sendHost({ type: "data", id: message.id, data }));
+      const data = message.type === "create" ? window.testCreateOutput ?? sample : sample;
+      queueMicrotask(() => window.sendHost({ type: "data", id: message.id, data, replay: defaultReplay }));
     }
   }
 };

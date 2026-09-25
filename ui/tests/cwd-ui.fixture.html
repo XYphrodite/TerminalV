@@ -36,9 +36,16 @@
   }
   await delay();
 
-  await check("restoration keeps each directory and reattaches live shells without restarting", () => {
+  await check("restoration keeps each directory and only reattaches shells that are still live", () => {
     equal(app.hostMessages.filter((m) => m.type === "attach").length, 1);
-    equal(created().find((m) => m.id === "first"), undefined);
+    equal(created().length, 0);
+    for (const id of ["second", "unknown"])
+      equal(doc.querySelector(`.pane[data-id="${id}"] .overlay`).classList.contains("visible"), true);
+  });
+  await check("explicit restart uses each restored directory without borrowing from another tab", () => {
+    for (const id of ["second", "unknown"])
+      doc.querySelector(`.pane[data-id="${id}"] .overlay button`).click();
+    equal(created().length, 2);
     equal(created().find((m) => m.id === "second").cwd, "D:\\saved");
     equal(created().find((m) => m.id === "unknown").cwd, undefined);
   });

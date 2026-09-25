@@ -104,6 +104,7 @@ test("search in the built TerminalV interface", (t) => runBrowserFixture(t, "sea
 test("close protection in the built TerminalV interface", (t) => runBrowserFixture(t, "close-ui"));
 test("working directory in the built TerminalV interface", (t) => runBrowserFixture(t, "cwd-ui"));
 test("session management in the built TerminalV interface", (t) => runBrowserFixture(t, "sessions-ui"));
+test("cold restore in the built TerminalV interface", (t) => runBrowserFixture(t, "cold-restore"));
 test("notification replay suppression in xterm.js", (t) => runBrowserFixture(t, "notification-output"));
 test("notifications in the built TerminalV interface", (t) => runBrowserFixture(t, "notifications-ui"));
 test("launch profiles in the built TerminalV interface", (t) => runBrowserFixture(t, "profiles-ui"));
