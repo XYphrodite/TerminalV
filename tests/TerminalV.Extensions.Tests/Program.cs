@@ -1,11 +1,36 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Text.Json;
 using Microsoft.Data.Sqlite;
 using TerminalV.Extensibility;
 using TerminalV.Extensions;
 
-var root = Path.Combine(Path.GetTempPath(), "terminalv-extension-tests-" + Guid.NewGuid().ToString("N"));
-Directory.CreateDirectory(root);
+if (args.Length == 0)
+{
+    // DLL unloading is cooperative. Match package replacement in the real app:
+    // stop the process before removing its package files on Windows.
+    var testRoot = Path.Combine(Path.GetTempPath(), "terminalv-extension-tests-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(testRoot);
+    try
+    {
+        var executable = Environment.ProcessPath ?? throw new InvalidOperationException("Missing test executable.");
+        var start = new ProcessStartInfo(executable) { UseShellExecute = false, CreateNoWindow = true };
+        if (string.Equals(Path.GetFileNameWithoutExtension(executable), "dotnet", StringComparison.OrdinalIgnoreCase))
+            start.ArgumentList.Add(typeof(BrokenExtension).Assembly.Location);
+        start.ArgumentList.Add("--worker");
+        start.ArgumentList.Add(testRoot);
+        using var worker = Process.Start(start) ?? throw new InvalidOperationException("Could not start extension checks.");
+        await worker.WaitForExitAsync();
+        return worker.ExitCode;
+    }
+    finally
+    {
+        // Only remove the unique directory created by this parent, after worker exit.
+        Directory.Delete(testRoot, recursive: true);
+    }
+}
+if (args.Length != 2 || args[0] != "--worker") throw new ArgumentException("Invalid test arguments.");
+var root = Path.GetFullPath(args[1]);
 var checks = 0;
 var managers = new List<ExtensionManager>();
 try
@@ -167,12 +192,10 @@ try
 finally
 {
     foreach (var manager in managers) await manager.StopAsync();
-    // Collectible load contexts release Windows DLL handles when collected.
-    for (var attempt = 0; attempt < 3; attempt++) { GC.Collect(); GC.WaitForPendingFinalizers(); }
     SqliteConnection.ClearAllPools();
-    // Only delete the unique temporary test directory created above.
-    Directory.Delete(root, recursive: true);
 }
+
+return 0;
 
 void Check(string name, Action action) { action(); checks++; Console.WriteLine("PASS " + name); }
 static void Assert(bool condition, string message) { if (!condition) throw new Exception(message); }
