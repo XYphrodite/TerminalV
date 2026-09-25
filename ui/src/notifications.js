@@ -36,19 +36,50 @@ export function createNotificationOutput(term, onBell, onParsed = () => {}) {
   let replay = false;
   let disposed = false;
   let generation = 0;
+  let pending = 0;
+  let hasParsed = false;
+  const barriers = new Set();
   const subscription = term.onBell(() => { if (!disposed && !replay) onBell(); });
   return {
+    get pending() { return !disposed && pending > 0; },
+    get hasParsed() { return hasParsed; },
     write(data, historical = false) {
       if (disposed) return;
       const version = generation;
+      pending++;
       term.write("", () => { replay = historical || version !== generation; });
-      term.write(data, () => { if (!disposed && version === generation) onParsed(); });
+      term.write(data, () => {
+        pending--;
+        if (!disposed && version === generation) {
+          hasParsed = true;
+          onParsed();
+        }
+      });
+    },
+    whenParsed(callback) {
+      if (disposed || !pending) { callback(); return; }
+      const finish = () => { if (barriers.delete(finish)) callback(); };
+      barriers.add(finish);
+      term.write("", finish);
     },
     reset() {
+      if (disposed) return;
       generation++;
       replay = true;
-      term.write("", () => { if (!disposed) term.reset(); });
+      pending++;
+      term.write("", () => {
+        pending--;
+        if (!disposed) {
+          term.reset();
+          hasParsed = true;
+          onParsed();
+        }
+      });
     },
-    dispose() { disposed = true; subscription.dispose(); }
+    dispose() {
+      disposed = true;
+      subscription.dispose();
+      for (const finish of barriers) finish();
+    }
   };
 }

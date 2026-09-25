@@ -95,14 +95,18 @@
     doc.getElementById("new-tab").click();
     equal(created().at(-1).cwd, "C:\\Users\\Test");
   });
-  await check("restart keeps the latest cwd and persistence stores metadata independently of titles", () => {
+  await check("restart keeps the latest cwd and persistence stores metadata independently of titles", async () => {
     activate("second");
     app.sendHost({ type: "exit", id: "second", code: 0 });
     doc.querySelector('.pane.active .overlay button').click();
     equal(created().at(-1).id, "second");
     equal(created().at(-1).cwd, "D:\\other");
-    app.terminalvFlush();
-    const records = app.hostMessages.filter((m) => m.type === "persist-sessions").at(-1).sessions;
+    const requestId = "cwd-after-restart";
+    app.terminalvFlush(requestId);
+    for (let attempt = 0; attempt < 20 && !app.hostMessages.some(m => m.type === "persist-sessions" && m.requestId === requestId); attempt++) {
+      await delay();
+    }
+    const records = app.hostMessages.find(m => m.type === "persist-sessions" && m.requestId === requestId).sessions;
     equal(records.find((m) => m.id === "first").cwd, "C:\\Проект с пробелом\\[test] O'Brien");
     equal(records.find((m) => m.id === "first").customTitle, "Мой проект");
     equal(records.find((m) => m.id === "second").cwd, "D:\\other");

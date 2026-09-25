@@ -99,18 +99,20 @@ internal static class UpdateCommand
             }
 
             var exe = Environment.ProcessPath!;
-            var guiOpen = OtherTerminalVRunning();
-            if (!guiOpen)
+            // Capture only existing GUI windows. A detached session host is not a
+            // window to restart, and newly launched windows must never be closed.
+            var guiPids = VisibleTerminalVPids();
+            guiPids.Remove(Environment.ProcessId);
+            if (guiPids.Count == 0)
             {
                 PendingUpdateApplier.Apply(exe, options);
             }
-
-            CliConsole.WriteLine($"Installed {applied.Tag}.");
-            if (guiOpen)
+            else
             {
-                RestartOpenWindows(exe);
+                RestartOpenWindows(exe, guiPids);
             }
 
+            CliConsole.WriteLine($"Installed {applied.Tag}.");
             return 0;
         }
         catch (Exception ex)
@@ -120,41 +122,43 @@ internal static class UpdateCommand
         }
     }
 
-    private static void RestartOpenWindows(string exePath)
+    private static void RestartOpenWindows(string exePath, IReadOnlyList<int> processIds)
     {
+        foreach (var pid in processIds)
+        {
+            Process process;
+            try
+            {
+                process = Process.GetProcessById(pid);
+            }
+            catch (ArgumentException)
+            {
+                // The original window has already exited.
+                continue;
+            }
+
+            using (process)
+            {
+                CloseWindows(pid);
+                // Closing waits for the session-save handshake (up to 10 seconds).
+                // A save error may cancel close; never bypass it by killing the GUI.
+                if (!process.WaitForExit(WindowCloseTimeoutMilliseconds))
+                {
+                    throw new TimeoutException(
+                        $"Update downloaded, but TerminalV (PID {pid}) did not close within 15 seconds. " +
+                        "Restart was cancelled to preserve your sessions. Check the existing window " +
+                        "for a save error, then close and reopen TerminalV to finish the update.");
+                }
+            }
+        }
+
+        // Wait until every old window has saved and exited before another GUI can
+        // read the session database or apply the pending UI files.
         Process.Start(new ProcessStartInfo(exePath)
         {
             UseShellExecute = true,
             WorkingDirectory = Path.GetDirectoryName(exePath) ?? ""
         });
-
-        var current = Environment.ProcessId;
-        foreach (var pid in VisibleTerminalVPids())
-        {
-            if (pid == current)
-            {
-                continue;
-            }
-
-            try
-            {
-                using var process = Process.GetProcessById(pid);
-                CloseWindows(pid);
-                if (!process.WaitForExit(1500))
-                {
-                    process.Kill(entireProcessTree: true);
-                }
-            }
-            catch (ArgumentException)
-            {
-            }
-            catch (InvalidOperationException)
-            {
-            }
-            catch (System.ComponentModel.Win32Exception)
-            {
-            }
-        }
     }
 
     private static List<int> VisibleTerminalVPids()
@@ -189,6 +193,11 @@ internal static class UpdateCommand
     {
         EnumWindows((hwnd, _) =>
         {
+            if (!IsWindowVisible(hwnd))
+            {
+                return true;
+            }
+
             GetWindowThreadProcessId(hwnd, out var pid);
             if (pid == (uint)processId)
             {
@@ -200,6 +209,7 @@ internal static class UpdateCommand
     }
 
     private const uint WmClose = 0x0010;
+    private const int WindowCloseTimeoutMilliseconds = 15_000;
 
     private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
 
@@ -214,25 +224,4 @@ internal static class UpdateCommand
 
     [DllImport("user32.dll")]
     private static extern bool IsWindowVisible(IntPtr hWnd);
-
-    private static bool OtherTerminalVRunning()
-    {
-        var current = Environment.ProcessId;
-        foreach (var process in Process.GetProcessesByName("TerminalV"))
-        {
-            try
-            {
-                if (process.Id != current)
-                {
-                    return true;
-                }
-            }
-            finally
-            {
-                process.Dispose();
-            }
-        }
-
-        return false;
-    }
 }

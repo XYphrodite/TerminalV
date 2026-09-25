@@ -2,9 +2,11 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Security.Cryptography;
+using System.Text;
 using System.Windows;
 using Microsoft.Web.WebView2.Core;
 using TerminalV.Data;
+using TerminalV.Diagnostics;
 using TerminalV.Gateway;
 using TerminalV.Host;
 
@@ -18,6 +20,8 @@ public partial class MainWindow : Window
     private int _gatewayPort;
     private string? _gatewayToken;
     private bool _allowClose;
+    private bool _closing;
+    private bool _restartOnClose;
 
     public MainWindow()
     {
@@ -26,7 +30,13 @@ public partial class MainWindow : Window
         WebView.DefaultBackgroundColor = System.Drawing.Color.FromArgb(255, 11, 13, 16);
         Loaded += OnLoaded;
         Closing += OnClosing;
-        Closed += (_, _) => { _gateway?.Dispose(); _bridge?.Dispose(); PasteFileStore.Cleanup(); };
+        Closed += (_, _) =>
+        {
+            _gateway?.Dispose();
+            _bridge?.Dispose();
+            PasteFileStore.Cleanup();
+            if (_restartOnClose) RestartApplication();
+        };
         UpdateMaximizeGlyph();
     }
 
@@ -81,6 +91,11 @@ public partial class MainWindow : Window
 
         _bridge = new TerminalBridge(Dispatcher, core, DescribeGateway);
         _bridge.SettingsChanged += SyncGateway;
+        _bridge.RestartRequested += () =>
+        {
+            _restartOnClose = true;
+            Close();
+        };
         SyncGateway();
         core.WebMessageReceived += (_, args) => _bridge.Handle(args.WebMessageAsJson);
         core.NewWindowRequested += (_, e) =>
@@ -136,26 +151,59 @@ public partial class MainWindow : Window
 
     private async void OnClosing(object? sender, CancelEventArgs e)
     {
-        if (_allowClose)
+        if (_allowClose || _bridge is null)
         {
             return;
         }
 
         e.Cancel = true;
+        if (_closing) return;
+        _closing = true;
         try
         {
-            if (WebView.CoreWebView2 is not null)
-            {
-                await WebView.ExecuteScriptAsync("window.terminalvFlush && window.terminalvFlush()");
-                await Task.Delay(80);
-            }
-        }
-        catch
-        {
-        }
+            await _bridge.FlushAsync();
 
-        _allowClose = true;
-        Close();
+            await Task.Yield(); // Unwind Closing even when the interface has not loaded.
+            _allowClose = true;
+            Close();
+        }
+        catch (Exception ex)
+        {
+            _allowClose = false;
+            Diag.Log("persistence", "Window close cancelled: session save failed", ex.ToString());
+            MessageBox.Show(this,
+                "Не удалось сохранить сессии. Окно оставлено открытым. Повторите закрытие, чтобы снова попробовать сохранить.\n\n" + ex.Message,
+                "TerminalV", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+        finally { _closing = false; }
+    }
+
+    private static void RestartApplication()
+    {
+        var path = Environment.ProcessPath;
+        if (string.IsNullOrWhiteSpace(path)) return;
+        try
+        {
+            // Wait for the old process to release its desktop lease. A fixed
+            // delay can launch the replacement while the old window still owns it.
+            var script = $"Wait-Process -Id {Environment.ProcessId} -ErrorAction SilentlyContinue; " +
+                $"Start-Process -FilePath '{path.Replace("'", "''")}'";
+            var command = Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),
+                    "WindowsPowerShell", "v1.0", "powershell.exe"),
+                Arguments = "-NoProfile -NonInteractive -WindowStyle Hidden -EncodedCommand " + command,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            });
+        }
+        catch (Exception ex)
+        {
+            Diag.Log("update", "Restart failed after saving sessions", ex.ToString());
+            MessageBox.Show("Сессии сохранены, но перезапуск не удался. Откройте TerminalV вручную.\n\n" + ex.Message,
+                "TerminalV", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
     }
 
     private object DescribeGateway()

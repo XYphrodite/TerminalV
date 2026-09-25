@@ -15,6 +15,7 @@ import { createCloseConfirmation } from "./close-confirmation.js";
 import { createTerminalSearch, isSearchShortcut, SEARCH_HIGHLIGHT_LIMIT } from "./terminal-search.js";
 import { createSessionOptions, sessionMetadata, sessionGroups, SESSION_COLORS, insertAfter } from "./session-management.js";
 import { createNotifications, createNotificationOutput } from "./notifications.js";
+import { createSessionPersistence, serializeSessionBuffer } from "./session-persistence.js";
 import { createLaunchProfiles, PROFILE_SHELLS } from "./launch-profiles.js";
 import { createLaunchMenu } from "./launch-menu.js";
 import { normalizeLayouts, layoutFor, leafIds, splitSession, detachSession, layoutGeometry,
@@ -77,7 +78,6 @@ let buildNumber = 22621;
 let nextIndex = 1;
 let appVersion = "0.5.5";
 let updateSupported = false;
-let persistTimer = 0;
 let fitTimer = 0;
 let fitRaf = 0;
 let ignoreFitUntil = 0;
@@ -574,8 +574,9 @@ function applyToTerminals() {
   zoomValue.textContent = `${Math.round((size / settings.fontSize) * 100)}%`;
 }
 
-function persistSettings() {
-  post({ type: "persist-settings", data: JSON.stringify(settings) });
+function persistSettings(requestId) {
+  post({ type: "persist-settings", data: JSON.stringify(settings),
+    ...(typeof requestId === "string" ? { requestId } : {}) });
 }
 
 const cwdNotice = document.getElementById("cwd-notice");
@@ -595,29 +596,14 @@ cwdNotice.querySelector("button").addEventListener("click", () => {
   if (!isModalOpen() && !searchController.isOpen) tab?.term.focus();
 });
 
-function serializeTab(tab) {
-  try {
-    return tab.serialize.serialize({
-      excludeAltBuffer: false,
-      excludeModes: false
-    });
-  } catch {
-    return tab.buffer || "";
-  }
-}
-
-function persistSessions() {
-  if (!readyForPersist) {
-    return;
-  }
-
+function saveSessions(requestId) {
   const payload = tabs.map((tab, index) => ({
     id: tab.id,
     title: tab.title,
     customTitle: tab.customTitle ?? null,
     sortOrder: index,
     active: tab.id === activeId,
-    buffer: serializeTab(tab),
+    buffer: serializeSessionBuffer(tab),
     cwd: tab.cwd || null,
     group: tab.group || null,
     color: tab.color || null,
@@ -628,20 +614,20 @@ function persistSessions() {
     wslDistribution: tab.wslDistribution || null,
     startupCommand: tab.startupCommand || null
   }));
-  post({ type: "persist-sessions", sessions: payload, layouts });
+  post({ type: "persist-sessions", sessions: payload, layouts,
+    ...(requestId ? { requestId } : {}) });
 }
 
-function schedulePersist() {
-  window.clearTimeout(persistTimer);
-  persistTimer = window.setTimeout(persistSessions, 400);
-}
-
-window.terminalvFlush = () => {
-  window.clearTimeout(persistTimer);
-  readyForPersist = true;
-  persistSessions();
-  persistSettings();
-};
+const sessionPersistence = createSessionPersistence({
+  isReady: () => readyForPersist,
+  getTabs: () => tabs,
+  save: saveSessions,
+  saveSettings: persistSettings,
+  skipped: (requestId) => post({ type: "flush-skipped", requestId })
+});
+function persistSessions() { sessionPersistence.persist(); }
+function schedulePersist() { sessionPersistence.schedule(); }
+window.terminalvFlush = (requestId) => sessionPersistence.flush(requestId);
 
 function updateSessionSwitcher() {
   const target = tabs.filter((tab) => Boolean(tab.hidden) !== showHiddenSessions);
@@ -1333,8 +1319,13 @@ function newTab(options = {}) {
     }
   }
   term.onData((data) => postWrite(id, data));
-  tab.output = createNotificationOutput(term, () => notifications.bell(tab), () => syncScrollLock(tab));
-  if (options.buffer) tab.output.write(options.buffer, true);
+  tab.output = createNotificationOutput(term, () => notifications.bell(tab), () => {
+    syncScrollLock(tab);
+    schedulePersist();
+  });
+  // Live sessions replay their own screen. Keep the disk snapshot as a fallback
+  // until that replay has arrived, without rendering the history twice.
+  if (options.buffer && !options.live) tab.output.write(options.buffer, true);
   term.onTitleChange((title) => {
     const cleaned = title?.trim();
     if (!cleaned || tab.customTitle) {
@@ -1632,7 +1623,7 @@ function restoreSessions(records, savedLayouts) {
       title: record.title,
       customTitle: record.customTitle,
       ...sessionMetadata(record),
-      buffer: isLive ? undefined : record.buffer,
+      buffer: record.buffer,
       cwd: record.cwd,
       shell: record.shell,
       wslDistribution: record.wslDistribution,
@@ -1767,7 +1758,6 @@ function handleHost(message) {
       tab.tuiHint = true;
     }
     tab.output.write(chunk, message.replay === true);
-    schedulePersist();
     if (tab.id !== activeId && !tab.unread) {
       tab.unread = true;
       patchTabRow(tab);

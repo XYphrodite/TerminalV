@@ -17,6 +17,49 @@ void Equal<T>(T actual, T expected)
 
 try
 {
+    Check("only one desktop can own a data directory", () =>
+    {
+        var dataDirectory = Directory.CreateDirectory(Path.Combine(root, "desktop-exclusive")).FullName;
+        using var first = DesktopInstanceLease.TryAcquire(dataDirectory);
+        Equal(first is not null, true);
+        using var second = DesktopInstanceLease.TryAcquire(dataDirectory);
+        Equal(second is null, true);
+    });
+
+    Check("closing a desktop releases ownership even when its lock file remains", () =>
+    {
+        var dataDirectory = Directory.CreateDirectory(Path.Combine(root, "desktop-reopen")).FullName;
+        using (var first = DesktopInstanceLease.TryAcquire(dataDirectory))
+        {
+            Equal(first is not null, true);
+        }
+        Equal(File.Exists(Path.Combine(dataDirectory, "desktop.lock")), true);
+        using var reopened = DesktopInstanceLease.TryAcquire(dataDirectory);
+        Equal(reopened is not null, true);
+    });
+
+    Check("independent data directories can have separate desktops", () =>
+    {
+        var firstDirectory = Directory.CreateDirectory(Path.Combine(root, "desktop-first")).FullName;
+        var secondDirectory = Directory.CreateDirectory(Path.Combine(root, "desktop-second")).FullName;
+        using var first = DesktopInstanceLease.TryAcquire(firstDirectory);
+        using var second = DesktopInstanceLease.TryAcquire(secondDirectory);
+        Equal(first is not null, true);
+        Equal(second is not null, true);
+    });
+
+    Check("desktop startup I/O failures are not reported as another open window", () =>
+    {
+        try
+        {
+            using var lease = DesktopInstanceLease.TryAcquire(Path.Combine(root, "missing-directory"));
+            throw new Exception("Expected a missing data directory error");
+        }
+        catch (DirectoryNotFoundException)
+        {
+        }
+    });
+
     var path = Path.Combine(root, "legacy.db");
     using (var legacy = new SqliteConnection($"Data Source={path}"))
     {

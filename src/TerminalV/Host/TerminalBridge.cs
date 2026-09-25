@@ -43,8 +43,11 @@ internal sealed class TerminalBridge : IDisposable
     private long _lastBellMs = -2000;
     private bool _disposed;
     private readonly Func<object>? _gatewayStatus;
+    private string? _flushRequestId;
+    private TaskCompletionSource<bool>? _flushCompletion;
 
     public event Action? SettingsChanged;
+    public event Action? RestartRequested;
 
     public TerminalBridge(Dispatcher dispatcher, CoreWebView2 webView, Func<object>? gatewayStatus = null)
     {
@@ -85,6 +88,37 @@ internal sealed class TerminalBridge : IDisposable
         if (_canUpdate)
         {
             _ = CheckUpdatesAsync(silent: true);
+        }
+    }
+
+    public async Task FlushAsync()
+    {
+        if (_disposed) throw new ObjectDisposedException(nameof(TerminalBridge));
+        if (_flushCompletion is not null) throw new InvalidOperationException("Сохранение уже выполняется.");
+
+        var requestId = Guid.NewGuid().ToString("N");
+        var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _flushRequestId = requestId;
+        _flushCompletion = completion;
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        try
+        {
+            // Executing JS only queues WebMessages. Wait for the corresponding
+            // database commit, not an arbitrary delay after ExecuteScriptAsync.
+            var result = await _webView.ExecuteScriptAsync(
+                $"typeof window.terminalvFlush === 'function' ? (window.terminalvFlush({JsonSerializer.Serialize(requestId)}), true) : false")
+                .WaitAsync(timeout.Token);
+            if (result == "false") return; // The interface has not loaded yet.
+            await completion.Task.WaitAsync(timeout.Token);
+        }
+        catch (OperationCanceledException) when (timeout.IsCancellationRequested)
+        {
+            throw new TimeoutException("Интерфейс не подтвердил сохранение сессий за 10 секунд.");
+        }
+        finally
+        {
+            _flushRequestId = null;
+            _flushCompletion = null;
         }
     }
 
@@ -262,10 +296,13 @@ internal sealed class TerminalBridge : IDisposable
                 _ = ApplyUpdateAsync();
                 break;
             case "persist-settings":
-                PersistSettings(message.Data);
+                PersistSettings(message.Data, message.RequestId);
                 break;
             case "persist-sessions":
                 PersistSessions(message);
+                break;
+            case "flush-skipped":
+                CompleteFlush(message.RequestId);
                 break;
             case "persist-profiles":
                 try
@@ -434,22 +471,9 @@ internal sealed class TerminalBridge : IDisposable
 
     private void Restart()
     {
-        var path = Environment.ProcessPath;
-        if (string.IsNullOrWhiteSpace(path))
-        {
-            return;
-        }
-
-        var quoted = "\"" + path.Replace("\"", "\\\"") + "\"";
-        Process.Start(new ProcessStartInfo
-        {
-            FileName = "cmd.exe",
-            Arguments = "/c ping 127.0.0.1 -n 3 >nul & start \"\" " + quoted,
-            UseShellExecute = false,
-            CreateNoWindow = true
-        });
-
-        _dispatcher.BeginInvoke(() => Application.Current.Shutdown());
+        // The window owns saving and closing. Application.Shutdown() bypasses
+        // its asynchronous cancellation; launching here could race a failed save.
+        _dispatcher.BeginInvoke(() => { if (!_disposed) RestartRequested?.Invoke(); });
     }
 
     private void PostUpdate(string status, SelfUpdateReport report) =>
@@ -556,7 +580,7 @@ internal sealed class TerminalBridge : IDisposable
         }
     }
 
-    private void PersistSettings(string? json)
+    private void PersistSettings(string? json, string? requestId)
     {
         if (string.IsNullOrWhiteSpace(json))
         {
@@ -595,8 +619,10 @@ internal sealed class TerminalBridge : IDisposable
                 SettingsChanged?.Invoke();
             }
         }
-        catch (JsonException)
+        catch (Exception ex) when (ex is JsonException or Microsoft.Data.Sqlite.SqliteException)
         {
+            Diag.Log("persistence", "Settings save failed", ex.ToString());
+            CompleteFlush(requestId, ex);
         }
     }
 
@@ -612,17 +638,25 @@ internal sealed class TerminalBridge : IDisposable
 
             if (sessions is null)
             {
+                CompleteFlush(message.RequestId, new InvalidOperationException("Не получены данные сессий для сохранения."));
                 return;
             }
 
             _db.SaveSessions(sessions, message.Layouts);
+            CompleteFlush(message.RequestId);
         }
-        catch (JsonException)
+        catch (Exception ex) when (ex is JsonException or Microsoft.Data.Sqlite.SqliteException or ArgumentException or InvalidOperationException)
         {
+            Diag.Log("persistence", "Session save failed", ex.ToString());
+            CompleteFlush(message.RequestId, ex);
         }
-        catch (Microsoft.Data.Sqlite.SqliteException)
-        {
-        }
+    }
+
+    private void CompleteFlush(string? requestId, Exception? error = null)
+    {
+        if (requestId is null || requestId != _flushRequestId) return;
+        if (error is null) _flushCompletion?.TrySetResult(true);
+        else _flushCompletion?.TrySetException(error);
     }
 
     private void PickBackground()

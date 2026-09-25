@@ -1,6 +1,9 @@
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Windows;
 using TerminalV.Cli;
+using TerminalV.Data;
 
 namespace TerminalV;
 
@@ -31,6 +34,29 @@ internal static class Program
         }
 
         HideConsole();
+        DesktopInstanceLease? lease;
+        try
+        {
+            lease = DesktopInstanceLease.TryAcquire(AppPaths.Root);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
+        {
+            MessageBox.Show(
+                "Не удалось открыть данные TerminalV. Проверьте доступ к папке " +
+                "%LOCALAPPDATA%\\TerminalV и свободное место на диске.\n\n" + ex.Message,
+                "TerminalV", MessageBoxButton.OK, MessageBoxImage.Error);
+            return 1;
+        }
+
+        using var desktopInstance = lease;
+        if (desktopInstance is null)
+        {
+            MessageBox.Show(
+                "TerminalV уже открыт. Переключитесь в существующее окно.",
+                "TerminalV", MessageBoxButton.OK, MessageBoxImage.Information);
+            return 0;
+        }
+
         var app = new App();
         app.InitializeComponent();
         app.Run();
