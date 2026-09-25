@@ -328,17 +328,23 @@ input[type="range"], input[type="checkbox"] { accent-color: var(--accent); }
 
 /* Mobile-only key bar (Esc/Tab/arrows). Shown only when data-mobile-only is unhidden. */
 .mobile-keys {
-  display: flex; flex: 0 0 auto; align-items: center; justify-content: center; gap: 8px;
+  display: flex; flex-direction: column; flex: 0 0 auto; gap: 6px;
   width: 100%; box-sizing: border-box;
-  padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
+  margin: 0; padding: 6px 8px calc(6px + env(safe-area-inset-bottom));
   background: var(--sidebar); border-top: 1px solid var(--border-soft);
 }
 .mobile-keys[hidden] { display: none; }
+.mobile-keys-row {
+  display: flex; gap: 6px; justify-content: flex-start; flex-wrap: nowrap; overflow-x: auto;
+  -webkit-overflow-scrolling: touch; scrollbar-width: none;
+}
+.mobile-keys-row::-webkit-scrollbar { display: none; }
 .mobile-keys button {
-  min-width: 48px; min-height: 44px; padding: 0 12px;
+  min-width: 40px; min-height: 40px; padding: 0 8px;
   border: 1px solid var(--border-soft); border-radius: 8px;
-  background: var(--surface); color: var(--text); font: 600 15px var(--font-mono);
+  background: var(--surface); color: var(--text); font: 600 14px var(--font-mono);
   cursor: pointer; touch-action: manipulation;
 }
+.mobile-keys-row[data-row="digits"] button { min-width: 32px; }
 .mobile-keys button:active { background: var(--tab-active); border-color: var(--accent-dim); }
 .mobile-keys button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

@@ -30,6 +30,7 @@ test("arrow keys send VT100 cursor sequences, Esc/Tab send their controls", () =
   assert.equal(MOBILE_KEY_SEQUENCES.ArrowLeft, "\x1b[D");
   assert.equal(MOBILE_KEY_SEQUENCES.Escape, "\x1b");
   assert.equal(MOBILE_KEY_SEQUENCES.Tab, "\t");
+  for (const d of "0123456789") assert.equal(MOBILE_KEY_SEQUENCES[d], d);
 });
 
 test("documented aliases map to same sequences", () => {
@@ -74,6 +75,11 @@ test("key bar markup exists in desktop and mobile shells", () => {
     for (const key of ["Escape", "Tab", "ArrowLeft", "ArrowUp", "ArrowDown", "ArrowRight"]) {
       assert.match(html, new RegExp(`data-key="${key}"`), `${htmlPath}: ${key} button`);
     }
+    for (const d of "0123456789") {
+      assert.match(html, new RegExp(`data-key="${d}"`), `${htmlPath}: digit ${d}`);
+    }
+    assert.match(html, /data-row="digits"/, `${htmlPath}: digits row`);
+    assert.match(html, /data-row="nav"/, `${htmlPath}: nav row`);
     assert.match(html, /id="font-size"[^>]*min="8"/, `${htmlPath}: slider allows 8`);
   }
 });
@@ -84,10 +90,16 @@ test("main.js wires the key bar to the pty write channel", () => {
   assert.match(main, /post\(\{ type: "write", id: tab\.id, data \}\)/, "sends raw sequences to pty");
   assert.match(main, /letterSpacing: 0/, "no extra letter spacing");
   assert.match(main, /Roboto Mono.*Droid Sans Mono.*Noto Sans Mono/, "android monospace fallbacks");
+  const mobileKeysBlock = main.slice(main.indexOf("createMobileKeys({"), main.indexOf("createMobileKeys({") + 400);
+  assert.doesNotMatch(mobileKeysBlock, /tab\.term\.focus\(\)/, "key bar does not force keyboard");
+  assert.match(main, /window\.dispatchEvent\(new Event\("resize"\)\)/, "resizes terminal when key bar toggles");
 });
 
 test("key bar styling stays hidden on desktop and fits touch targets", () => {
   const css = readFileSync(r("ui/src/chrome.css"), "utf8");
   assert.match(css, /\.mobile-keys\[hidden\]\s*\{\s*display:\s*none/, "hidden wins over flex");
-  assert.match(css, /\.mobile-keys button\s*\{[^}]*min-height:\s*44px/, "touch-sized keys");
+  assert.match(css, /\.mobile-keys button\s*\{[^}]*min-height:\s*40px/, "touch-sized keys");
+  assert.match(css, /\.mobile-keys-row\s*\{[^}]*flex-wrap:\s*nowrap/, "digits scroll not wrap");
+  assert.match(css, /\.mobile-keys-row\s*\{[^}]*overflow-x:\s*auto/, "digits scrollable");
+  assert.match(css, /\.mobile-keys\s*\{[^}]*flex-direction:\s*column/, "two rows without top gap");
 });

@@ -189,7 +189,6 @@ createMobileKeys({
     const data = MOBILE_KEY_SEQUENCES[key];
     if (!tab || tab.exited || !data) return;
     post({ type: "write", id: tab.id, data });
-    tab.term.focus();
   }
 });
 
@@ -1519,6 +1518,8 @@ function applyPlatformSettings(mobile) {
   document.documentElement.classList.toggle("mobile-ui", mobile);
   for (const element of document.querySelectorAll("[data-desktop-only]")) element.hidden = mobile;
   for (const element of document.querySelectorAll("[data-mobile-only]")) element.hidden = !mobile;
+  // Key bar at bottom changes #panes height; trigger fit so no top gap remains
+  requestAnimationFrame(() => { try { window.dispatchEvent(new Event("resize")); } catch {} });
   const profilesButton = document.getElementById("launch-profiles-btn");
   const profilesLabel = mobile ? "Профили" : "Профили и оболочки";
   profilesButton.title = profilesLabel;

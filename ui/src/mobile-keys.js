@@ -13,7 +13,17 @@ export const MOBILE_KEY_SEQUENCES = {
   Left: "\x1b[D",
   Up: "\x1b[A",
   Down: "\x1b[B",
-  Right: "\x1b[C"
+  Right: "\x1b[C",
+  "0": "0",
+  "1": "1",
+  "2": "2",
+  "3": "3",
+  "4": "4",
+  "5": "5",
+  "6": "6",
+  "7": "7",
+  "8": "8",
+  "9": "9"
 };
 
 export function createMobileKeys({ root, send }) {

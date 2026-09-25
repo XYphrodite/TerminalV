@@ -102,13 +102,27 @@
           <button type="button" class="icon-btn" aria-label="Закрыть уведомление о папке" title="Закрыть уведомление" data-icon="close"></button>
         </div>
         <div id="panes"></div>
-        <div id="mobile-keys" class="mobile-keys" role="group" aria-label="Клавиши со стрелками" data-mobile-only hidden>
-          <button type="button" data-key="Escape" title="Escape" aria-label="Escape">Esc</button>
-          <button type="button" data-key="Tab" title="Tab" aria-label="Tab">Tab</button>
-          <button type="button" data-key="ArrowLeft" title="Влево" aria-label="Стрелка влево">←</button>
-          <button type="button" data-key="ArrowUp" title="Вверх" aria-label="Стрелка вверх">↑</button>
-          <button type="button" data-key="ArrowDown" title="Вниз" aria-label="Стрелка вниз">↓</button>
-          <button type="button" data-key="ArrowRight" title="Вправо" aria-label="Стрелка вправо">→</button>
+        <div id="mobile-keys" class="mobile-keys" role="group" aria-label="Клавиши" data-mobile-only hidden>
+          <div class="mobile-keys-row" data-row="digits">
+            <button type="button" data-key="1">1</button>
+            <button type="button" data-key="2">2</button>
+            <button type="button" data-key="3">3</button>
+            <button type="button" data-key="4">4</button>
+            <button type="button" data-key="5">5</button>
+            <button type="button" data-key="6">6</button>
+            <button type="button" data-key="7">7</button>
+            <button type="button" data-key="8">8</button>
+            <button type="button" data-key="9">9</button>
+            <button type="button" data-key="0">0</button>
+          </div>
+          <div class="mobile-keys-row" data-row="nav">
+            <button type="button" data-key="Escape" title="Escape" aria-label="Escape">Esc</button>
+            <button type="button" data-key="Tab" title="Tab" aria-label="Tab">Tab</button>
+            <button type="button" data-key="ArrowLeft" title="Влево" aria-label="Стрелка влево">←</button>
+            <button type="button" data-key="ArrowUp" title="Вверх" aria-label="Стрелка вверх">↑</button>
+            <button type="button" data-key="ArrowDown" title="Вниз" aria-label="Стрелка вниз">↓</button>
+            <button type="button" data-key="ArrowRight" title="Вправо" aria-label="Стрелка вправо">→</button>
+          </div>
         </div>
         <div id="empty" class="empty hidden">
           <div class="empty-mark" data-icon="terminal"></div>
