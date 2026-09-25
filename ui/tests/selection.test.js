@@ -112,3 +112,4 @@ test("quick launch menu in the built TerminalV interface", (t) => runBrowserFixt
 test("split panes in the built TerminalV interface", (t) => runBrowserFixture(t, "panes-ui"));
 test("appearance in the built TerminalV interface", (t) => runBrowserFixture(t, "appearance-ui"));
 test("shortcuts in the built TerminalV interface", (t) => runBrowserFixture(t, "shortcuts-ui"));
+test("extension interface in the built TerminalV application", (t) => runBrowserFixture(t, "extensions-ui"));

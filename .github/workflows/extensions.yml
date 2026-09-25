@@ -1,0 +1,75 @@
+name: extensions
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'src/TerminalV/**'
+      - 'src/TerminalV.Extensibility/**'
+      - 'examples/extensions/**'
+      - 'tests/TerminalV.Extensions.Tests/**'
+      - 'ui/**'
+      - '.github/workflows/extensions.yml'
+  push:
+    branches: [main, 'codex/extensions-ci-*']
+    paths:
+      - 'src/TerminalV/**'
+      - 'src/TerminalV.Extensibility/**'
+      - 'examples/extensions/**'
+      - 'tests/TerminalV.Extensions.Tests/**'
+      - 'ui/**'
+      - '.github/workflows/extensions.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: extensions-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: TerminalV
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: TerminalV
+      - uses: actions/checkout@v4
+        with:
+          repository: XYphrodite/self-update-kit
+          ref: v0.3.0
+          path: self-update-kit
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: TerminalV/ui/package-lock.json
+      - name: Build desktop app and UI
+        run: dotnet build src/TerminalV/TerminalV.csproj -c Release
+      - name: Check manifest validation, actual DLL loading, RPC, lifecycle and DPAPI
+        run: dotnet run --project tests/TerminalV.Extensions.Tests -c Release
+      - name: Check UI lifecycle and request routing
+        run: node --test --test-concurrency=1 ui/tests/extensions.test.js
+      - name: Check extension interface in browser
+        run: node --test --test-concurrency=1 --test-name-pattern='extension interface' ui/tests/selection.test.js
+      - name: Package example extension
+        run: |
+          $package = 'artifacts/extensions/terminalv.hello'
+          New-Item -ItemType Directory -Force -Path "$package/host" | Out-Null
+          dotnet build examples/extensions/terminalv.hello/host/HelloExtension.csproj -c Release -o "$package/host"
+          if ($LASTEXITCODE -ne 0) { throw 'Example build failed' }
+          Copy-Item examples/extensions/terminalv.hello/extension.json $package
+          Copy-Item examples/extensions/terminalv.hello/ui $package -Recurse
+          Compress-Archive -Path $package -DestinationPath artifacts/terminalv.hello.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: terminalv-hello-extension
+          path: TerminalV/artifacts/terminalv.hello.zip

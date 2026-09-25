@@ -174,6 +174,7 @@ public partial class MainWindow : Window
         try
         {
             await _bridge.FlushAsync();
+            await _bridge.StopExtensionsAsync();
 
             await Task.Yield(); // Unwind Closing even when the interface has not loaded.
             _allowClose = true;

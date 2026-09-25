@@ -21,6 +21,7 @@
           <button id="hidden-sessions" type="button" class="ghost" aria-pressed="false" title="Показать скрытые сессии"><span data-icon="hidden"></span><span data-hidden-label>Скрытые · 0</span></button>
         </div>
         <div id="tabs" class="tabs" role="tablist" aria-label="Сессии"></div>
+        <div id="extension-sidebar" class="extension-sidebar" aria-label="Панели расширений" hidden></div>
         <div class="sidebar-foot">
           <div id="new-tab-split" class="new-tab-split">
             <button id="new-tab" type="button" title="Новая вкладка (Ctrl+Shift+T)" aria-label="Новая вкладка">
@@ -76,6 +77,7 @@
     </div>
 
     <div id="notification-status" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
+    <div id="extension-notifications" class="extension-notifications" role="status" aria-live="polite"></div>
     <div id="settings" class="settings hidden" role="dialog" aria-modal="true" aria-labelledby="settings-title">
       <div class="settings-panel">
         <div class="settings-head">
@@ -135,6 +137,14 @@
           <label class="shortcut-option"><input id="shortcut-desktop" type="checkbox" disabled /> Рабочий стол</label>
           <button id="create-shortcuts" type="button" class="ghost" aria-describedby="shortcuts-hint" disabled>Создать ярлыки</button>
           <p id="shortcuts-status" class="shortcut-status" role="status" aria-live="polite" aria-atomic="true"></p>
+        </section>
+        <section id="extension-settings" data-desktop-only aria-labelledby="extensions-title" hidden>
+          <h3 id="extensions-title" class="settings-section-label">Расширения</h3>
+          <p class="shortcut-hint">Добавьте папку расширения и перезапустите TerminalV. Включайте только доверенные расширения: они получают доступ к приложению и файлам пользователя.</p>
+          <button id="extensions-open-folder" type="button" class="ghost">Открыть папку расширений</button>
+          <div id="extension-list"></div>
+          <p id="extension-status" class="extension-error" role="status" aria-live="polite"></p>
+          <div id="extension-settings-panels" hidden></div>
         </section>
       </div>
     </div>

@@ -24,6 +24,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\TerminalV.Extensibility\TerminalV.Extensibility.csproj" />
     <ProjectReference Include="..\..\..\self-update-kit\src\SelfUpdateKit\SelfUpdateKit.csproj" />
   </ItemGroup>
 
@@ -32,6 +33,7 @@
     <PackageReference Include="Microsoft.Data.Sqlite" Version="9.0.8" />
     <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.3" />
     <PackageReference Include="SSH.NET" Version="2025.0.0" />
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="9.0.8" />
   </ItemGroup>
 
   <ItemGroup>

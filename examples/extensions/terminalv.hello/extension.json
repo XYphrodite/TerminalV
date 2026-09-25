@@ -1,0 +1,12 @@
+{
+  "id": "terminalv.hello",
+  "name": "Hello extension",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "description": "Пример панели, команд, хранения данных и событий из C#.",
+  "ui": "ui/main.js",
+  "host": {
+    "assembly": "host/HelloExtension.dll",
+    "type": "HelloExtension.HelloExtension"
+  }
+}

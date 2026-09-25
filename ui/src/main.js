@@ -7,6 +7,8 @@ import { SearchAddon } from "@xterm/addon-search";
 import "@xterm/xterm/css/xterm.css";
 import "./styles.css";
 import "./chrome.css";
+import "./extensions.css";
+import { createExtensionsUi } from "./extensions-ui.js";
 import { icon, mountIcons } from "./icons.js";
 import { THEMES, getTheme } from "./themes.js";
 import { getPlainSelection } from "./selection.js";
@@ -65,6 +67,8 @@ const bgClear = document.getElementById("bg-clear");
 const bgOpacityEl = document.getElementById("bg-opacity");
 const bgOpacityValue = document.getElementById("bg-opacity-value");
 const shortcuts = createShortcuts({ root: document.getElementById("shortcut-settings"), post });
+const extensions = createExtensionsUi({ post });
+window.addEventListener("pagehide", () => { void extensions.dispose(); }, { once: true });
 const sessionFilter = document.getElementById("session-filter");
 const hiddenSessionsBtn = document.getElementById("hidden-sessions");
 const notificationStatus = document.getElementById("notification-status");
@@ -1652,7 +1656,10 @@ function handleHost(message) {
     return;
   }
 
+  if (extensions.receive(message)) return;
+
   if (message.type === "init") {
+    extensions.initialize(message);
     shortcuts.setSupported(message.shortcutsSupported);
     launchProfiles.setProfiles(message.profiles);
     if (message.shellName) {

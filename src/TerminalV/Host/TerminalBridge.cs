@@ -12,6 +12,7 @@ using Microsoft.Win32;
 using SelfUpdateKit;
 using TerminalV.Data;
 using TerminalV.Diagnostics;
+using TerminalV.Extensions;
 using TerminalV.Pty;
 using TerminalV.Shell;
 using TerminalV.Update;
@@ -35,6 +36,8 @@ internal sealed class TerminalBridge : IDisposable
     private readonly CancellationTokenSource _updateCts = new();
     private readonly AppDatabase _db = new();
     private readonly SessionClient _host = new();
+    private readonly ExtensionManager? _extensions;
+    private readonly string? _extensionsError;
     private int _updateBusy;
     private int _catalogBusy;
     private int _shortcutsBusy;
@@ -61,6 +64,20 @@ internal sealed class TerminalBridge : IDisposable
         _host.Exited += (id, code) => Post(new { type = "exit", id, code });
         _host.DirectoryChanged += (id, cwd, notice) => Post(new { type = "cwd", id, cwd, notice });
         _host.Error += (id, message) => Post(new { type = "error", id, message });
+        try
+        {
+            _extensions = new ExtensionManager(
+                Path.Combine(AppPaths.Root, "extensions"), Path.Combine(AppPaths.Root, "extension-data"),
+                Post, (id, message) => Diag.Log("extensions", id, message));
+            foreach (var (name, directory) in _extensions.UiMappings)
+                _webView.SetVirtualHostNameToFolderMapping(name, directory, CoreWebView2HostResourceAccessKind.Allow);
+        }
+        catch (Exception ex)
+        {
+            _extensionsError = ex.Message;
+            if (_extensions is not null) _ = _extensions.StopAsync();
+            Diag.Log("extensions", "Extension manager initialization failed", ex.ToString());
+        }
     }
 
     public void SendInit()
@@ -73,6 +90,8 @@ internal sealed class TerminalBridge : IDisposable
             version = AppVersion.Informational,
             updateSupported = _canUpdate,
             shortcutsSupported = _shortcuts.Supported,
+            extensionsSupported = _extensions is not null && _extensionsError is null,
+            extensionsError = _extensionsError,
             settings = _db.LoadSettings(),
             sessions = _db.LoadSessions(),
             layouts = _db.LoadLayouts(),
@@ -136,6 +155,17 @@ internal sealed class TerminalBridge : IDisposable
 
         if (message?.Type is null)
         {
+            return;
+        }
+
+        if (message.Type.StartsWith("extensions:", StringComparison.Ordinal))
+        {
+            if (_extensions is not null && _extensionsError is null)
+                _ = Task.Run(() => _extensions.HandleAsync(message.Type, message.ExtensionId, message.RequestId,
+                    message.Method, message.Args, message.Enabled));
+            else
+                Post(new { type = "extensions:result", requestId = message.RequestId, extensionId = message.ExtensionId,
+                    error = _extensionsError ?? "Extensions are unavailable." });
             return;
         }
 
@@ -334,6 +364,8 @@ internal sealed class TerminalBridge : IDisposable
         }
     }
 
+    public Task StopExtensionsAsync() => _extensions?.StopAsync() ?? Task.CompletedTask;
+
     public void Dispose()
     {
         if (_disposed)
@@ -342,6 +374,7 @@ internal sealed class TerminalBridge : IDisposable
         }
 
         _disposed = true;
+        _ = StopExtensionsAsync();
         _updateCts.Cancel();
         _updateCts.Dispose();
         _db.Dispose();

@@ -52,6 +52,7 @@ TerminalV update
 ## Документация
 
 - [Как пользоваться](docs/usage.md) — вкладки, клавиши, копирование
+- [Расширения](docs/extensions.md) — установка пакетов, C# SDK, JS API и пример
 - [ProjectContext.md](ProjectContext.md) — архитектура и устройство кода
 - [Проверка Windows-пакета](docs/package-verification.md) — результаты, воспроизведение и проверки перед выпуском
 

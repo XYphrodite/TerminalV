@@ -1,10 +1,12 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/TerminalV.Extensibility/TerminalV.Extensibility.csproj" />
     <Project Path="src/TerminalV/TerminalV.csproj" />
     <Project Path="src/TerminalV.Com/TerminalV.Com.csproj" />
     <Project Path="src/TerminalV.Mobile/TerminalV.Mobile.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/TerminalV.Extensions.Tests/TerminalV.Extensions.Tests.csproj" />
     <Project Path="tests/TerminalV.Data.Tests/TerminalV.Data.Tests.csproj" />
     <Project Path="tests/TerminalV.Package.Tests/TerminalV.Package.Tests.csproj" />
     <Project Path="tests/TerminalV.Pty.Tests/TerminalV.Pty.Tests.csproj" />
