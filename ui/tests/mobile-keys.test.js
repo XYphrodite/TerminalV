@@ -32,6 +32,14 @@ test("arrow keys send VT100 cursor sequences, Esc/Tab send their controls", () =
   assert.equal(MOBILE_KEY_SEQUENCES.Tab, "\t");
 });
 
+test("documented aliases map to same sequences", () => {
+  assert.equal(MOBILE_KEY_SEQUENCES.Esc, "\x1b");
+  assert.equal(MOBILE_KEY_SEQUENCES.Up, "\x1b[A");
+  assert.equal(MOBILE_KEY_SEQUENCES.Down, "\x1b[B");
+  assert.equal(MOBILE_KEY_SEQUENCES.Left, "\x1b[D");
+  assert.equal(MOBILE_KEY_SEQUENCES.Right, "\x1b[C");
+});
+
 test("pointer tap sends once without focus change; keyboard click still works", () => {
   const root = fakeRoot(["ArrowUp"]);
   const sent = [];

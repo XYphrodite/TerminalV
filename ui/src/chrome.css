@@ -329,6 +329,7 @@ input[type="range"], input[type="checkbox"] { accent-color: var(--accent); }
 /* Mobile-only key bar (Esc/Tab/arrows). Shown only when data-mobile-only is unhidden. */
 .mobile-keys {
   display: flex; flex: 0 0 auto; align-items: center; justify-content: center; gap: 8px;
+  width: 100%; box-sizing: border-box;
   padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
   background: var(--sidebar); border-top: 1px solid var(--border-soft);
 }

@@ -4,11 +4,16 @@
 // pane navigation can never trigger from these buttons).
 export const MOBILE_KEY_SEQUENCES = {
   Escape: "\x1b",
+  Esc: "\x1b",
   Tab: "\t",
   ArrowLeft: "\x1b[D",
   ArrowUp: "\x1b[A",
   ArrowDown: "\x1b[B",
-  ArrowRight: "\x1b[C"
+  ArrowRight: "\x1b[C",
+  Left: "\x1b[D",
+  Up: "\x1b[A",
+  Down: "\x1b[B",
+  Right: "\x1b[C"
 };
 
 export function createMobileKeys({ root, send }) {
