@@ -50,6 +50,10 @@ jobs:
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: dotnet run --project tests/TerminalV.Data.Tests -c Release
 
+      - name: Check WPF window state restoration
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: dotnet run --project tests/TerminalV.Window.Tests -c Release
+
       - name: Check isolated session host and ConPTY restoration
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: dotnet run --project tests/TerminalV.Pty.Tests -c Release

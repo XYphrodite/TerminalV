@@ -79,6 +79,8 @@ jobs:
         run: |
           dotnet run --project tests/TerminalV.Data.Tests -c Release
           if ($LASTEXITCODE -ne 0) { throw "Session database checks failed" }
+          dotnet run --project tests/TerminalV.Window.Tests -c Release
+          if ($LASTEXITCODE -ne 0) { throw "Window state checks failed" }
           dotnet run --project tests/TerminalV.Pty.Tests -c Release
           if ($LASTEXITCODE -ne 0) { throw "Session host checks failed" }
           $env:TERMINALV_TEST_APP_ROOT = (Resolve-Path "artifacts/release-$env:TAG/verified-full/wwwroot").Path

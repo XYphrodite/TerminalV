@@ -17,6 +17,52 @@ void Equal<T>(T actual, T expected)
 
 try
 {
+    Check("window state survives reopening independently of UI settings and sessions", () =>
+    {
+        var windowPath = Path.Combine(root, "window.db");
+        using (var db = new AppDatabase(windowPath))
+        {
+            Equal(db.LoadWindowMaximized(), false);
+            db.SaveWindowMaximized(true);
+            db.SaveSettings(new() { ThemeId = "window-test" });
+            db.SaveSessions([new() { Id = "kept", Buffer = "Saved output" }]);
+        }
+        using (var reopened = new AppDatabase(windowPath))
+        {
+            Equal(reopened.LoadWindowMaximized(), true);
+            Equal(reopened.LoadSettings().ThemeId, "window-test");
+            Equal(reopened.LoadSessions().Single().Buffer, "Saved output");
+            reopened.SaveWindowMaximized(false);
+        }
+        using var restored = new AppDatabase(windowPath);
+        Equal(restored.LoadWindowMaximized(), false);
+        Equal(restored.LoadSettings().ThemeId, "window-test");
+        Equal(restored.LoadSessions().Single().Id, "kept");
+    });
+
+    Check("malformed window state falls back without losing settings or sessions", () =>
+    {
+        var windowPath = Path.Combine(root, "window-invalid.db");
+        using (var db = new AppDatabase(windowPath))
+        {
+            db.SaveSettings(new() { FontSize = 18 });
+            db.SaveSessions([new() { Id = "kept" }]);
+        }
+        using (var connection = new SqliteConnection($"Data Source={windowPath}"))
+        {
+            connection.Open();
+            using var insert = connection.CreateCommand();
+            insert.CommandText = "INSERT INTO settings(key, value) VALUES('window-maximized', 'corrupt')";
+            insert.ExecuteNonQuery();
+        }
+        using var reopened = new AppDatabase(windowPath);
+        Equal(reopened.LoadWindowMaximized(), false);
+        Equal(reopened.LoadSettings().FontSize, 18);
+        Equal(reopened.LoadSessions().Single().Id, "kept");
+        reopened.SaveWindowMaximized(true);
+        Equal(reopened.LoadWindowMaximized(), true);
+    });
+
     Check("only one desktop can own a data directory", () =>
     {
         var dataDirectory = Directory.CreateDirectory(Path.Combine(root, "desktop-exclusive")).FullName;

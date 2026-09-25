@@ -61,6 +61,25 @@ internal sealed class AppDatabase : IDisposable
         cmd.ExecuteNonQuery();
     }
 
+    public bool LoadWindowMaximized()
+    {
+        using var cmd = _connection.CreateCommand();
+        cmd.CommandText = "SELECT value FROM settings WHERE key = 'window-maximized'";
+        return bool.TryParse(cmd.ExecuteScalar() as string, out var maximized) && maximized;
+    }
+
+    public void SaveWindowMaximized(bool maximized)
+    {
+        // Native window state must survive replacement of the UI's app settings.
+        using var cmd = _connection.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO settings(key, value) VALUES('window-maximized', $value)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            """;
+        cmd.Parameters.AddWithValue("$value", maximized ? "true" : "false");
+        cmd.ExecuteNonQuery();
+    }
+
     public List<LaunchProfile> LoadProfiles()
     {
         using var cmd = _connection.CreateCommand();

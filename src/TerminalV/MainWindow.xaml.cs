@@ -27,6 +27,18 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         WindowFrame.Hook(this);
+        WindowStatePersistence.Hook(this,
+            load: () =>
+            {
+                using var db = new AppDatabase();
+                return db.LoadWindowMaximized();
+            },
+            save: maximized =>
+            {
+                using var db = new AppDatabase();
+                db.SaveWindowMaximized(maximized);
+            },
+            onError: ex => Diag.Log("persistence", "Window state persistence failed", ex.ToString()));
         WebView.DefaultBackgroundColor = System.Drawing.Color.FromArgb(255, 11, 13, 16);
         Loaded += OnLoaded;
         Closing += OnClosing;
