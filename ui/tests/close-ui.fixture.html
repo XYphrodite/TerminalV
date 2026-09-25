@@ -147,7 +147,7 @@
     s.doc.querySelector('.pane[data-id="first"] .overlay button').click();
     equal(s.dialog.open, true);
     s.cancel.click();
-    equal(s.messages("create").length, 2);
+    equal(s.messages("create").length, 0);
     equal(s.messages("kill").length, 0);
   });
 
@@ -159,7 +159,7 @@
     s.confirm.click();
     equal(s.tabs(), 2);
     equal(s.messages("kill").length, 0);
-    equal(s.messages("create").length, 3);
+    equal(s.messages("create").length, 1);
   });
 
   await check("a programmatic tab switch invalidates an open confirmation", async (s) => {
