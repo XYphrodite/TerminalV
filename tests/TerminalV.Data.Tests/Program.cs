@@ -359,6 +359,34 @@ try
         Equal(layouts[0].SessionId, "visible");
         Equal(relayout.LoadSessions().First(r => r.Id == "visible").Buffer, "привет чат история\nвторая строка \u001b[34m");
     });
+
+    Check("empty save over populated DB is ignored to prevent upgrade wipe", () =>
+    {
+        var emptyPath = Path.Combine(root, "empty-wipe.db");
+        using (var db = new AppDatabase(emptyPath))
+        {
+            db.SaveSessions([
+                new() { Id = "keep1", Title = "Keep", Buffer = "buffer1" },
+                new() { Id = "keep2", Title = "Keep2", Buffer = "buffer2" }
+            ]);
+            Equal(db.LoadSessions().Count, 2);
+            // Simulate upgrade race: UI posts empty list before init
+            db.SaveSessions([]);
+            Equal(db.LoadSessions().Count, 2);
+            Equal(db.LoadSessions().Any(s => s.Id == "keep1"), true);
+            // Explicit clear on fresh DB (0 existing) is allowed
+            var freshEmpty = Path.Combine(root, "fresh-empty.db");
+            using (var fresh = new AppDatabase(freshEmpty))
+            {
+                fresh.SaveSessions([]);
+                Equal(fresh.LoadSessions().Count, 0);
+            }
+            // Intentional overwrite with new inventory still works
+            db.SaveSessions([new() { Id = "new" }]);
+            Equal(db.LoadSessions().Count, 1);
+            Equal(db.LoadSessions()[0].Id, "new");
+        }
+    });
 }
 finally
 {

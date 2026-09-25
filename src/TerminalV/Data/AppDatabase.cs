@@ -149,6 +149,21 @@ internal sealed class AppDatabase : IDisposable
 
     public void SaveSessions(IReadOnlyList<SessionRecord> sessions, IReadOnlyList<PaneLayout>? layouts = null)
     {
+        // Never wipe the entire inventory on an empty flush: upgrade/reload
+        // may post an empty list before init has restored tabs (readyForPersist
+        // race, WebView2 not ready, or JSON failure). An intentional "close all"
+        // must be explicit, not an accidental empty commit over a populated DB.
+        if (sessions.Count == 0)
+        {
+            using var count = _connection.CreateCommand();
+            count.CommandText = "SELECT COUNT(*) FROM sessions";
+            var existing = Convert.ToInt64(count.ExecuteScalar());
+            if (existing > 0)
+            {
+                try { TerminalV.Diagnostics.Diag.Log("persistence", $"SaveSessions skipped empty wipe over {existing} existing sessions", null); } catch { }
+                return;
+            }
+        }
         // Preserve every session regardless of Hidden – visible sessions must also
         // survive restart with buffer/cwd, not only hidden ones.
         var normalized = PaneLayout.Normalize(layouts ?? LoadLayouts(), sessions);
