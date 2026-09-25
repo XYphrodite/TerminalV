@@ -55,6 +55,8 @@ jobs:
           go-version-file: tools/tsnet-bridge/go.mod
           cache-dependency-path: tools/tsnet-bridge/go.sum
 
+      - uses: android-actions/setup-android@v3
+
       - name: Install MAUI workload
         run: dotnet workload install maui --ignore-failed-sources
 
@@ -72,7 +74,10 @@ jobs:
         run: |
           $aar = "src/TerminalV.Mobile/Platforms/Android/libs/tsnet.aar"
           if (Test-Path $aar) { Write-Host "tsnet.aar already present, skipping build"; exit 0 }
-          pwsh -File tools/tsnet-bridge/build-aar.ps1
+          $sdk = $env:ANDROID_HOME
+          if (-not $sdk) { $sdk = $env:ANDROID_SDK_ROOT }
+          Write-Host "ANDROID_HOME=$sdk"
+          pwsh -File tools/tsnet-bridge/build-aar.ps1 -AndroidSdk $sdk
           if ($LASTEXITCODE -ne 0) { throw "build-aar.ps1 failed" }
           $built = "tools/tsnet-bridge/tsnet.aar"
           if (Test-Path $built) {
