@@ -573,6 +573,7 @@ CheckAsync("Mirror gateway end-to-end: list, attach, write, resize, auth", async
 
 CheckAsync("Tailnet gateway access", TailnetChecks.Run);
 CheckAsync("Gateway shares the desktop pipe and replays only to the new subscriber", SharedGatewayChecks.Run);
+CheckAsync("Gateway preserves terminal modes across host and live replay truncation", GatewayReplayBufferChecks.Run);
 Console.WriteLine($"Ssh checks: {passed} passed, {failed} failed.");
 if (failed > 0) Environment.Exit(1);
 

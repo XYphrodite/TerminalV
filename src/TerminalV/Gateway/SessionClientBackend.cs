@@ -1,4 +1,3 @@
-using System.Text;
 using TerminalV.Host;
 
 namespace TerminalV.Gateway;
@@ -14,7 +13,7 @@ internal sealed class SessionClientBackend : IGatewaySessionBackend, IGatewayRep
 
     private sealed class Snapshot
     {
-        public StringBuilder Text { get; } = new();
+        public TerminalReplayBuffer Text { get; set; } = new(SnapshotCapacity);
         public TaskCompletionSource<bool> Ready { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public bool Prepared { get; set; }
         public bool DesktopAttached { get; set; }
@@ -86,7 +85,8 @@ internal sealed class SessionClientBackend : IGatewaySessionBackend, IGatewayRep
             lock (_gate)
             {
                 AssertCurrent(id, snapshot);
-                if (snapshot.Text.Length > 0) DesktopData?.Invoke(id, snapshot.Text.ToString(), true);
+                var replay = snapshot.Text.Snapshot();
+                if (replay.Length > 0) DesktopData?.Invoke(id, replay, true);
                 snapshot.DesktopAttached = true;
                 completed.TrySetResult(true);
             }
@@ -118,7 +118,7 @@ internal sealed class SessionClientBackend : IGatewaySessionBackend, IGatewayRep
             start = !snapshot.Prepared && !snapshot.Ready.Task.IsCompleted;
             if (start)
             {
-                snapshot.Text.Clear();
+                snapshot.Text = new TerminalReplayBuffer(SnapshotCapacity);
                 snapshot.Prepared = true;
             }
         }
@@ -154,7 +154,8 @@ internal sealed class SessionClientBackend : IGatewaySessionBackend, IGatewayRep
             ct.ThrowIfCancellationRequested();
             // OnData holds this same lock: snapshot first, then every subsequent
             // live chunk exactly once. Only the new subscriber gets the replay.
-            if (snapshot.Text.Length > 0) replay(snapshot.Text.ToString());
+            var output = snapshot.Text.Snapshot();
+            if (output.Length > 0) replay(output);
             bind();
         }
     }
@@ -172,13 +173,9 @@ internal sealed class SessionClientBackend : IGatewaySessionBackend, IGatewayRep
         {
             if (_disposed) return;
             if (!_snapshots.TryGetValue(id, out var snapshot)) _snapshots[id] = snapshot = new Snapshot();
-            snapshot.Text.Append(data);
-            if (snapshot.Text.Length > SnapshotCapacity)
-            {
-                var remove = snapshot.Text.Length - SnapshotCapacity;
-                if (remove < snapshot.Text.Length && char.IsLowSurrogate(snapshot.Text[remove])) remove++;
-                snapshot.Text.Remove(0, remove);
-            }
+            // The host's bounded replay includes its discarded mode prefix.
+            // A second raw tail trim here would immediately lose that prefix.
+            snapshot.Text.Add(data);
             // The replay flag also covers real live output during attach.
             // Dropping flagged data would lose output on an older session host.
             // Old hosts do not mark the snapshot packet: live data racing before

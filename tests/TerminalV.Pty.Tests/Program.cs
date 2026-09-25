@@ -588,7 +588,15 @@ try
         // Count actual side effects, not occurrences in terminal escape sequences.
         bool HasLines(int count)
         {
-            try { return File.Exists(markerFile) && File.ReadAllLines(markerFile).Length == count; }
+            try
+            {
+                // Poll without denying cmd's concurrent append access.
+                using var file = new FileStream(markerFile, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                using var reader = new StreamReader(file);
+                var lines = 0;
+                while (reader.ReadLine() is not null) lines++;
+                return lines == count;
+            }
             catch (IOException) { return false; }
         }
         void WaitFor(Func<bool> condition, string phase)

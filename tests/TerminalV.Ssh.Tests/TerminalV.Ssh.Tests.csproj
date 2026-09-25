@@ -16,5 +16,6 @@
     <Compile Include="../../src/TerminalV/Gateway/SessionClientBackend.cs" Link="Gateway/SessionClientBackend.cs" />
     <Compile Include="../../src/TerminalV/Host/SessionClient.cs" Link="Host/SessionClient.cs" />
     <Compile Include="../../src/TerminalV/Host/OutputReplayGuard.cs" Link="Host/OutputReplayGuard.cs" />
+    <Compile Include="../../src/TerminalV/Host/TerminalReplayBuffer.cs" Link="Host/TerminalReplayBuffer.cs" />
   </ItemGroup>
 </Project>
