@@ -506,7 +506,7 @@ try
             Equal(tracker.CurrentDirectory, target);
         });
 
-        Check($"{Path.GetFileName(shell)}: real ConPTY forwards directory metadata before subscribers miss it", () =>
+        Check($"{Path.GetFileName(shell)}: real ConPTY preserves Unicode cwd under CP437 without changing output encoding", () =>
         {
             // Model the GUI host's absent standard handles. A redirected console test
             // runner would otherwise pass its own pipes to PowerShell outside ConPTY.
@@ -515,7 +515,12 @@ try
             var output = new StringBuilder();
             var cursorQueryTail = "";
             var expected = target;
-            var command = PowerShellIntegration.CommandLine(shell, target).Replace(" -NoLogo ", " -NoLogo -NoProfile ");
+            var encodingMarker = Path.Combine(testRoot, Guid.NewGuid().ToString("N") + ".txt");
+            // Force a code page that cannot represent the cwd's Cyrillic characters,
+            // independently of the Windows runner's regional settings.
+            var script = "[Console]::OutputEncoding = [Text.Encoding]::GetEncoding(437)\n" +
+                PowerShellIntegration.Script(target);
+            var command = $"\"{shell}\" -NoLogo -NoProfile -NoExit -EncodedCommand {Encode(script)}";
             using var pty = ConPtySession.Start("cwd-test", command,
                 initial, 100, 30, session =>
                 {
@@ -547,9 +552,11 @@ try
             Equal(pty.CurrentDirectory, target);
             expected = initial;
             directoryReady.Reset();
-            pty.Write("Set-Location -LiteralPath " + Quote(initial) + "\r");
+            pty.Write("[IO.File]::WriteAllText(" + Quote(encodingMarker) +
+                ", [Console]::OutputEncoding.CodePage.ToString()); Set-Location -LiteralPath " + Quote(initial) + "\r");
             WaitForDirectory();
             Equal(pty.CurrentDirectory, initial);
+            Equal(File.ReadAllText(encodingMarker), "437");
             pty.Dispose();
             Equal(child.WaitForExit(5000), true);
         });

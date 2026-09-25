@@ -36,7 +36,8 @@ internal static class PowerShellIntegration
                     try {
                         $terminalVLocation = $executionContext.SessionState.Path.CurrentLocation
                         if ($terminalVLocation.Provider.Name -eq 'FileSystem') {
-                            [Console]::Write(([char]27 + ']9;9;"' + $terminalVLocation.ProviderPath + '"' + [char]7))
+                            # The host writes Unicode to ConPTY without changing the user's output encoding.
+                            $Host.UI.Write(([char]27 + ']9;9;"' + $terminalVLocation.ProviderPath + '"' + [char]7))
                         }
                     } catch { }
                     $terminalVPrompt
