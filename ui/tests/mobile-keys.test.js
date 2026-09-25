@@ -103,3 +103,16 @@ test("key bar styling stays hidden on desktop and fits touch targets", () => {
   assert.match(css, /\.mobile-keys-row\s*\{[^}]*overflow-x:\s*auto/, "digits scrollable");
   assert.match(css, /\.mobile-keys\s*\{[^}]*flex-direction:\s*column/, "two rows without top gap");
 });
+
+test("mobile fit mode toggles desktop PTY sizing", () => {
+  const html = readFileSync(r("ui/index.html"), "utf8");
+  assert.match(html, /id="mobile-fit-mode"/, "fit toggle exists");
+  assert.match(html, /data-mobile-only/, "fit toggle mobile-only");
+  const main = readFileSync(r("ui/src/main.js"), "utf8");
+  assert.match(main, /mobileFitModeEl/, "JS wires fit toggle");
+  assert.match(main, /MobileFitMode/, "persists as MobileFitMode for C#");
+  const cs = readFileSync(r("src/TerminalV/Data/AppSettings.cs"), "utf8");
+  assert.match(cs, /MobileFitMode/, "AppSettings has MobileFitMode");
+  const bridge = readFileSync(r("src/TerminalV.Mobile/Host/MobileBridge.cs"), "utf8");
+  assert.match(bridge, /MobileFitMode/, "bridge respects fit mode");
+});

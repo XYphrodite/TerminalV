@@ -140,6 +140,11 @@
         <input id="bg-opacity" type="range" min="0" max="80" step="1" value="25" />
         <div class="settings-section-label">Рендеринг</div>
         <label class="shortcut-option"><input id="hardware-rendering" type="checkbox" checked /> Аппаратный рендеринг (WebGL)</label>
+        <section id="mobile-fit-settings" data-mobile-only aria-labelledby="mobile-fit-title">
+          <h3 id="mobile-fit-title" class="settings-section-label">Мобильный размер</h3>
+          <label class="shortcut-option"><input id="mobile-fit-mode" type="checkbox" /> Подстраивать размер сессии под телефон</label>
+          <p class="shortcut-hint">По умолчанию сессия сохраняет размер рабочего стола и на телефоне скроллится пальцем. Включи — рабочий стол подстроит PTY под размер телефона, сессия влезет без прокрутки.</p>
+        </section>
         <section id="gateway-settings" data-desktop-only aria-labelledby="gateway-title">
         <h3 id="gateway-title" class="settings-section-label">Удалённый доступ (TerminalV Mobile)</h3>
         <label class="shortcut-option"><input id="gateway-enabled" type="checkbox" checked /> Шлюз зеркала сессий (ws://:5454)</label>

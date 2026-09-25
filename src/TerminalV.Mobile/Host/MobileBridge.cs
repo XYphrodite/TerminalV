@@ -304,6 +304,11 @@ internal sealed class MobileBridge : IDisposable
             var session = _ssh.Create(id, options);
             var observed = HookSession(session);
             _connecting[id] = ConnectSessionAsync(observed);
+            if (mirror && _store.LoadSettings().MobileFitMode)
+                _connecting[id] = _connecting[id].ContinueWith(async _ =>
+                {
+                    try { await session.ResizeAsync(cols, rows); } catch { }
+                }).Unwrap();
         }
         catch (Exception ex)
         {
@@ -349,7 +354,12 @@ internal sealed class MobileBridge : IDisposable
         var session = _ssh.TryGet(id);
         if (session is null || !HasHealthyObservation(id))
             StartSession(id, cols, rows, mirror: _remoteIds.Contains(id));
-        else HookSession(session);
+        else
+        {
+            HookSession(session);
+            if (_store.LoadSettings().MobileFitMode && _remoteIds.Contains(id))
+                _ = session.ResizeAsync(cols, rows);
+        }
     }
 
     private bool HasHealthyObservation(string id)
@@ -383,7 +393,15 @@ internal sealed class MobileBridge : IDisposable
         try
         {
             if (_connecting.TryGetValue(id, out var connecting)) await connecting;
-            if (_ssh.TryGet(id) is { } session) await session.ResizeAsync(cols, rows);
+            if (_ssh.TryGet(id) is { } session)
+            {
+                // In fit mode the mobile's size drives the desktop PTY
+                if (_store.LoadSettings().MobileFitMode && _remoteIds.Contains(id))
+                {
+                    try { await session.ResizeAsync(cols, rows); return; } catch { }
+                }
+                await session.ResizeAsync(cols, rows);
+            }
         }
         catch (Exception ex) { Post(new { type = "error", id, message = ex.Message }); }
     }

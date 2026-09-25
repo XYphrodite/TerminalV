@@ -57,6 +57,7 @@ const fontSizeValue = document.getElementById("font-size-value");
 const zoomValue = document.getElementById("zoom-value");
 const sessionDensityEl = document.getElementById("session-density");
 const hardwareRenderingEl = document.getElementById("hardware-rendering");
+const mobileFitModeEl = document.getElementById("mobile-fit-mode");
 const gatewayEnabledEl = document.getElementById("gateway-enabled");
 const gatewayPortEl = document.getElementById("gateway-port");
 const gatewayTokenEl = document.getElementById("gateway-token");
@@ -101,6 +102,7 @@ const settings = {
   sidebarCollapsed: false,
   sessionDensity: "standard",
   hardwareRendering: true,
+  mobileFitMode: false,
   backgroundPath: null,
   backgroundOpacity: 0.25,
   gatewayEnabled: true,
@@ -1542,6 +1544,7 @@ function syncGatewayForm() {
 
 function syncSettingsForm() {
   hardwareRenderingEl.checked = settings.hardwareRendering !== false;
+  if (mobileFitModeEl) mobileFitModeEl.checked = !!settings.mobileFitMode;
   syncGatewayForm();
   sessionDensityEl.value = settings.sessionDensity === "minimal" ? "minimal" : "standard";
   fontSizeEl.value = String(settings.fontSize);
@@ -1968,6 +1971,20 @@ hardwareRenderingEl.addEventListener("change", () => {
   settings.hardwareRendering = hardwareRenderingEl.checked;
   applyRenderer();
   persistSettings();
+});
+if (mobileFitModeEl) mobileFitModeEl.addEventListener("change", () => {
+  settings.mobileFitMode = mobileFitModeEl.checked;
+  settings.MobileFitMode = settings.mobileFitMode;
+  persistSettings();
+  if (settings.mobileFitMode) {
+    for (const tab of visibleTabs()) {
+      if (tab.pane) {
+        const cols = tab.term ? tab.term.cols : 80;
+        const rows = tab.term ? tab.term.rows : 24;
+        post({ type: "resize", id: tab.id, cols, rows });
+      }
+    }
+  }
 });
 gatewayEnabledEl.addEventListener("change", () => {
   settings.gatewayEnabled = gatewayEnabledEl.checked;
