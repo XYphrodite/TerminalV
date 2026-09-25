@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag (e.g. v0.7.10). Must match Version in src/TerminalV/TerminalV.csproj'
+        description: 'Release tag (e.g. v0.7.11). Must match Version in src/TerminalV/TerminalV.csproj'
         required: true
-        default: 'v0.7.10'
+        default: 'v0.7.11'
   push:
     tags:
       - 'v*'
@@ -33,8 +33,17 @@ jobs:
       - name: Move self-update-kit next to the repo
         shell: pwsh
         run: |
-          if (Test-Path ../self-update-kit) { Remove-Item -Recurse -Force ../self-update-kit }
-          Move-Item -Path kit-tmp -Destination ../self-update-kit
+          $workspace = [IO.Path]::GetFullPath($env:GITHUB_WORKSPACE)
+          $parent = Split-Path $workspace -Parent
+          $source = [IO.Path]::GetFullPath((Join-Path $workspace 'kit-tmp'))
+          $destination = [IO.Path]::GetFullPath((Join-Path $parent 'self-update-kit'))
+          if ((Split-Path $source -Parent) -ne $workspace -or
+              (Split-Path $destination -Parent) -ne $parent -or
+              (Split-Path $destination -Leaf) -ne 'self-update-kit') {
+            throw 'Unexpected self-update-kit staging paths'
+          }
+          if (Test-Path -LiteralPath $destination) { throw 'self-update-kit destination already exists' }
+          Move-Item -LiteralPath $source -Destination $destination
 
       - uses: actions/setup-dotnet@v4
         with:
@@ -92,14 +101,45 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw "Session interface checks failed" }
           } finally { Pop-Location }
 
+      - name: Verify extensions before release
+        shell: pwsh
+        run: |
+          dotnet run --project tests/TerminalV.Extensions.Tests -c Release
+          if ($LASTEXITCODE -ne 0) { throw 'Extension host checks failed' }
+          node --test --test-concurrency=1 ui/tests/extensions.test.js
+          if ($LASTEXITCODE -ne 0) { throw 'Extension UI API checks failed' }
+          foreach ($variant in @('full', 'light')) {
+            $env:TERMINALV_TEST_APP_ROOT = (Resolve-Path "artifacts/release-$env:TAG/verified-$variant/wwwroot").Path
+            node --test --test-concurrency=1 --test-name-pattern='extension interface' ui/tests/selection.test.js
+            if ($LASTEXITCODE -ne 0) { throw "Extension interface checks failed in $variant package" }
+          }
+
+      - name: Package example extension
+        shell: pwsh
+        run: |
+          $releaseDirectory = "artifacts/release-$env:TAG"
+          $package = "$releaseDirectory/extensions/terminalv.hello"
+          New-Item -ItemType Directory -Force -Path "$package/host" | Out-Null
+          dotnet build examples/extensions/terminalv.hello/host/HelloExtension.csproj -c Release -o "$package/host"
+          if ($LASTEXITCODE -ne 0) { throw 'Example extension build failed' }
+          Copy-Item examples/extensions/terminalv.hello/extension.json $package
+          Copy-Item examples/extensions/terminalv.hello/ui $package -Recurse
+          $zip = "$releaseDirectory/terminalv.hello.zip"
+          Compress-Archive -Path $package -DestinationPath $zip
+          $hash = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          Set-Content -LiteralPath "$zip.sha256" -Value "$hash  terminalv.hello.zip" -Encoding ascii
+
       - name: Create GitHub Release
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           $notes = "docs/releases/$env:TAG.md"
-          gh release create $env:TAG --title "TerminalV $env:TAG" --notes-file $notes `
+          gh release create $env:TAG --verify-tag --title "TerminalV $env:TAG" --notes-file $notes `
             "artifacts/release-$env:TAG/TerminalV-win-x64.zip" `
             "artifacts/release-$env:TAG/TerminalV-win-x64.zip.sha256" `
             "artifacts/release-$env:TAG/TerminalV-win-x64-light.zip" `
-            "artifacts/release-$env:TAG/TerminalV-win-x64-light.zip.sha256"
+            "artifacts/release-$env:TAG/TerminalV-win-x64-light.zip.sha256" `
+            "artifacts/release-$env:TAG/terminalv.hello.zip" `
+            "artifacts/release-$env:TAG/terminalv.hello.zip.sha256"
+          if ($LASTEXITCODE -ne 0) { throw 'GitHub Release publication failed' }
