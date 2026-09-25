@@ -41,7 +41,12 @@ try {
         $folders = @{ Programs = (Join-Path $case 'redirected\Programs'); DesktopDirectory = (Join-Path $case 'OneDrive\Desktop') }
         $resolveFolder = { param($name) $folders[$name] }
         $script:notices = New-Object 'System.Collections.Generic.List[object]'
-        Install-TerminalVShortcuts -Executable $exe -NoShortcut:$choice[0] -DesktopShortcut:$choice[1] -FolderPath $resolveFolder
+        $warnings = @()
+        Install-TerminalVShortcuts -Executable $exe -NoShortcut:$choice[0] -DesktopShortcut:$choice[1] -FolderPath $resolveFolder -WarningVariable warnings
+        if ($warnings.Count) {
+            $Error[0] | Format-List * -Force | Out-Host
+            throw "Unexpected shortcut warning: $($warnings -join '; ')"
+        }
         $menu = Join-Path $folders.Programs 'TerminalV.lnk'
         $desktop = Join-Path $folders.DesktopDirectory 'TerminalV.lnk'
         Assert ((Test-Path -LiteralPath $menu) -eq (-not $choice[0])) 'Wrong Start Menu default'
