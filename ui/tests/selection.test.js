@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { dirname, extname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
+import { runFrameFixture } from "./browser-frames.js";
 
 const uiRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // Point at an extracted Windows package for pre-release checks of the actual payload.
@@ -55,7 +56,9 @@ async function runBrowserFixture(t, fixture) {
       fixture === "close-ui" ? process.env.TERMINALV_CLOSE_SCREENSHOT :
       fixture === "search-ui" ? process.env.TERMINALV_SEARCH_SCREENSHOT :
       fixture === "paste-confirmation" && process.env.TERMINALV_TEST_SCREENSHOT;
-    const output = await new Promise((resolve, reject) => {
+    const output = fixture === "viewport-restore"
+      ? await runFrameFixture(browser, profile, `http://127.0.0.1:${server.address().port}/tests/${fixture}.fixture.html`)
+      : await new Promise((resolve, reject) => {
       const child = spawn(browser, [
         "--headless", "--disable-gpu", "--no-first-run", "--no-default-browser-check",
         "--disable-extensions", "--disable-background-networking", "--disable-component-update",

@@ -12,7 +12,12 @@
   import { createPaneView } from "/src/pane-view.js";
 
   const results = [];
-  const delay = () => new Promise(resolve => setTimeout(resolve, 100));
+  // Parsing callbacks precede xterm's animation-frame scrollbar updates. In
+  // headless virtual time, a timer alone can elapse without painting a frame.
+  const delay = async () => {
+    await new Promise(resolve => setTimeout(resolve, 100));
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  };
   function equal(actual, expected) {
     if (actual !== expected) throw new Error(`Expected ${expected}, got ${actual}`);
   }
