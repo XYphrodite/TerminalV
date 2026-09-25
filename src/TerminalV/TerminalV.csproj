@@ -12,7 +12,7 @@
     <Product>TerminalV</Product>
     <AssemblyTitle>TerminalV</AssemblyTitle>
     <Version>0.7.17</Version>
-    <InformationalVersion>0.7.16</InformationalVersion>
+    <InformationalVersion>0.7.17</InformationalVersion>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\TerminalV.ico</ApplicationIcon>
   </PropertyGroup>
