@@ -136,7 +136,6 @@ internal static class Program
             Title = "TerminalV window persistence test",
             Width = 320,
             Height = 200,
-            ShowActivated = false,
             ShowInTaskbar = false
         };
         OpenWindows.Add(window);
