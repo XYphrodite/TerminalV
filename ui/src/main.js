@@ -27,6 +27,7 @@ import { syncTerminalViewport } from "./terminal-viewport.js";
 import { attachMirrorPan, layoutMirrorViewport, setMirrorSize } from "./mirror-viewport.js";
 import { SynchronizedOutputAddon } from "./synchronized-output.js";
 import { createShortcuts } from "./shortcuts.js";
+import { createMobileKeys, MOBILE_KEY_SEQUENCES } from "./mobile-keys.js";
 import { WRITE_CHUNK, chunkText } from "./write-chunk.js";
 import { shouldStoreAsFile, PASTE_FILE_STORE_TIMEOUT_MS } from "./paste-file.js";
 import { normalizeGatewaySettings, gatewayStatusText, gatewayConnectHint, generateGatewayToken } from "./gateway-settings.js";
@@ -94,7 +95,7 @@ let draggedTabId = null;
 
 const settings = {
   themeId: "midnight",
-  fontFamily: "Cascadia Code, Cascadia Mono, Consolas, Courier New, monospace",
+  fontFamily: "Cascadia Code, Cascadia Mono, Roboto Mono, Droid Sans Mono, Noto Sans Mono, Consolas, Courier New, monospace",
   fontSize: 14,
   zoom: 0,
   sidebarCollapsed: false,
@@ -177,6 +178,19 @@ const launchMenu = createLaunchMenu({
   dialog: document.getElementById("launch-menu"), trigger: document.getElementById("launch-profiles-btn"), post,
   getProfiles: () => launchProfiles.profiles,
   onLaunch: options => newTab(options), onEdit: id => launchProfiles.open(id)
+});
+
+// Mobile-only key bar (Esc/Tab/arrows). Hidden on desktop via data-mobile-only.
+createMobileKeys({
+  root: document.getElementById("mobile-keys"),
+  send: (key) => {
+    if (isModalOpen()) return;
+    const tab = currentTab();
+    const data = MOBILE_KEY_SEQUENCES[key];
+    if (!tab || tab.exited || !data) return;
+    post({ type: "write", id: tab.id, data });
+    tab.term.focus();
+  }
 });
 
 function isModalOpen() {
@@ -539,6 +553,7 @@ function applyToTerminals() {
     tab.term.options.theme = theme;
     tab.term.options.fontFamily = settings.fontFamily;
     tab.term.options.fontSize = size;
+    tab.term.options.letterSpacing = 0;
     tab.term.options.allowTransparency = Boolean(settings.backgroundPath);
     applyBackground(tab.pane);
     if (isPaneVisible(tab)) {
@@ -1201,6 +1216,7 @@ function newTab(options = {}) {
     fontFamily: settings.fontFamily,
     fontSize: effectiveFontSize(),
     lineHeight: 1.2,
+    letterSpacing: 0,
     cursorBlink: true,
     cursorStyle: "bar",
     cursorWidth: 2,
@@ -1441,6 +1457,9 @@ function fillFonts(list) {
   const preferred = [
     "Cascadia Code",
     "Cascadia Mono",
+    "Roboto Mono",
+    "Droid Sans Mono",
+    "Noto Sans Mono",
     "Consolas",
     "Courier New",
     "JetBrains Mono",
@@ -1929,7 +1948,7 @@ bgClear.addEventListener("click", () => {
   persistSettings();
 });
 fontFamilyEl.addEventListener("change", () => {
-  settings.fontFamily = `${fontFamilyEl.value}, Consolas, monospace`;
+  settings.fontFamily = `${fontFamilyEl.value}, Roboto Mono, Droid Sans Mono, Noto Sans Mono, Consolas, monospace`;
   applyToTerminals();
   persistSettings();
 });

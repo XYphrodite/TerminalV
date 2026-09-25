@@ -3,7 +3,7 @@ namespace TerminalV.Data;
 internal sealed class AppSettings
 {
     public string ThemeId { get; set; } = "midnight";
-    public string FontFamily { get; set; } = "Cascadia Code, Cascadia Mono, Consolas, Courier New, monospace";
+    public string FontFamily { get; set; } = "Cascadia Code, Cascadia Mono, Roboto Mono, Droid Sans Mono, Noto Sans Mono, Consolas, Courier New, monospace";
     public int FontSize { get; set; } = 14;
     public int Zoom { get; set; }
     public bool SidebarCollapsed { get; set; }

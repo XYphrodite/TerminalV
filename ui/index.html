@@ -65,6 +65,14 @@
           <button type="button" class="icon-btn" aria-label="Закрыть уведомление о папке" title="Закрыть уведомление" data-icon="close"></button>
         </div>
         <div id="panes"></div>
+        <div id="mobile-keys" class="mobile-keys" role="group" aria-label="Клавиши со стрелками" data-mobile-only hidden>
+          <button type="button" data-key="Escape" title="Escape" aria-label="Escape">Esc</button>
+          <button type="button" data-key="Tab" title="Tab" aria-label="Tab">Tab</button>
+          <button type="button" data-key="ArrowLeft" title="Влево" aria-label="Стрелка влево">←</button>
+          <button type="button" data-key="ArrowUp" title="Вверх" aria-label="Стрелка вверх">↑</button>
+          <button type="button" data-key="ArrowDown" title="Вниз" aria-label="Стрелка вниз">↓</button>
+          <button type="button" data-key="ArrowRight" title="Вправо" aria-label="Стрелка вправо">→</button>
+        </div>
         <div id="empty" class="empty hidden">
           <div class="empty-mark" data-icon="terminal"></div>
           <div class="empty-eyebrow">ВАШЕ РАБОЧЕЕ ПРОСТРАНСТВО</div>
@@ -94,7 +102,7 @@
         <select id="font-family"></select>
 
         <label class="field-label" for="font-size">Размер шрифта <span id="font-size-value">14</span></label>
-        <input id="font-size" type="range" min="10" max="22" step="1" value="14" />
+        <input id="font-size" type="range" min="8" max="22" step="1" value="14" />
 
         <div class="zoom-row">
           Масштаб как в VS Code: Ctrl + / − / 0
