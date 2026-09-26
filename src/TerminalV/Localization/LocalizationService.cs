@@ -22,6 +22,7 @@ public static class LocalizationService
         if (_provider is not null) return;
 
         var services = new ServiceCollection();
+        services.AddLogging();
         services.AddLocalization(options => options.ResourcesPath = "Localization/Resources");
         _provider = services.BuildServiceProvider();
         _factory = _provider.GetRequiredService<IStringLocalizerFactory>();

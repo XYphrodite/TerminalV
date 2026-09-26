@@ -19,7 +19,7 @@ for (const [pkg, file, name, global] of packages) {
   source = source.replace(`import { ${name} } from "${pkg}";`, `const { ${name} } = ${global};`);
 }
 source = source.replace(/^import "[^"\n]+\.css";\r?\n/gm, "")
-  .replace(/from "(\.[^"\n]+)"/g, (_, path) => `from "${new URL(path, new URL("/src/main.js", document.baseURI)).href}"`);
+  .replace(/from "(\.[^"\n]+)"(\s+with\s+\{[^}]+\})?/g, (_, path, withClause) => `from "${new URL(path, new URL("/src/main.js", document.baseURI)).href}"${withClause || ""}`);
 source += "\nwindow.__sourceTabs = tabs;\n";
 const url = URL.createObjectURL(new Blob([source], { type: "text/javascript" }));
 try { await import(url); }

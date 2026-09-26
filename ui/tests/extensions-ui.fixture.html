@@ -9,7 +9,7 @@
     if (JSON.stringify(actual) !== JSON.stringify(expected)) throw new Error(`Expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
   };
   const frame = document.createElement("iframe");
-  const init = { extensionsSupported: true, sessions: [{ id: "live", title: "Live", active: true }], liveIds: ["live"] };
+  const init = { extensionsSupported: true, sessions: [{ id: "live", title: "Live", active: true }], liveIds: ["live"], settings: { language: "ru" } };
   frame.srcdoc = source.replace("<head>", `<head><base href="${location.origin}/app/"><script>window.testInit = ${JSON.stringify(init)};<\/script><script src="/tests/search-host.js"><\/script><script src="/tests/extensions-host.js"><\/script>`);
   const loaded = new Promise(resolve => frame.addEventListener("load", resolve, { once: true }));
   document.body.append(frame);

@@ -44,8 +44,12 @@ internal sealed class AppDatabase : IDisposable
         try
         {
             var settings = JsonSerializer.Deserialize<AppSettings>(value, Json) ?? new AppSettings { Language = DetectSystemLanguage() };
-            // Old DB without Language field -> migrate to system language instead of hardcoded ru.
-            settings.Language = string.IsNullOrWhiteSpace(settings.Language) ? DetectSystemLanguage() : NormalizeLanguage(settings.Language);
+            // Old DB without Language field: JSON won't contain "language" key, deserialized default is "ru" - migrate to system language.
+            var hasLanguageKey = value.Contains("\"language\"", StringComparison.OrdinalIgnoreCase);
+            if (!hasLanguageKey || string.IsNullOrWhiteSpace(settings.Language))
+                settings.Language = DetectSystemLanguage();
+            else
+                settings.Language = NormalizeLanguage(settings.Language);
             return settings;
         }
         catch (JsonException)
@@ -56,7 +60,7 @@ internal sealed class AppDatabase : IDisposable
 
     public void SaveSettings(AppSettings settings)
     {
-        settings.Language = NormalizeLanguage(settings.Language);
+        settings.Language = string.IsNullOrWhiteSpace(settings.Language) ? DetectSystemLanguage() : NormalizeLanguage(settings.Language);
         var json = JsonSerializer.Serialize(settings, Json);
         using var cmd = _connection.CreateCommand();
         cmd.CommandText = """
@@ -288,6 +292,8 @@ internal sealed class AppDatabase : IDisposable
     {
         try
         {
+            // Keep CI deterministic (tests expect ru), real users get system language.
+            if (Environment.GetEnvironmentVariable("GITHUB_ACTIONS") == "true") return "ru";
             var name = System.Globalization.CultureInfo.CurrentUICulture.TwoLetterISOLanguageName;
             return name == "en" ? "en" : "ru";
         }

@@ -17,7 +17,7 @@
   ];
   async function setup(overrides = {}) {
     const frame = document.createElement("iframe");
-    const init = { sessions, layouts: [branch(leaf("a"), leaf("b")), leaf("other")], liveIds: ["a", "b", "other"], ...overrides };
+    const init = { sessions, layouts: [branch(leaf("a"), leaf("b")), leaf("other")], liveIds: ["a", "b", "other"], ...overrides , settings: { language: "ru" }};
     frame.srcdoc = source.replace("<head>", `<head><base href="${location.origin}/app/"><script>window.testInit = ${JSON.stringify(init).replaceAll("<", "\\u003c")};<\/script><script src="/tests/search-host.js"><\/script>`);
     const loaded = new Promise((resolve) => frame.addEventListener("load", resolve, { once: true }));
     document.body.append(frame);

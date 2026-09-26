@@ -34,7 +34,6 @@ import { normalizeGatewaySettings, gatewayStatusText, gatewayConnectHint, genera
 import { init as initI18n, t } from "./i18n.js";
 
 mountIcons(document);
-initI18n(settings.language);
 
 const tabsEl = document.getElementById("tabs");
 const panesEl = document.getElementById("panes");
@@ -113,6 +112,7 @@ const settings = {
   gatewayToken: "",
   language: "ru"
 };
+initI18n(settings.language);
 let gatewayState = null;
 
 const pasteController = createPasteController({

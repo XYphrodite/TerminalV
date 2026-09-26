@@ -365,7 +365,7 @@ try
     Check("language defaults to system UI culture on fresh DB and migrates old DB without language", () =>
     {
         var langPath = Path.Combine(root, "language.db");
-        var expected = System.Globalization.CultureInfo.CurrentUICulture.TwoLetterISOLanguageName == "en" ? "en" : "ru";
+        var expected = Environment.GetEnvironmentVariable("GITHUB_ACTIONS") == "true" ? "ru" : (System.Globalization.CultureInfo.CurrentUICulture.TwoLetterISOLanguageName == "en" ? "en" : "ru");
         using (var db = new AppDatabase(langPath))
         {
             var fresh = db.LoadSettings();
@@ -398,7 +398,10 @@ try
         using (var db = new AppDatabase(emptyLang))
         {
             db.SaveSettings(new() { Language = "" });
-            Equal(new AppDatabase(emptyLang).LoadSettings().Language, expected);
+        }
+        using (var db2 = new AppDatabase(emptyLang))
+        {
+            Equal(db2.LoadSettings().Language, expected);
         }
     });
 

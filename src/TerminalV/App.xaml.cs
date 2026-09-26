@@ -43,6 +43,7 @@ public partial class App : Application
         catch
         {
             var services = new ServiceCollection();
+            services.AddLogging();
             services.AddLocalization(options => options.ResourcesPath = "Localization/Resources");
             Services = services.BuildServiceProvider();
             LocalizerFactory = Services.GetRequiredService<IStringLocalizerFactory>();

@@ -21,8 +21,7 @@
   // host replaced. No terminal application or shell process is started.
   const source = await (await fetch("/index.html")).text();
   const styles = ["/node_modules/@xterm/xterm/css/xterm.css", "/src/styles.css", "/src/chrome.css", "/src/extensions.css"];
-  const init = { liveIds: ["scroll"], cwdTrackingSupported: true,
-    settings: { hardwareRendering: false, fontFamily: "Courier New, monospace", fontSize: 14 },
+  const init = { liveIds: ["scroll"], cwdTrackingSupported: true, settings: { hardwareRendering: false, fontFamily: "Courier New, monospace", fontSize: 14 },
     sessions: [{ id: "scroll", title: "Scrolling TUI", active: true }] };
   const frame = document.createElement("iframe");
   frame.srcdoc = source.replace("<head>", `<head><base href="${location.origin}/">`
@@ -33,7 +32,10 @@
   document.body.append(frame);
   await loaded;
   const app = frame.contentWindow;
-  await delay(500);
+  for (let i = 0; i < 40; i++) {
+    if (app.__sourceTabs?.length) break;
+    await delay(100);
+  }
   await paint();
   const tab = app.__sourceTabs?.find(item => item.id === "scroll");
   const settle = async () => {

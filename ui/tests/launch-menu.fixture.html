@@ -12,7 +12,7 @@
     startupCommand: "echo 'первая'\r\necho 'вторая'", color: "green" };
   async function setup(overrides = {}) {
     const frame = document.createElement("iframe");
-    const init = { profiles: [profile], sessions: [{ id: "live", title: "PowerShell", active: true, cwd: "C:\\Active" }], liveIds: ["live"], ...overrides };
+    const init = { profiles: [profile], sessions: [{ id: "live", title: "PowerShell", active: true, cwd: "C:\\Active" }], liveIds: ["live"], ...overrides , settings: { language: "ru" }};
     frame.srcdoc = source.replace("<head>", `<head><base href="${location.origin}/app/"><script>window.testInit = ${JSON.stringify(init).replaceAll("<", "\\u003c")};<\/script><script src="/tests/search-host.js"><\/script>`);
     const loaded = new Promise(resolve => frame.addEventListener("load", resolve, { once: true }));
     document.body.append(frame);

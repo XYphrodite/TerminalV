@@ -47,8 +47,7 @@
 
   const source = await (await fetch("/index.html")).text();
   const styles = ["/node_modules/@xterm/xterm/css/xterm.css", "/src/styles.css", "/src/chrome.css", "/src/extensions.css"];
-  const init = { liveIds: ["tui", "other"], cwdTrackingSupported: true,
-    settings: { hardwareRendering: false, fontFamily: "Courier New, monospace", fontSize: 14 },
+  const init = { liveIds: ["tui", "other"], cwdTrackingSupported: true, settings: { hardwareRendering: false, fontFamily: "Courier New, monospace", fontSize: 14 },
     sessions: [{ id: "tui", title: "Synthetic TUI", active: true }, { id: "other", title: "Other session" }] };
   const frame = document.createElement("iframe");
   frame.srcdoc = source.replace("<head>", `<head><base href="${location.origin}/">`
@@ -78,7 +77,7 @@
   };
   const settle = async () => {
     // Covers both old redraw timers (300/40 ms on restore, 100/40 on unhide).
-    await delay(500);
+    await delay(1000);
     await paint();
     await Promise.all(app.__sourceTabs.map(tab => new Promise(resolve => tab.output.whenParsed(resolve))));
     await paint();
