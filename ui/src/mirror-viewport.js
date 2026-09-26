@@ -42,16 +42,17 @@ export function attachMirrorPan(tab) {
     const touch = event.touches[0];
     const dx = gesture.x - touch.clientX, dy = gesture.y - touch.clientY;
     if (!gesture.axis) {
-      if (Math.max(Math.abs(dx), Math.abs(dy)) < 3) return;
-      // Prefer horizontal only when clearly horizontal and scrollable.
-      if (Math.abs(dx) > Math.abs(dy) * 1.2 && tab.host.scrollWidth > tab.host.clientWidth)
+      if (Math.max(Math.abs(dx), Math.abs(dy)) < 6) return;
+      if (Math.abs(dx) > Math.abs(dy) && tab.host.scrollWidth > tab.host.clientWidth)
         gesture.axis = "x";
-      else gesture.axis = "y";
+      else if ((dy > 0 && gesture.top < tab.host.scrollHeight - tab.host.clientHeight)
+        || (dy < 0 && gesture.top > 0)) gesture.axis = "y";
+      else { gesture = null; return; } // Let xterm scroll its normal history.
     }
     event.preventDefault();
     event.stopPropagation(); // xterm must not translate this pan into TUI input.
     if (gesture.axis === "x") tab.host.scrollLeft = gesture.left + dx;
-    else tab.host.scrollTop = gesture.top + dy * 1.2;
+    else tab.host.scrollTop = gesture.top + dy;
   }, { capture: true, passive: false });
   const finish = () => { gesture = null; };
   tab.host.addEventListener("touchend", finish, { passive: true });
