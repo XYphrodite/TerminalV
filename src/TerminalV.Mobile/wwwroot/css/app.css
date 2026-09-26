@@ -89,14 +89,31 @@ h1:focus { outline: none; }
     #app #sidebar { transition:none; }
 }
 
-/* Mobile-only key bar (Esc/Tab/arrows) — ported from ui/src/chrome.css for MAUI parity */
+/* Mobile-only key bar — slide-out, hidden by default to save screen */
 .mobile-keys {
+  position: fixed; left: 0; right: 0; bottom: 0;
   display: flex; flex-direction: column; flex: 0 0 auto; gap: 6px;
   width: 100%; box-sizing: border-box;
   margin: 0; padding: 6px 8px calc(6px + env(safe-area-inset-bottom));
   background: var(--sidebar, #10141a); border-top: 1px solid var(--border-soft, #1c232c);
+  transform: translateY(100%);
+  transition: transform 200ms ease;
+  z-index: 20;
 }
+.mobile-keys.open { transform: translateY(0); }
 .mobile-keys[hidden] { display: none !important; }
+.mobile-keys-handle {
+  position: fixed; bottom: 0; left: 50%; transform: translateX(-50%);
+  min-width: 64px; height: 28px; padding: 0 12px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  border: 1px solid var(--border-soft, #1c232c); border-bottom: 0; border-radius: 8px 8px 0 0;
+  background: var(--surface, #171d26); color: var(--text, #E8EEF5);
+  font: 600 10px var(--font-mono, monospace); letter-spacing: .06em; text-transform: uppercase;
+  cursor: pointer; touch-action: manipulation;
+  box-shadow: 0 -2px 8px rgba(0,0,0,.15);
+  z-index: 21;
+}
+.mobile-keys-handle[aria-expanded="true"] { bottom: var(--mobile-keys-height, 88px); }
 .mobile-keys-row {
   display: flex; gap: 6px; justify-content: flex-start; flex-wrap: nowrap; overflow-x: auto;
   -webkit-overflow-scrolling: touch; scrollbar-width: none;

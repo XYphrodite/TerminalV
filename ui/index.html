@@ -66,7 +66,6 @@
         </div>
         <div id="panes"></div>
         <div id="mobile-keys" class="mobile-keys" role="group" aria-label="Клавиши" data-mobile-only hidden>
-          <button id="mobile-keys-handle" class="mobile-keys-handle" type="button" aria-label="Показать клавиши" aria-expanded="false" aria-controls="mobile-keys"><span>Клавиши</span></button>
           <div class="mobile-keys-row" data-row="digits">
             <button type="button" data-key="1">1</button>
             <button type="button" data-key="2">2</button>
@@ -88,6 +87,7 @@
             <button type="button" data-key="ArrowRight" title="Вправо" aria-label="Стрелка вправо">→</button>
           </div>
         </div>
+        <button id="mobile-keys-handle" class="mobile-keys-handle" type="button" aria-label="Показать клавиши" aria-expanded="false" aria-controls="mobile-keys" data-mobile-only><span>Клавиши</span></button>
         <div id="empty" class="empty hidden">
           <div class="empty-mark" data-icon="terminal"></div>
           <div class="empty-eyebrow">ВАШЕ РАБОЧЕЕ ПРОСТРАНСТВО</div>
@@ -282,10 +282,16 @@
         const panel = document.getElementById("mobile-keys");
         const handle = document.getElementById("mobile-keys-handle");
         if (!panel || !handle) return;
+        panel.hidden = false;
+        handle.hidden = false;
         function isOpen() { return panel.classList.contains("open"); }
         function setOpen(open) {
           panel.classList.toggle("open", open);
           handle.setAttribute("aria-expanded", String(open));
+          if (open) {
+            const h = panel.offsetHeight;
+            document.documentElement.style.setProperty('--mobile-keys-height', h + 'px');
+          }
           try { window.dispatchEvent(new Event("resize")); } catch {}
         }
         handle.addEventListener("click", (e) => {

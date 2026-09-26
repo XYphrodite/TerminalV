@@ -125,6 +125,7 @@
             <button type="button" data-key="ArrowRight" title="Вправо" aria-label="Стрелка вправо">→</button>
           </div>
         </div>
+        <button id="mobile-keys-handle" class="mobile-keys-handle" type="button" aria-label="Показать клавиши" aria-expanded="false" aria-controls="mobile-keys" data-mobile-only><span>Клавиши</span></button>
         <div id="empty" class="empty hidden">
           <div class="empty-mark" data-icon="terminal"></div>
           <div class="empty-eyebrow">ВАШЕ РАБОЧЕЕ ПРОСТРАНСТВО</div>
@@ -212,5 +213,40 @@
     <div id="blazor-root"></div>
     <div id="blazor-error-ui"><span>An unhandled error has occurred.</span><a href="" class="reload">Reload</a><a class="dismiss">🗙</a></div>
     <script src="_framework/blazor.webview.js" autostart="false"></script>
+    <script>
+      (function () {
+        const panel = document.getElementById("mobile-keys");
+        const handle = document.getElementById("mobile-keys-handle");
+        if (!panel || !handle) return;
+        function isOpen() { return panel.classList.contains("open"); }
+        function setOpen(open) {
+          panel.classList.toggle("open", open);
+          handle.setAttribute("aria-expanded", String(open));
+          if (open) {
+            const h = panel.offsetHeight;
+            document.documentElement.style.setProperty('--mobile-keys-height', h + 'px');
+          }
+        }
+        // Unhide panel (hidden attribute) but keep it slid out; handle is always visible.
+        panel.hidden = false;
+        handle.hidden = false;
+        handle.addEventListener("click", (e) => {
+          e.stopPropagation();
+          setOpen(!isOpen());
+          try { window.dispatchEvent(new Event("resize")); } catch {}
+        });
+        handle.addEventListener("pointerdown", (e) => e.stopPropagation());
+        document.addEventListener("click", (e) => {
+          if (!isOpen()) return;
+          if (panel.contains(e.target) || handle.contains(e.target)) return;
+          setOpen(false);
+        });
+        document.addEventListener("touchstart", (e) => {
+          if (!isOpen()) return;
+          if (panel.contains(e.target) || handle.contains(e.target)) return;
+          setOpen(false);
+        }, { passive: true });
+      })();
+    </script>
 </body>
 </html>
