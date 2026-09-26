@@ -57,6 +57,8 @@ export const MOBILE_KEY_SEQUENCES = {
 
 export function createMobileKeys({ root, send }) {
   if (!root || typeof send !== "function") return { sendKey() {} };
+  if (root.dataset?.mobileKeysInitialized) return { sendKey() {}, get ctrlActive() { return false; } };
+  if (root.dataset) root.dataset.mobileKeysInitialized = "true";
   let ctrlActive = false;
 
   function updateCtrlUI() {

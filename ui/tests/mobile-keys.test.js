@@ -54,6 +54,28 @@ test("pointer tap sends once without focus change; keyboard click still works", 
   assert.deepEqual(sent, ["ArrowUp", "ArrowUp"]);
 });
 
+test("digit 7 sends once, not twice, on pointer tap", () => {
+  const root = fakeRoot(["7"]);
+  const sent = [];
+  createMobileKeys({ root, send: (key) => sent.push(key) });
+  root.buttons[0].fire("pointerdown", { preventDefault: () => {} });
+  root.buttons[0].fire("click", {});
+  assert.deepEqual(sent, ["7"]);
+});
+
+test("second init on same root does not double-wire (mobile double-terminal guard)", () => {
+  const root = fakeRoot(["1", "2"]);
+  // simulate dataset as real DOM element
+  root.dataset = {};
+  const sent = [];
+  createMobileKeys({ root, send: (key) => sent.push(key) });
+  // second wiring should be no-op due to dataset flag
+  createMobileKeys({ root, send: (key) => sent.push(key) });
+  root.buttons[0].fire("pointerdown", { preventDefault: () => {} });
+  root.buttons[0].fire("click", {});
+  assert.deepEqual(sent, ["1"]);
+});
+
 test("unknown keys are ignored and missing root is a noop", () => {
   const root = fakeRoot(["Enter"]);
   const sent = [];
