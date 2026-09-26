@@ -88,3 +88,35 @@ h1:focus { outline: none; }
 @media (prefers-reduced-motion:reduce) {
     #app #sidebar { transition:none; }
 }
+
+/* Mobile-only key bar (Esc/Tab/arrows) — ported from ui/src/chrome.css for MAUI parity */
+.mobile-keys {
+  display: flex; flex-direction: column; flex: 0 0 auto; gap: 6px;
+  width: 100%; box-sizing: border-box;
+  margin: 0; padding: 6px 8px calc(6px + env(safe-area-inset-bottom));
+  background: var(--sidebar, #10141a); border-top: 1px solid var(--border-soft, #1c232c);
+}
+.mobile-keys[hidden] { display: none !important; }
+.mobile-keys-row {
+  display: flex; gap: 6px; justify-content: flex-start; flex-wrap: nowrap; overflow-x: auto;
+  -webkit-overflow-scrolling: touch; scrollbar-width: none;
+}
+.mobile-keys-row::-webkit-scrollbar { display: none; }
+.mobile-keys button {
+  min-width: 40px; min-height: 40px; padding: 0 8px;
+  border: 1px solid var(--border-soft, #1c232c); border-radius: 8px;
+  background: var(--surface, #171d26); color: var(--text, #E8EEF5); font: 600 14px var(--font-mono, monospace);
+  cursor: pointer; touch-action: manipulation;
+}
+.mobile-keys-row[data-row="digits"] button { min-width: 32px; }
+.mobile-keys button:active { background: var(--tab-active, #1c2736); border-color: var(--accent-dim, #2a6fb3); }
+.mobile-keys button:focus-visible { outline: 2px solid var(--accent, #3d9eff); outline-offset: 2px; }
+
+/* Slide panel fallback — mirrored from index.html inline for file-level parity */
+@media (max-width: 700px) {
+  #app #sidebar { transition: transform 0.24s ease; will-change: transform; }
+  #app.collapsed #sidebar { position: fixed; inset: 0 auto 0 0; width: min(86vw,340px); max-width: 86vw; transform: translateX(-100%); z-index: 20; box-shadow: 16px 0 32px rgba(0,0,0,0.5); }
+  #app:not(.collapsed) #sidebar { position: fixed; inset: 0 auto 0 0; width: min(86vw,340px); max-width: 86vw; transform: translateX(0); z-index: 20; box-shadow: 16px 0 32px rgba(0,0,0,0.5); }
+  #app.collapsed::after { content: ""; position: fixed; inset: 0; background: transparent; pointer-events: none; z-index: 19; }
+  #app:not(.collapsed)::after { content: ""; position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 19; }
+}

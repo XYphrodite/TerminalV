@@ -77,11 +77,80 @@
         try { entry.term.dispose(); } catch { /* already gone */ }
     }
 
+    // Mobile keys — same sequences as ui/src/mobile-keys.js, ported for MAUI
+    const MOBILE_KEY_SEQUENCES = {
+        Escape: "\x1b", Esc: "\x1b", Tab: "\t",
+        ArrowLeft: "\x1b[D", ArrowUp: "\x1b[A", ArrowDown: "\x1b[B", ArrowRight: "\x1b[C",
+        Left: "\x1b[D", Up: "\x1b[A", Down: "\x1b[B", Right: "\x1b[C",
+        "0": "0", "1": "1", "2": "2", "3": "3", "4": "4", "5": "5", "6": "6", "7": "7", "8": "8", "9": "9"
+    };
+
+    function getActiveTerminalId() {
+        const active = document.querySelector('.pane.active');
+        if (active && active.dataset.id) return active.dataset.id;
+        const first = terminals.keys().next();
+        if (!first.done) return first.value;
+        // fallback for isolated default terminal
+        return 'default';
+    }
+
+    function sendMobileKey(key) {
+        const data = MOBILE_KEY_SEQUENCES[key];
+        if (!data) return;
+        const id = getActiveTerminalId();
+        // Prefer the same host channel as terminal input (Blazor WebView / __terminalvHost)
+        const host = window.__terminalvHost || (window.chrome && window.chrome.webview ? { postMessage: (m) => window.chrome.webview.postMessage(typeof m === 'string' ? m : JSON.stringify(m)) } : null);
+        if (host && typeof host.postMessage === 'function') {
+            try { host.postMessage({ type: 'write', id, data }); return; } catch {}
+        }
+        // Fallback: write directly into isolated terminal if present
+        const entry = terminals.get(id);
+        if (entry && entry.term) {
+            // For local demo terminals, echo via input channel
+            if (window.chrome && window.chrome.webview) {
+                try { window.chrome.webview.postMessage(JSON.stringify({ type: 'write', id, data })); return; } catch {}
+            }
+        }
+    }
+
+    function initMobileKeys() {
+        const root = document.getElementById('mobile-keys');
+        if (!root) return;
+        // MAUI is always "mobile": unhide data-mobile-only when no desktop bundle has done so yet
+        if (root.hidden && root.hasAttribute('data-mobile-only')) {
+            // Defer to let desktop bundle claim ownership first; fallback unhides after 300ms
+            setTimeout(() => {
+                const r = document.getElementById('mobile-keys');
+                if (r && r.hidden) r.hidden = false;
+            }, 300);
+        }
+        for (const btn of root.querySelectorAll('[data-key]')) {
+            let pointerHandled = false;
+            btn.addEventListener('pointerdown', (e) => {
+                e.preventDefault();
+                pointerHandled = true;
+                sendMobileKey(btn.dataset.key);
+            });
+            btn.addEventListener('click', () => {
+                if (pointerHandled) { pointerHandled = false; return; }
+                sendMobileKey(btn.dataset.key);
+            });
+        }
+    }
+
+    // Expose for testing / parity with ui/src/mobile-keys.js
+    window.MOBILE_KEY_SEQUENCES = MOBILE_KEY_SEQUENCES;
+
     // Expose isolated API
-    window.TerminalV = { create: createTerminal, write, resize, measure, destroy, terminals };
+    window.TerminalV = { create: createTerminal, write, resize, measure, destroy, terminals, sendMobileKey, MOBILE_KEY_SEQUENCES };
 
     // Auto-create default terminal on load for standalone testing (isolation: no backend required)
     document.addEventListener('DOMContentLoaded', () => {
+        initMobileKeys();
+        if (!document.getElementById('terminal-container')) {
+            // Blazor hybrid has no terminal-container; keys/slide already initialized
+            return;
+        }
         if (!document.getElementById('terminal-container').hasChildNodes()) {
             const term = createTerminal('default', 80, 24);
             if (term) {
@@ -90,6 +159,20 @@
             }
         }
     });
+    // Slide panel fallback: if mobile-bridge.js did not define swipe/toggle, provide minimal toggle
+    if (typeof window.__terminalvToggleSidebar !== 'function') {
+        window.__terminalvToggleSidebar = function () {
+            const app = document.getElementById('app');
+            if (!app) return;
+            const next = !app.classList.contains('collapsed');
+            app.classList.toggle('collapsed', next);
+            if (typeof window.__tvSidebarState === 'function') window.__tvSidebarState(next);
+            else if (window.__terminalvSetSidebarCollapsed) window.__terminalvSetSidebarCollapsed(next);
+        };
+    }
+
+    // Also init if script loads after DOMContentLoaded
+    if (document.readyState !== 'loading') initMobileKeys();
 
     // Handle window resize with isolation (debounced).
     // After refit, report the new grid to .NET so the remote pty follows.

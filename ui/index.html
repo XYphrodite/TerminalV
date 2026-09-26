@@ -66,6 +66,7 @@
         </div>
         <div id="panes"></div>
         <div id="mobile-keys" class="mobile-keys" role="group" aria-label="Клавиши" data-mobile-only hidden>
+          <button id="mobile-keys-handle" class="mobile-keys-handle" type="button" aria-label="Показать клавиши" aria-expanded="false" aria-controls="mobile-keys"><span>Клавиши</span></button>
           <div class="mobile-keys-row" data-row="digits">
             <button type="button" data-key="1">1</button>
             <button type="button" data-key="2">2</button>
@@ -276,5 +277,33 @@
       </form>
     </dialog>
     <script type="module" src="/src/main.js"></script>
+    <script>
+      (function () {
+        const panel = document.getElementById("mobile-keys");
+        const handle = document.getElementById("mobile-keys-handle");
+        if (!panel || !handle) return;
+        function isOpen() { return panel.classList.contains("open"); }
+        function setOpen(open) {
+          panel.classList.toggle("open", open);
+          handle.setAttribute("aria-expanded", String(open));
+          try { window.dispatchEvent(new Event("resize")); } catch {}
+        }
+        handle.addEventListener("click", (e) => {
+          e.stopPropagation();
+          setOpen(!isOpen());
+        });
+        handle.addEventListener("pointerdown", (e) => e.stopPropagation());
+        document.addEventListener("click", (e) => {
+          if (!isOpen()) return;
+          if (panel.contains(e.target) || handle.contains(e.target)) return;
+          setOpen(false);
+        });
+        document.addEventListener("touchstart", (e) => {
+          if (!isOpen()) return;
+          if (panel.contains(e.target) || handle.contains(e.target)) return;
+          setOpen(false);
+        }, { passive: true });
+      })();
+    </script>
   </body>
 </html>
