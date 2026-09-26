@@ -4,6 +4,7 @@ using System.Text;
 using System.Windows;
 using TerminalV.Cli;
 using TerminalV.Data;
+using TerminalV.Localization;
 
 namespace TerminalV;
 
@@ -12,6 +13,9 @@ internal static class Program
     [STAThread]
     public static int Main(string[] args)
     {
+        // DI setup for IStringLocalizerFactory: initialize localization before any UI.
+        LocalizationService.Initialize();
+
         if (args.Length > 0 && args[0].Equals("--host", StringComparison.OrdinalIgnoreCase))
         {
             TerminalV.Host.SessionHost.Run();
@@ -41,19 +45,20 @@ internal static class Program
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
         {
+            var loc = LocalizationService.Localizer;
             MessageBox.Show(
-                "Не удалось открыть данные TerminalV. Проверьте доступ к папке " +
-                "%LOCALAPPDATA%\\TerminalV и свободное место на диске.\n\n" + ex.Message,
-                "TerminalV", MessageBoxButton.OK, MessageBoxImage.Error);
+                loc["Error_DataAccess"] + "\n\n" + ex.Message,
+                loc["Window_Title"], MessageBoxButton.OK, MessageBoxImage.Error);
             return 1;
         }
 
         using var desktopInstance = lease;
         if (desktopInstance is null)
         {
+            var loc = LocalizationService.Localizer;
             MessageBox.Show(
-                "TerminalV уже открыт. Переключитесь в существующее окно.",
-                "TerminalV", MessageBoxButton.OK, MessageBoxImage.Information);
+                loc["Info_AlreadyRunning"],
+                loc["Window_Title"], MessageBoxButton.OK, MessageBoxImage.Information);
             return 0;
         }
 

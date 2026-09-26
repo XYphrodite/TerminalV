@@ -7,6 +7,7 @@ using System.Text.Json;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Threading;
+using Microsoft.Extensions.Localization;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Win32;
 using SelfUpdateKit;
@@ -14,6 +15,7 @@ using TerminalV.Data;
 using TerminalV.Diagnostics;
 using TerminalV.Extensions;
 using TerminalV.Gateway;
+using TerminalV.Localization;
 using TerminalV.Pty;
 using TerminalV.Shell;
 using TerminalV.Ssh;
@@ -31,6 +33,7 @@ internal sealed class TerminalBridge : IDisposable
 
     private readonly Dispatcher _dispatcher;
     private readonly CoreWebView2 _webView;
+    private readonly IStringLocalizer _localizer;
     private readonly ConcurrentDictionary<string, ConPtySession> _sessions = new();
     private readonly ShellInfo _shell;
     private readonly int _buildNumber;
@@ -57,16 +60,15 @@ internal sealed class TerminalBridge : IDisposable
     public event Action? RestartRequested;
     internal SessionClientBackend GatewayBackend { get; }
 
-    public TerminalBridge(Dispatcher dispatcher, CoreWebView2 webView, Func<object>? gatewayStatus = null)
+    public TerminalBridge(Dispatcher dispatcher, CoreWebView2 webView, Func<object>? gatewayStatus = null, IStringLocalizerFactory? localizerFactory = null)
     {
         _dispatcher = dispatcher;
         _webView = webView;
         _gatewayStatus = gatewayStatus;
+        _localizer = localizerFactory?.Create(typeof(TerminalBridge)) ?? LocalizationService.Localizer;
         _shell = ShellResolver.Resolve();
         _buildNumber = Environment.OSVersion.Version.Build;
         _canUpdate = AppVersion.CanSelfUpdate(Environment.ProcessPath);
-        // The existing session host accepts one pipe client. The gateway shares
-        // this connection and captures output before the desktop restores tabs.
         GatewayBackend = new SessionClientBackend(_host);
         GatewayBackend.DesktopData += (id, data, replay) => Post(new { type = "data", id, data, replay });
         GatewayBackend.Created += (id, cwd, shell, startupCommand, wslDistribution) =>
@@ -148,7 +150,7 @@ internal sealed class TerminalBridge : IDisposable
     public async Task FlushAsync()
     {
         if (_disposed) throw new ObjectDisposedException(nameof(TerminalBridge));
-        if (_flushCompletion is not null) throw new InvalidOperationException("Сохранение уже выполняется.");
+        if (_flushCompletion is not null) throw new InvalidOperationException(_localizer["Error_SaveAlreadyInProgress"]);
 
         var requestId = Guid.NewGuid().ToString("N");
         var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -157,17 +159,15 @@ internal sealed class TerminalBridge : IDisposable
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         try
         {
-            // Executing JS only queues WebMessages. Wait for the corresponding
-            // database commit, not an arbitrary delay after ExecuteScriptAsync.
             var result = await _webView.ExecuteScriptAsync(
                 $"typeof window.terminalvFlush === 'function' ? (window.terminalvFlush({JsonSerializer.Serialize(requestId)}), true) : false")
                 .WaitAsync(timeout.Token);
-            if (result == "false") return; // The interface has not loaded yet.
+            if (result == "false") return;
             await completion.Task.WaitAsync(timeout.Token);
         }
         catch (OperationCanceledException) when (timeout.IsCancellationRequested)
         {
-            throw new TimeoutException("Интерфейс не подтвердил сохранение сессий за 10 секунд.");
+            throw new TimeoutException(_localizer["Error_FlushTimeout"]);
         }
         finally
         {
@@ -193,8 +193,6 @@ internal sealed class TerminalBridge : IDisposable
             return;
         }
 
-        // The UI posts resize immediately after attach. Preserve that ordering
-        // while the shared backend loads history without blocking the UI thread.
         if ((message.Type is "resize" or "write") && message.Id is { } pendingId &&
             _attachBacklog.TryGetValue(pendingId, out var waiting))
         {
@@ -228,9 +226,6 @@ internal sealed class TerminalBridge : IDisposable
             case "write":
                 if (message.Id is not null && message.Data is not null)
                 {
-                    // Don't block WebView2's WebMessageReceived (UI thread) on ConPTY backpressure.
-                    // Even 100 chars with bracketed paste (muse) can stall if the TUI hasn't drained.
-                    // Keep typing ("a") synchronous for tests; bracketed paste goes async.
                     var isPaste = message.Data.Contains("\u001b[200~");
                     var swBridge = Stopwatch.StartNew();
                     if (isPaste || message.Data.Length > 4000)
@@ -312,7 +307,6 @@ internal sealed class TerminalBridge : IDisposable
                 }
                 break;
             case "bell":
-                // A final native guard; the UI applies per-session mute/focus policy.
                 var now = _bellClock.ElapsedMilliseconds;
                 if (now - _lastBellMs >= 2000)
                 {
@@ -323,7 +317,6 @@ internal sealed class TerminalBridge : IDisposable
             case "open-author":
                 _dispatcher.BeginInvoke(() =>
                 {
-                    // A fixed HTTPS destination, not an arbitrary URL/command from the WebView.
                     const string authorUrl = "https://github.com/XYphrodite";
                     try
                     {
@@ -331,8 +324,8 @@ internal sealed class TerminalBridge : IDisposable
                     }
                     catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
                     {
-                        MessageBox.Show("Не удалось открыть браузер. Профиль автора: " + authorUrl,
-                            "TerminalV", MessageBoxButton.OK, MessageBoxImage.Warning);
+                        MessageBox.Show(_localizer["Error_OpenBrowserAuthor"] + authorUrl,
+                            _localizer["Window_Title"], MessageBoxButton.OK, MessageBoxImage.Warning);
                     }
                 });
                 break;
@@ -346,7 +339,6 @@ internal sealed class TerminalBridge : IDisposable
                     }
 
                     uri = uri.Trim();
-                    // Only http(s) is allowed to be opened externally; anything else is ignored.
                     if (!Uri.TryCreate(uri, UriKind.Absolute, out var parsed)
                         || (parsed.Scheme != Uri.UriSchemeHttp && parsed.Scheme != Uri.UriSchemeHttps))
                     {
@@ -359,8 +351,8 @@ internal sealed class TerminalBridge : IDisposable
                     }
                     catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
                     {
-                        MessageBox.Show("Не удалось открыть браузер. Ссылка: " + parsed.AbsoluteUri,
-                            "TerminalV", MessageBoxButton.OK, MessageBoxImage.Warning);
+                        MessageBox.Show(_localizer["Error_OpenBrowserLink"] + parsed.AbsoluteUri,
+                            _localizer["Window_Title"], MessageBoxButton.OK, MessageBoxImage.Warning);
                     }
                 });
                 break;
@@ -382,7 +374,7 @@ internal sealed class TerminalBridge : IDisposable
             case "persist-profiles":
                 try
                 {
-                    _db.SaveProfiles(message.Profiles ?? throw new ArgumentException("Нет списка профилей."));
+                    _db.SaveProfiles(message.Profiles ?? throw new ArgumentException(_localizer["Error_NoProfiles"]));
                     Post(new { type = "profiles-saved", requestId = message.RequestId, profiles = _db.LoadProfiles() });
                 }
                 catch (Exception ex) when (ex is ArgumentException or Microsoft.Data.Sqlite.SqliteException)
@@ -439,7 +431,7 @@ internal sealed class TerminalBridge : IDisposable
     {
         if (Interlocked.Exchange(ref _shortcutsBusy, 1) == 1)
         {
-            Post(new { type = "shortcuts-created", requestId = message.RequestId, error = "Ярлыки уже создаются. Дождитесь завершения." });
+            Post(new { type = "shortcuts-created", requestId = message.RequestId, error = _localizer["Error_ShortcutsBusy"] });
             return;
         }
         try
@@ -464,7 +456,7 @@ internal sealed class TerminalBridge : IDisposable
                 {
                     type = "update",
                     status = "unsupported",
-                    message = "Обновление доступно только для установленной копии TerminalV."
+                    message = _localizer["Error_UpdateUnsupported"]
                 });
             }
 
@@ -510,7 +502,7 @@ internal sealed class TerminalBridge : IDisposable
             {
                 type = "update",
                 status = "unsupported",
-                message = "Обновление доступно только для установленной копии TerminalV."
+                message = _localizer["Error_UpdateUnsupported"]
             });
             return;
         }
@@ -551,8 +543,6 @@ internal sealed class TerminalBridge : IDisposable
 
     private void Restart()
     {
-        // The window owns saving and closing. Application.Shutdown() bypasses
-        // its asynchronous cancellation; launching here could race a failed save.
         _dispatcher.BeginInvoke(() => { if (!_disposed) RestartRequested?.Invoke(); });
     }
 
@@ -589,10 +579,10 @@ internal sealed class TerminalBridge : IDisposable
         {
             var isWsl = message.Shell == "wsl";
             if (isWsl && message.Cwd is not null)
-                throw new ArgumentException("Быстрый запуск WSL открывает домашнюю папку Linux.");
+                throw new ArgumentException(_localizer["Error_WslQuickStart"]);
             var cwd = WorkingDirectory.Resolve(isWsl ? null : message.Cwd);
             if (message.Shell is not null && cwd.Notice is not null)
-                throw new DirectoryNotFoundException("Папка профиля недоступна. Запуск отменён: " + message.Cwd);
+                throw new DirectoryNotFoundException(_localizer["Error_ProfileFolderNotFound"] + message.Cwd);
             if (!isWsl) Post(new { type = "cwd", id = message.Id, cwd = cwd.Path, notice = cwd.Notice });
             if (_host.Ensure())
             {
@@ -603,7 +593,7 @@ internal sealed class TerminalBridge : IDisposable
             }
 
             if (message.Shell is not null && _sessions.ContainsKey(message.Id))
-                throw new InvalidOperationException("Сессия уже работает. Повторный запуск отменён.");
+                throw new InvalidOperationException(_localizer["Error_SessionAlreadyRunning"]);
             var shell = ShellResolver.Resolve(isWsl || (message.Cwd is null && message.Shell is null) ? null : cwd.Path, message.Shell,
                 message.Shell is null ? null : message.StartupCommand, message.WslDistribution);
             KillLocal(message.Id);
@@ -630,7 +620,7 @@ internal sealed class TerminalBridge : IDisposable
     {
         if (Interlocked.Exchange(ref _catalogBusy, 1) == 1)
         {
-            Post(new { type = "launch-targets", requestId, error = "Список уже обновляется. Повторите попытку через несколько секунд." });
+            Post(new { type = "launch-targets", requestId, error = _localizer["Error_LaunchTargetsBusy"] });
             return;
         }
         try
@@ -673,9 +663,6 @@ internal sealed class TerminalBridge : IDisposable
             var settings = JsonSerializer.Deserialize<AppSettings>(json, JsonOptions);
             if (settings is not null)
             {
-                // An empty token never wipes the stored one: the desktop UI
-                // always round-trips the real value, and clearing the token
-                // would silently open the LAN listener to everyone.
                 if (string.IsNullOrEmpty(settings.GatewayToken))
                 {
                     try
@@ -719,7 +706,7 @@ internal sealed class TerminalBridge : IDisposable
 
             if (sessions is null)
             {
-                CompleteFlush(message.RequestId, new InvalidOperationException("Не получены данные сессий для сохранения."));
+                CompleteFlush(message.RequestId, new InvalidOperationException(_localizer["Error_NoProfiles"]));
                 return;
             }
 
@@ -747,8 +734,8 @@ internal sealed class TerminalBridge : IDisposable
         {
             var dialog = new OpenFileDialog
             {
-                Title = "Фон сессии",
-                Filter = "Изображения|*.png;*.jpg;*.jpeg;*.webp;*.bmp;*.gif|Все файлы|*.*"
+                Title = _localizer["Dialog_BackgroundTitle"],
+                Filter = _localizer["Dialog_ImageFilter"]
             };
             if (dialog.ShowDialog() != true)
             {

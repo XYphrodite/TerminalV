@@ -1,3 +1,4 @@
+import { t } from "./i18n.js";
 import { layoutGeometry, clampRatio, MIN_PANE_WIDTH, MIN_PANE_HEIGHT } from "./pane-layout.js";
 import { syncTerminalViewport } from "./terminal-viewport.js";
 
@@ -107,8 +108,8 @@ export function createPaneView({ container, getRoot, getTabs, canResize, onResiz
       const columns = d.node.axis === "columns";
       element.classList.toggle("columns", columns);
       element.setAttribute("aria-orientation", columns ? "vertical" : "horizontal");
-      element.setAttribute("aria-label", "Изменить размер панелей");
-      element.title = "Перетащите разделитель или используйте стрелки, Home / End";
+      element.setAttribute("aria-label", t("Pane_ResizeAria"));
+      element.title = t("Pane_ResizeTitle");
       const [min, max] = limits(d);
       element.setAttribute("aria-valuemin", String(Math.round(min * 100)));
       element.setAttribute("aria-valuemax", String(Math.round(max * 100)));

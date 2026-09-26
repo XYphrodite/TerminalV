@@ -362,6 +362,46 @@ try
 
     Check("empty save over populated DB is ignored to prevent upgrade wipe", () =>
     {
+    Check("language defaults to system UI culture on fresh DB and migrates old DB without language", () =>
+    {
+        var langPath = Path.Combine(root, "language.db");
+        var expected = System.Globalization.CultureInfo.CurrentUICulture.TwoLetterISOLanguageName == "en" ? "en" : "ru";
+        using (var db = new AppDatabase(langPath))
+        {
+            var fresh = db.LoadSettings();
+            Equal(fresh.Language, expected);
+            // Persisted language survives reopen
+            fresh.Language = fresh.Language == "en" ? "ru" : "en";
+            db.SaveSettings(fresh);
+        }
+        using (var reopened = new AppDatabase(langPath))
+        {
+            var loaded = reopened.LoadSettings();
+            var flipped = expected == "en" ? "ru" : "en";
+            Equal(loaded.Language, flipped);
+        }
+        // Old DB without Language field migrates to system language
+        var legacyLang = Path.Combine(root, "legacy-lang.db");
+        using (var conn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={legacyLang}"))
+        {
+            conn.Open();
+            using var create = conn.CreateCommand();
+            create.CommandText = "CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL); INSERT INTO settings VALUES ('app', '{\"ThemeId\":\"midnight\"}')";
+            create.ExecuteNonQuery();
+        }
+        using (var db = new AppDatabase(legacyLang))
+        {
+            Equal(db.LoadSettings().Language, expected);
+        }
+        // Empty string also migrates
+        var emptyLang = Path.Combine(root, "empty-lang.db");
+        using (var db = new AppDatabase(emptyLang))
+        {
+            db.SaveSettings(new() { Language = "" });
+            Equal(new AppDatabase(emptyLang).LoadSettings().Language, expected);
+        }
+    });
+
         var emptyPath = Path.Combine(root, "empty-wipe.db");
         using (var db = new AppDatabase(emptyPath))
         {

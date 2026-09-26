@@ -1,10 +1,19 @@
+import { t } from "./i18n.js";
+
 export const SESSION_COLORS = {
-  blue: { name: "Синий", value: "#60a5fa" },
-  green: { name: "Зелёный", value: "#4ade80" },
-  amber: { name: "Жёлтый", value: "#fbbf24" },
-  rose: { name: "Розовый", value: "#fb7185" },
-  violet: { name: "Фиолетовый", value: "#c084fc" }
+  blue: { key: "Session_ColorBlue", value: "#60a5fa" },
+  green: { key: "Session_ColorGreen", value: "#4ade80" },
+  amber: { key: "Session_ColorAmber", value: "#fbbf24" },
+  rose: { key: "Session_ColorRose", value: "#fb7185" },
+  violet: { key: "Session_ColorViolet", value: "#c084fc" }
 };
+
+export function sessionColorName(id) {
+  const entry = SESSION_COLORS[id];
+  if (!entry) return "";
+  if (entry.key) return t(entry.key);
+  return entry.name || "";
+}
 
 export function sessionMetadata(record) {
   return {
@@ -56,7 +65,7 @@ export function createSessionOptions({ dialog, getSessions, onSave, onHide, rest
   let pending = null;
 
   for (const [id, color] of Object.entries(SESSION_COLORS)) {
-    colors.add(new Option(color.name, id));
+    colors.add(new Option(color.key ? t(color.key) : color.name, id));
   }
 
   function finish(action) {
@@ -90,7 +99,7 @@ export function createSessionOptions({ dialog, getSessions, onSave, onHide, rest
       pinned.checked = Boolean(tab.pinned);
       muted.checked = Boolean(tab.muted);
       hide.hidden = Boolean(tab.hidden);
-      hide.textContent = tab.exited ? "Сохранить и скрыть" : "Скрыть, оставив работать";
+      hide.textContent = tab.exited ? t("Session_HideAndSave") : t("Session_HideKeep");
       suggestions.replaceChildren(...[...new Set(getSessions().map((item) => item.group).filter(Boolean))]
         .map((value) => new Option(value, value)));
       try {

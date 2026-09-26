@@ -1,3 +1,5 @@
+import { t } from "./i18n.js";
+
 export function createCloseConfirmation({ dialog, canClose, onConfirm, onShow, restoreFocus }) {
   const name = dialog.querySelector("[data-close-name]");
   const confirm = dialog.querySelector("[data-close-confirm]");
@@ -41,7 +43,7 @@ export function createCloseConfirmation({ dialog, canClose, onConfirm, onShow, r
         return;
       }
       // Titles can come from terminal output; never interpret them as markup.
-      name.textContent = tab.customTitle || tab.title || "Сессия";
+      name.textContent = tab.customTitle || tab.title || t("SessionFallback");
       try {
         onShow();
         dialog.showModal();

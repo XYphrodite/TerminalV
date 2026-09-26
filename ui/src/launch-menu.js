@@ -1,3 +1,4 @@
+import { t } from "./i18n.js";
 import { icon } from "./icons.js";
 import { PROFILE_SHELLS, profileSession } from "./launch-profiles.js";
 
@@ -38,7 +39,7 @@ export function createLaunchMenu({ dialog, trigger, post, getProfiles, onLaunch,
     button.className = "launch-item";
     button.dataset.launchKey = key;
     button.dataset.shell = shell || "auto";
-    button.setAttribute("aria-label", `Запустить ${title}`);
+    button.setAttribute("aria-label", t("Launch_ActionFor", { title }));
     button.title = detail ? `${title} — ${detail}` : title;
     const labels = document.createElement("span");
     labels.className = "launch-labels";
@@ -48,7 +49,7 @@ export function createLaunchMenu({ dialog, trigger, post, getProfiles, onLaunch,
     labels.append(name, meta);
     const hint = document.createElement("span");
     hint.className = "launch-hint";
-    hint.textContent = "Запустить";
+    hint.textContent = t("Launch_Action");
     button.append(icon(shell === "wsl" ? "linux" : "terminal"), labels, hint);
     button.addEventListener("click", () => run(launch));
     element.append(button);
@@ -58,7 +59,7 @@ export function createLaunchMenu({ dialog, trigger, post, getProfiles, onLaunch,
       editButton.className = "launch-edit icon-btn";
       editButton.dataset.editProfile = key.slice("profile:".length);
       editButton.dataset.launchKey = "edit:" + key;
-      editButton.title = `Изменить ${title}`;
+      editButton.title = t("Launch_EditFor", { title });
       editButton.setAttribute("aria-label", editButton.title);
       editButton.append(icon("edit"));
       editButton.addEventListener("click", () => run(edit));
@@ -70,16 +71,16 @@ export function createLaunchMenu({ dialog, trigger, post, getProfiles, onLaunch,
     const focused = dialog.contains(document.activeElement) ? document.activeElement?.dataset.launchKey : null;
     const profiles = getProfiles();
     profilesEl.replaceChildren(...profiles.map(profile => row("profile:" + profile.id, profile.title,
-      mobile ? "Настроенное подключение" : [PROFILE_SHELLS[profile.shell], profile.cwd].filter(Boolean).join(" · "),
+      mobile ? t("Launch_CustomProfile") : [PROFILE_SHELLS[profile.shell], profile.cwd].filter(Boolean).join(" · "),
       () => onLaunch(profileSession(profile)), () => onEdit(profile.id), profile.shell)));
     if (!profiles.length) {
       const empty = document.createElement("p");
       empty.className = "launch-empty";
-      empty.textContent = "Нет сохранённых профилей";
+      empty.textContent = t("Launch_NoProfiles");
       profilesEl.append(empty);
     }
     targetsEl.replaceChildren(...targets.map(target => row(target.id, target.title,
-      target.shell === "wsl" ? "WSL · домашняя папка Linux" : "Оболочка",
+      target.shell === "wsl" ? t("Launch_WslDetail") : t("Launch_ShellDefault"),
       () => onLaunch({ title: target.title, customTitle: target.title, shell: target.shell,
         cwd: null, wslDistribution: target.wslDistribution || undefined }), null, target.shell)));
     if (dialog.open && focused) {
@@ -91,13 +92,13 @@ export function createLaunchMenu({ dialog, trigger, post, getProfiles, onLaunch,
   function request() {
     if (pending || mobile) return;
     const requestId = crypto.randomUUID();
-    status.textContent = "Поиск оболочек и дистрибутивов WSL…";
+    status.textContent = t("Launch_Searching");
     refresh.disabled = true;
     const timer = setTimeout(() => {
       if (pending?.requestId !== requestId) return;
       pending = null;
       refresh.disabled = false;
-      status.textContent = "Нет ответа. Обновите список или перезапустите окно приложения.";
+      status.textContent = t("Launch_NoResponse");
       position();
     }, 7000);
     pending = { requestId, timer };

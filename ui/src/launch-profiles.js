@@ -1,7 +1,8 @@
+import { t } from "./i18n.js";
 import { SESSION_COLORS } from "./session-management.js";
 
 export const PROFILE_SHELLS = {
-  auto: "Автоматически", powershell: "Windows PowerShell", pwsh: "PowerShell 7", cmd: "Командная строка"
+  auto: t("Profiles_Auto"), powershell: t("Profiles_Powershell"), pwsh: t("Profiles_Pwsh"), cmd: t("Profiles_Cmd")
 };
 
 export function validateProfile(record) {
@@ -12,16 +13,16 @@ export function validateProfile(record) {
   };
   if (typeof profile.id !== "string" || !profile.id || profile.id.length > 80 ||
       !profile.title || profile.title.length > 80 || /[\x00-\x1f\x7f-\x9f]/.test(profile.title))
-    throw new Error("Укажите название профиля до 80 символов.");
-  if (!Object.hasOwn(PROFILE_SHELLS, profile.shell)) throw new Error("Выберите оболочку.");
-  if (profile.color && !Object.hasOwn(SESSION_COLORS, profile.color)) throw new Error("Выберите цветовую метку.");
+    throw new Error(t("Profile_ValidateTitle"));
+  if (!Object.hasOwn(PROFILE_SHELLS, profile.shell)) throw new Error(t("Profile_ValidateShell"));
+  if (profile.color && !Object.hasOwn(SESSION_COLORS, profile.color)) throw new Error(t("Profile_ValidateColor"));
   if (profile.cwd && (profile.cwd.length > 2048 || /[\x00-\x1f\x7f-\x9f"<>|*?]/.test(profile.cwd) ||
       !/^(?:[a-z]:[\\/]|\\\\[^\\]+\\[^\\]+)/i.test(profile.cwd)))
-    throw new Error("Укажите полный путь к папке без кавычек, например C:\\Projects.");
+    throw new Error(t("Profile_ValidateCwd"));
   if (profile.startupCommand && (profile.startupCommand.length > 4096 || profile.startupCommand.includes("\0")))
-    throw new Error("Стартовая команда: максимум 4096 символов, без NUL.");
+    throw new Error(t("Profile_ValidateCommand"));
   if (profile.shell === "cmd" && /[\r\n]/.test(profile.startupCommand || ""))
-    throw new Error("Для cmd укажите одну строку; команды можно соединить через &&.");
+    throw new Error(t("Profile_ValidateCmdSingleLine"));
   return profile;
 }
 
@@ -39,12 +40,12 @@ export function createLaunchProfiles({ dialog, post, onLaunch, restoreFocus, onC
   const cancel = find("cancel");
   let profiles = [], draftId = null, pending = null, loadedCommand = "", displayedCommand = "";
   for (const [id, name] of Object.entries(PROFILE_SHELLS)) shell.add(new Option(name, id));
-  for (const [id, value] of Object.entries(SESSION_COLORS)) color.add(new Option(value.name, id));
+  for (const [id, value] of Object.entries(SESSION_COLORS)) color.add(new Option(value.key ? t(value.key) : value.name, id));
 
   function fill(id) {
     const record = profiles.find((item) => item.id === id);
     draftId = record?.id || crypto.randomUUID();
-    dialog.querySelector("h2").textContent = record ? "Изменить профиль" : "Создать профиль";
+    dialog.querySelector("h2").textContent = record ? t("Profile_EditTitle") : t("Profile_CreateTitle");
     find("launch").hidden = Boolean(record);
     title.value = record?.title || "";
     shell.value = record?.shell || "auto";
@@ -73,13 +74,13 @@ export function createLaunchProfiles({ dialog, post, onLaunch, restoreFocus, onC
   function save(next, action, id) {
     if (pending || !dialog.open) return;
     busy(true);
-    error.textContent = "Сохранение…";
+    error.textContent = t("Profile_Saving");
     const requestId = crypto.randomUUID();
     const timer = setTimeout(() => {
       if (pending?.requestId !== requestId) return;
       pending = null;
       busy(false);
-      error.textContent = "Нет подтверждения сохранения. Профиль не запущен. Закройте и откройте окно приложения, чтобы проверить сохранённые данные.";
+      error.textContent = t("Profile_NoConfirm");
     }, 5000);
     pending = { requestId, action, id, timer };
     post({ type: "persist-profiles", requestId, profiles: next });
@@ -93,7 +94,7 @@ export function createLaunchProfiles({ dialog, post, onLaunch, restoreFocus, onC
         startupCommand: command.value === displayedCommand ? loadedCommand : command.value });
       const next = profiles.some((p) => p.id === profile.id)
         ? profiles.map((p) => p.id === profile.id ? profile : p) : [...profiles, profile];
-      if (next.length > 100) throw new Error("Допустимо до 100 профилей.");
+      if (next.length > 100) throw new Error(t("Profile_TooMany"));
       const launch = event.submitter?.dataset.profileLaunch !== undefined && !profiles.some(p => p.id === profile.id);
       save(next, launch ? "launch" : "save", profile.id);
     } catch (failure) { error.textContent = failure.message; }
@@ -125,17 +126,17 @@ export function createLaunchProfiles({ dialog, post, onLaunch, restoreFocus, onC
       clearTimeout(timer);
       pending = null;
       busy(false);
-      if (message.error) { error.textContent = `Не удалось сохранить: ${message.error}`; return; }
+      if (message.error) { error.textContent = t("Profile_SaveError", { error: message.error }); return; }
       profiles = message.profiles.map((p) => ({ ...p }));
       onChanged();
       render(id);
       if (action === "launch") {
         const profile = profiles.find((p) => p.id === id);
-        if (!profile) { error.textContent = "Сохранённый профиль не найден. Запуск отменён."; return; }
+        if (!profile) { error.textContent = t("Profile_NotFound"); return; }
         close();
         onLaunch(profileSession(profile));
       } else {
-        error.textContent = action === "delete" ? "Профиль удалён. Работающие сессии не изменены." : "Профиль сохранён.";
+        error.textContent = action === "delete" ? t("Profile_Deleted") : t("Profile_Saved");
       }
     }
   };

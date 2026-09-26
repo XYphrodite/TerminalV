@@ -31,8 +31,10 @@ import { createMobileKeys, MOBILE_KEY_SEQUENCES } from "./mobile-keys.js";
 import { WRITE_CHUNK, chunkText } from "./write-chunk.js";
 import { shouldStoreAsFile, PASTE_FILE_STORE_TIMEOUT_MS } from "./paste-file.js";
 import { normalizeGatewaySettings, gatewayStatusText, gatewayConnectHint, generateGatewayToken } from "./gateway-settings.js";
+import { init as initI18n, t } from "./i18n.js";
 
 mountIcons(document);
+initI18n(settings.language);
 
 const tabsEl = document.getElementById("tabs");
 const panesEl = document.getElementById("panes");
@@ -58,6 +60,7 @@ const zoomValue = document.getElementById("zoom-value");
 const sessionDensityEl = document.getElementById("session-density");
 const hardwareRenderingEl = document.getElementById("hardware-rendering");
 const mobileFitModeEl = document.getElementById("mobile-fit-mode");
+const languageEl = document.getElementById("language");
 const gatewayEnabledEl = document.getElementById("gateway-enabled");
 const gatewayPortEl = document.getElementById("gateway-port");
 const gatewayTokenEl = document.getElementById("gateway-token");
@@ -107,7 +110,8 @@ const settings = {
   backgroundOpacity: 0.25,
   gatewayEnabled: true,
   gatewayPort: 5454,
-  gatewayToken: ""
+  gatewayToken: "",
+  language: "ru"
 };
 let gatewayState = null;
 
@@ -146,7 +150,7 @@ const notifications = createNotifications({
     patchTabRow(tab);
     updateSessionSwitcher();
     notificationStatus.textContent = tab.attention
-      ? `Сигнал от сессии «${(tab.customTitle || tab.title).slice(0, 160)}».` : "";
+      ? t("SignalFromSession", { title: (tab.customTitle || tab.title).slice(0, 160) }) : "";
   }
 });
 
@@ -230,20 +234,20 @@ function canSplit(axis) {
 function updatePaneToolbar() {
   const count = visibleTabs().length;
   paneToolbar.hidden = !count;
-  document.getElementById("pane-count").textContent = `Панели · ${count}`;
+  document.getElementById("pane-count").textContent = t("PanelsCount", { count });
   updateWorkspaceContext();
   splitRightBtn.disabled = !canSplit("columns");
   splitDownBtn.disabled = !canSplit("rows");
   detachPaneBtn.disabled = count < 2;
-  splitRightBtn.title = splitRightBtn.disabled ? `Недостаточно места или достигнут предел ${MAX_PANES} панелей` : "Разделить справа (Alt+Shift+=)";
-  splitDownBtn.title = splitDownBtn.disabled ? `Недостаточно места или достигнут предел ${MAX_PANES} панелей` : "Разделить снизу (Alt+Shift+-)";
+  splitRightBtn.title = splitRightBtn.disabled ? t("InsufficientSpace", { max: MAX_PANES }) : t("SplitRight");
+  splitDownBtn.title = splitDownBtn.disabled ? t("InsufficientSpace", { max: MAX_PANES }) : t("SplitDown");
 }
 
 function updateWorkspaceContext() {
   const tab = currentTab();
   const title = document.getElementById("workspace-title");
   const path = document.getElementById("workspace-path");
-  title.textContent = tab ? tab.customTitle || tab.title : "Терминал";
+  title.textContent = tab ? tab.customTitle || tab.title : t("Terminal");
   title.title = title.textContent;
   path.textContent = tab?.cwd || (tab ? sessionMetaText(tab) : "");
   path.title = path.textContent;
@@ -417,8 +421,8 @@ function applyChrome() {
   appEl.classList.toggle("session-minimal", settings.sessionDensity === "minimal");
   collapseBtn.setAttribute("aria-expanded", String(!settings.sidebarCollapsed));
   collapseBtn.title = settings.sidebarCollapsed
-    ? "Показать сессии (Ctrl+B)"
-    : "Свернуть список (Ctrl+B)";
+    ? t("ShowSessions")
+    : t("HideSessions");
   collapseBtn.setAttribute("aria-label", collapseBtn.title);
   document.body.style.background = chrome.bg;
 }
@@ -622,18 +626,18 @@ window.terminalvFlush = (requestId) => sessionPersistence.flush(requestId);
 function updateSessionSwitcher() {
   const target = tabs.filter((tab) => Boolean(tab.hidden) !== showHiddenSessions);
   const signals = target.filter((tab) => tab.attention).length;
-  hiddenSessionsBtn.querySelector("[data-hidden-label]").textContent = `${showHiddenSessions ? "Открытые" : "Скрытые"} · ${target.length}${signals ? ` · ! ${signals}` : ""}`;
+  hiddenSessionsBtn.querySelector("[data-hidden-label]").textContent = `${showHiddenSessions ? t("OpenSessions") : t("HiddenSessions")} · ${target.length}${signals ? t("SignalsSuffix", { count: signals }) : ""}`;
   document.getElementById("session-count").textContent = String(tabs.filter((tab) => !tab.hidden).length);
   updateWorkspaceContext();
   hiddenSessionsBtn.setAttribute("aria-pressed", String(showHiddenSessions));
-  hiddenSessionsBtn.title = `${showHiddenSessions ? "Показать открытые сессии" : "Показать скрытые сессии"}${signals ? `. Сигналов: ${signals}` : ""}`;
+  hiddenSessionsBtn.title = `${showHiddenSessions ? t("ShowOpenSessions") : t("ShowHiddenSessions")}${signals ? `. ${t("Signals", { count: signals })}` : ""}`;
   hiddenSessionsBtn.setAttribute("aria-label", hiddenSessionsBtn.title);
   hiddenSessionsBtn.classList.toggle("has-attention", signals > 0);
 }
 
 function sessionMetaText(tab) {
-  return [tab.attention && "Сигнал", tab.muted && "Без звука", tab.pinned && "★",
-    tab.exited ? "завершена" : tab.shell === "wsl" ? `${tab.wslDistribution} · WSL` : tab.shell && tab.shell !== "auto" ? PROFILE_SHELLS[tab.shell] || tab.shell : shellName]
+  return [tab.attention && t("Signal"), tab.muted && t("Muted"), tab.pinned && "★",
+    tab.exited ? t("SessionExited") : tab.shell === "wsl" ? `${tab.wslDistribution} · WSL` : tab.shell && tab.shell !== "auto" ? PROFILE_SHELLS[tab.shell] || tab.shell : shellName]
     .filter(Boolean).join(" · ");
 }
 
@@ -641,7 +645,7 @@ function applyNotificationRow(row, tab) {
   row.classList.toggle("has-attention", Boolean(tab.attention));
   row.classList.toggle("exited", Boolean(tab.exited));
   tab.pane.classList.toggle("exited", Boolean(tab.exited));
-  row.title = `${tab.customTitle || tab.title}${tab.attention ? " — получен сигнал" : ""}${tab.muted ? " — без звука" : ""}`;
+  row.title = `${tab.customTitle || tab.title}${tab.attention ? t("SignalSuffix") : ""}${tab.muted ? t("MutedSuffix") : ""}`;
   row.setAttribute("aria-label", row.title);
 }
 
@@ -649,7 +653,7 @@ function renderTabs() {
   tabsEl.replaceChildren();
   const hiddenCount = tabs.filter((tab) => tab.hidden).length;
   updateSessionSwitcher();
-  tabsEl.setAttribute("aria-label", showHiddenSessions ? "Скрытые сессии" : "Открытые сессии");
+  tabsEl.setAttribute("aria-label", showHiddenSessions ? t("HiddenSessions") : t("OpenSessions"));
   tabsEl.setAttribute("role", showHiddenSessions ? "group" : "tablist");
   const groups = sessionGroups(tabs, { hidden: showHiddenSessions, query: sessionFilter.value });
   const hasGroups = groups.some((group) => group.name);
@@ -657,8 +661,8 @@ function renderTabs() {
     if (hasGroups) {
       const heading = document.createElement("div");
       heading.className = "session-group";
-      heading.textContent = `${group.name || "Без группы"} · ${group.tabs.length}`;
-      heading.title = group.name || "Без группы";
+      heading.textContent = t("GroupHeading", { name: group.name || t("NoGroup"), count: group.tabs.length });
+      heading.title = group.name || t("NoGroup");
       tabsEl.append(heading);
     }
     for (const tab of group.tabs) {
@@ -722,15 +726,15 @@ function renderTabs() {
       options.className = "tab-options";
       options.type = "button";
       options.append(icon("more"));
-      options.title = "Группа, цвет, закрепление, звук и скрытие";
-      options.setAttribute("aria-label", "Управление сессией");
+      options.title = t("SessionOptionsTooltip");
+      options.setAttribute("aria-label", t("SessionManage"));
       options.addEventListener("click", (event) => { event.stopPropagation(); showSessionOptions(tab); });
       options.addEventListener("dblclick", (event) => event.stopPropagation());
 
       const close = document.createElement("button");
       close.className = "tab-close";
       close.type = "button";
-      close.title = tab.hidden ? "Вернуть сессию" : "Закрыть";
+      close.title = tab.hidden ? t("SessionReturn") : t("SessionClose");
       close.setAttribute("aria-label", close.title);
       close.append(icon(tab.hidden ? "restore" : "close"));
       close.addEventListener("click", (event) => {
@@ -805,13 +809,13 @@ function renderTabs() {
   if (!groups.length) {
     const empty = document.createElement("div");
     empty.className = "session-list-empty";
-    empty.textContent = sessionFilter.value.trim() ? "Сессии не найдены" : showHiddenSessions ? "Нет скрытых сессий" : "Нет открытых сессий";
+    empty.textContent = sessionFilter.value.trim() ? t("NoSessionsFound") : showHiddenSessions ? t("NoHiddenSessions") : t("NoOpenSessions");
     tabsEl.append(empty);
   }
   emptyEl.classList.toggle("hidden", openTabs().length > 0);
   emptyEl.querySelector(".empty-sub").textContent = hiddenCount
-    ? "Скрытые сессии доступны в списке слева. Верните нужную или создайте новую."
-    : "Команды, проекты и инструменты — каждый в своей сессии.";
+    ? t("HiddenEmpty")
+    : t("CommandsHint");
 }
 
 function clearTabDropIndicators() {
@@ -1186,8 +1190,8 @@ function newTab(options = {}) {
   paneClose.type = "button";
   paneClose.className = "pane-close";
   paneClose.append(icon("close"));
-  paneClose.title = "Закрыть эту панель";
-  paneClose.setAttribute("aria-label", "Закрыть эту панель");
+  paneClose.title = t("ClosePanel");
+  paneClose.setAttribute("aria-label", t("ClosePanel"));
   paneClose.addEventListener("click", (event) => { event.stopPropagation(); closeTab(id); });
   const paneState = document.createElement("span");
   paneState.className = "pane-state";
@@ -1203,9 +1207,9 @@ function newTab(options = {}) {
   const overlayText = document.createElement("span");
   const overlayBtn = document.createElement("button");
   overlayBtn.type = "button";
-  overlayBtn.textContent = "Перезапустить";
+  overlayBtn.textContent = t("Restart");
   if (options.startupCommand) {
-    overlayBtn.textContent = "Запустить со стартовой командой";
+    overlayBtn.textContent = t("RestartWithCommand");
     overlayBtn.title = options.startupCommand;
   }
   overlay.append(overlayText, overlayBtn);
@@ -1243,7 +1247,7 @@ function newTab(options = {}) {
   const tab = {
     ...metadata,
     id,
-    title: options.title || `Сессия ${index}`,
+    title: options.title || t("SessionN", { index }),
     customTitle: options.customTitle || undefined,
     cwd: cwd || undefined,
     shell: options.shell || undefined,
@@ -1372,7 +1376,7 @@ function newTab(options = {}) {
     // do not run a new shell over it: ConPTY startup clears the viewport, which
     // would then replace the saved history on the next autosave.
     tab.exited = true;
-    tab.overlayText.textContent = "Сессия не запущена. Сохранённый вывод доступен; запуск — кнопкой ниже.";
+    tab.overlayText.textContent = t("SessionNotStarted");
     tab.overlay.classList.add("visible");
     diag("restore", `saved screen without live process id=${id}`, id);
   } else {
@@ -1428,26 +1432,26 @@ function setUpdateBar(visible, text, options = {}) {
 
 function handleUpdate(message) {
   if (message.status === "available") {
-    setUpdateBar(true, `Доступно ${message.latest}`, { buttonLabel: "Обновить" });
+    setUpdateBar(true, t("UpdateAvailable", { latest: message.latest }), { buttonLabel: t("Update") });
     return;
   }
   if (message.status === "downloading") {
-    setUpdateBar(true, "Скачивание обновления…", { hideButton: true });
+    setUpdateBar(true, t("UpdateDownload"), { hideButton: true });
     return;
   }
   if (message.status === "restarting") {
-    setUpdateBar(true, `Установлено ${message.latest}. Перезапуск…`, { hideButton: true });
+    setUpdateBar(true, t("UpdateRestarting", { latest: message.latest }), { hideButton: true });
     return;
   }
   if (message.status === "current") {
-    setUpdateBar(true, `Установлена актуальная версия ${message.current}`, {
+    setUpdateBar(true, t("UpdateCurrent", { current: message.current }), {
       hideButton: true
     });
     setTimeout(() => updateBar.classList.add("hidden"), 2500);
     return;
   }
   if (message.status === "unsupported" || message.status === "error") {
-    setUpdateBar(true, message.message || "Не удалось проверить обновление", {
+    setUpdateBar(true, message.message || t("UpdateFailed"), {
       error: true,
       hideButton: true
     });
@@ -1523,7 +1527,7 @@ function applyPlatformSettings(mobile) {
   // Key bar at bottom changes #panes height; trigger fit so no top gap remains
   requestAnimationFrame(() => { try { window.dispatchEvent(new Event("resize")); } catch {} });
   const profilesButton = document.getElementById("launch-profiles-btn");
-  const profilesLabel = mobile ? "Профили" : "Профили и оболочки";
+  const profilesLabel = mobile ? t("Profiles_Title").split(" ")[0] : t("Profiles_Title");
   profilesButton.title = profilesLabel;
   profilesButton.setAttribute("aria-label", profilesLabel);
   profilesButton.querySelector(".profile-button-label").textContent = profilesLabel;
@@ -1545,6 +1549,10 @@ function syncGatewayForm() {
 function syncSettingsForm() {
   hardwareRenderingEl.checked = settings.hardwareRendering !== false;
   if (mobileFitModeEl) mobileFitModeEl.checked = !!settings.mobileFitMode;
+  if (languageEl) {
+    languageEl.value = settings.language === "en" ? "en" : "ru";
+    initI18n(settings.language);
+  }
   syncGatewayForm();
   sessionDensityEl.value = settings.sessionDensity === "minimal" ? "minimal" : "standard";
   fontSizeEl.value = String(settings.fontSize);
@@ -1558,6 +1566,20 @@ function syncSettingsForm() {
   renderThemeGrid();
   applyChrome();
   applyToTerminals();
+}
+
+if (languageEl) {
+  languageEl.addEventListener("change", () => {
+    const newLang = languageEl.value === "en" ? "en" : "ru";
+    settings.language = newLang;
+    initI18n(newLang);
+    persistSettings();
+    renderTabs();
+    renderPaneLayout();
+    updatePaneToolbar();
+    updateWorkspaceContext();
+    syncSettingsForm();
+  });
 }
 
 function openSettings() {
@@ -1641,10 +1663,10 @@ function applyAppInfo(message) {
   const mobile = message.mobile === true;
   updateSupported = Boolean(message.updateSupported);
   versionBtn.disabled = mobile || !appVersion;
-  versionBtn.setAttribute("aria-label", `${mobile ? "TerminalV Mobile" : "TerminalV"}: ${appVersion ? `версия ${appVersion}` : "версия загружается"}`);
+  versionBtn.setAttribute("aria-label", `${mobile ? "TerminalV Mobile" : "TerminalV"}: ${appVersion ? `${t("VersionLoading")} ${appVersion}` : t("VersionLoading")}`);
   versionBtn.title = mobile
-    ? `Версия мобильного приложения${appVersion ? `: ${appVersion}` : ""}`
-    : updateSupported ? "Проверить обновления" : "Самообновление работает в установленной копии";
+    ? t("VersionMobile", { version: appVersion ? `: ${appVersion}` : "" })
+    : updateSupported ? t("CheckUpdates") : t("UpdateInstalledCopy");
 }
 
 function reconcileMobileSessions(message) {
@@ -1683,7 +1705,7 @@ function reconcileMobileSessions(message) {
   for (const tab of tabs) {
     if (live.has(tab.id) || (!authoritative && !message.reconnect)) continue;
     tab.exited = true;
-    tab.overlayText.textContent = "Сессия не подключена. Сохранённый вывод доступен.";
+    tab.overlayText.textContent = t("SessionNotConnected");
     tab.overlay.classList.add("visible");
   }
   for (const record of records) {
@@ -1757,14 +1779,16 @@ function handleHost(message) {
     applyAppInfo(message);
     if (message.settings) {
       Object.assign(settings, message.settings);
+      if (message.settings.language) initI18n(message.settings.language);
+      else initI18n(settings.language);
     }
     gatewayState = message.gateway ?? null;
     fillFonts(message.fonts);
     window.__liveIds = message.liveIds || [];
     legacyHostNotice = message.connectionError || (message.cwdTrackingSupported === false
-      ? "Фоновый процесс TerminalV старой версии: текущая папка пока не отслеживается. После завершения нужных задач перезагрузите Windows. Работающие сессии не прерываются."
+      ? t("LegacyCwd")
       : message.environmentRefreshSupported === false
-        ? "Фоновый процесс TerminalV старой версии: PATH для новых вкладок пока не обновляется. Сохраните работу и перезагрузите Windows, чтобы включить исправление. Работающие сессии не прерываются."
+        ? t("LegacyEnv")
         : "");
     syncSettingsForm();
     if (tabs.length === 0) {
@@ -1889,7 +1913,7 @@ function handleHost(message) {
     closeController.cancel(tab);
     pasteController.cancel(tab);
     syncScrollLock(tab);
-    tab.overlayText.textContent = `Процесс завершился с кодом ${message.code ?? 0}`;
+    tab.overlayText.textContent = t("ProcessExited", { code: message.code ?? 0 });
     tab.overlay.classList.add("visible");
     renderTabs();
     return;
@@ -1900,7 +1924,7 @@ function handleHost(message) {
     tab.exited = true;
     closeController.cancel(tab);
     pasteController.cancel(tab);
-    tab.overlayText.textContent = message.message || "Не удалось запустить сессию";
+    tab.overlayText.textContent = message.message || t("SessionLaunchFailed");
     tab.overlay.classList.add("visible");
     renderTabs();
   }
@@ -2151,5 +2175,5 @@ if (webview) {
   post({ type: "ready" });
 } else {
   emptyEl.querySelector(".empty-sub").textContent =
-    "Откройте приложение TerminalV, а не этот файл в браузере.";
+    t("OpenInTerminalV");
 }

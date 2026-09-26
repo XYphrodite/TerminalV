@@ -1,3 +1,5 @@
+import { t } from "./i18n.js";
+
 export const SEARCH_HIGHLIGHT_LIMIT = 1000;
 
 export function isSearchShortcut(event) {
@@ -20,10 +22,10 @@ export function createTerminalSearch({ panel, onVisibilityChange }) {
   function showResults(found) {
     const { resultIndex, resultCount } = lastResult;
     const limited = resultCount >= SEARCH_HIGHLIGHT_LIMIT;
-    count.textContent = !input.value ? "" : !found ? "Нет совпадений" :
-      resultCount === 0 ? "Совпадение" :
+    count.textContent = !input.value ? "" : !found ? t("Search_NoMatches") :
+      resultCount === 0 ? t("Search_Match") :
       `${resultIndex < 0 ? "—" : resultIndex + 1} / ${limited ? "≥" : ""}${resultCount}`;
-    count.title = limited ? `Подсвечены первые ${SEARCH_HIGHLIGHT_LIMIT} совпадений; переход доступен по всем.` : "";
+    count.title = limited ? t("Search_LimitedHint", { limit: SEARCH_HIGHLIGHT_LIMIT }) : "";
     panel.classList.toggle("no-results", Boolean(input.value) && !found);
     previous.disabled = next.disabled = !found;
   }
@@ -101,7 +103,7 @@ export function createTerminalSearch({ panel, onVisibilityChange }) {
   input.addEventListener("input", () => {
     window.clearTimeout(timer);
     if (!session) return;
-    count.textContent = input.value ? "Поиск…" : "";
+    count.textContent = input.value ? t("Search_Searching") : "";
     previous.disabled = next.disabled = true;
     timer = window.setTimeout(() => find(1, true), 100);
   });

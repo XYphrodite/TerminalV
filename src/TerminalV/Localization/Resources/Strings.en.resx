@@ -1,0 +1,145 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
+    <xsd:import namespace="http://www.w3.org/XML/1998/namespace" />
+    <xsd:element name="root" msdata:IsDataSet="true">
+      <xsd:complexType>
+        <xsd:choice maxOccurs="unbounded">
+          <xsd:element name="metadata">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" />
+              <xsd:attribute name="type" type="xsd:string" />
+              <xsd:attribute name="mimetype" type="xsd:string" />
+              <xsd:attribute ref="xml:space" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="assembly">
+            <xsd:complexType>
+              <xsd:attribute name="alias" type="xsd:string" />
+              <xsd:attribute name="name" type="xsd:string" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="data">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+                <xsd:element name="comment" type="xsd:string" minOccurs="0" msdata:Ordinal="2" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" msdata:Ordinal="1" />
+              <xsd:attribute name="type" type="xsd:string" msdata:Ordinal="3" />
+              <xsd:attribute name="mimetype" type="xsd:string" msdata:Ordinal="4" />
+              <xsd:attribute ref="xml:space" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="resheader">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" msdata:Ordinal="1" />
+            </xsd:complexType>
+          </xsd:element>
+        </xsd:choice>
+      </xsd:complexType>
+    </xsd:element>
+  </xsd:schema>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <data name="Window_Title" xml:space="preserve">
+    <value>TerminalV</value>
+  </data>
+  <data name="Window_Loading" xml:space="preserve">
+    <value>Loading TerminalV…</value>
+  </data>
+  <data name="Caption_Minimize" xml:space="preserve">
+    <value>Minimize</value>
+  </data>
+  <data name="Caption_Maximize" xml:space="preserve">
+    <value>Maximize</value>
+  </data>
+  <data name="Caption_Restore" xml:space="preserve">
+    <value>Restore</value>
+  </data>
+  <data name="Caption_Close" xml:space="preserve">
+    <value>Close</value>
+  </data>
+  <data name="Gateway_Status_NotRunning" xml:space="preserve">
+    <value>Not running.</value>
+  </data>
+  <data name="Gateway_Status_Disabled" xml:space="preserve">
+    <value>Disabled in settings.</value>
+  </data>
+  <data name="Error_WwwrootNotFound" xml:space="preserve">
+    <value>Interface not found (wwwroot). Build the project with dotnet build.</value>
+  </data>
+  <data name="Error_WebView2NotFound" xml:space="preserve">
+    <value>Microsoft Edge WebView2 Runtime is required.</value>
+  </data>
+  <data name="Confirm_TailnetRevoke" xml:space="preserve">
+    <value>Disconnect all paired devices? Next connection will require new confirmation on the PC.</value>
+  </data>
+  <data name="Error_SaveSessionsFailed" xml:space="preserve">
+    <value>Failed to save sessions. Window left open. Try closing again to retry.</value>
+  </data>
+  <data name="Error_RestartFailed" xml:space="preserve">
+    <value>Sessions saved, but restart failed. Please open TerminalV manually.</value>
+  </data>
+  <data name="Error_SaveAlreadyInProgress" xml:space="preserve">
+    <value>Save already in progress.</value>
+  </data>
+  <data name="Error_FlushTimeout" xml:space="preserve">
+    <value>Interface did not confirm session save within 10 seconds.</value>
+  </data>
+  <data name="Error_OpenBrowserAuthor" xml:space="preserve">
+    <value>Failed to open browser. Author profile: </value>
+  </data>
+  <data name="Error_OpenBrowserLink" xml:space="preserve">
+    <value>Failed to open browser. Link: </value>
+  </data>
+  <data name="Error_UpdateUnsupported" xml:space="preserve">
+    <value>Update is only available for an installed copy of TerminalV.</value>
+  </data>
+  <data name="Error_ShortcutsBusy" xml:space="preserve">
+    <value>Shortcuts are already being created. Please wait.</value>
+  </data>
+  <data name="Error_LaunchTargetsBusy" xml:space="preserve">
+    <value>List is already refreshing. Try again in a few seconds.</value>
+  </data>
+  <data name="Error_NoProfiles" xml:space="preserve">
+    <value>No profile list available.</value>
+  </data>
+  <data name="Error_WslQuickStart" xml:space="preserve">
+    <value>WSL quick launch opens the Linux home directory.</value>
+  </data>
+  <data name="Error_ProfileFolderNotFound" xml:space="preserve">
+    <value>Profile folder unavailable. Launch cancelled: </value>
+  </data>
+  <data name="Error_SessionAlreadyRunning" xml:space="preserve">
+    <value>Session is already running. Duplicate launch cancelled.</value>
+  </data>
+  <data name="Dialog_BackgroundTitle" xml:space="preserve">
+    <value>Session background</value>
+  </data>
+  <data name="Dialog_ImageFilter" xml:space="preserve">
+    <value>Images|*.png;*.jpg;*.jpeg;*.webp;*.bmp;*.gif|All files|*.*</value>
+  </data>
+  <data name="Error_DataAccess" xml:space="preserve">
+    <value>Failed to open TerminalV data. Check access to %LOCALAPPDATA%\TerminalV and free disk space.</value>
+  </data>
+  <data name="Info_AlreadyRunning" xml:space="preserve">
+    <value>TerminalV is already open. Switch to the existing window.</value>
+  </data>
+</root>

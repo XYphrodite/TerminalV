@@ -4,16 +4,20 @@ using System.IO;
 using System.Security.Cryptography;
 using System.Text;
 using System.Windows;
+using Microsoft.Extensions.Localization;
 using Microsoft.Web.WebView2.Core;
 using TerminalV.Data;
 using TerminalV.Diagnostics;
 using TerminalV.Gateway;
 using TerminalV.Host;
+using TerminalV.Localization;
 
 namespace TerminalV;
 
 public partial class MainWindow : Window
 {
+    private readonly IStringLocalizer _localizer;
+    private readonly IStringLocalizerFactory _localizerFactory;
     private TerminalBridge? _bridge;
     private GatewayServer? _gateway;
     private TailnetAccess? _tailnetAccess;
@@ -24,8 +28,12 @@ public partial class MainWindow : Window
     private bool _closing;
     private bool _restartOnClose;
 
-    public MainWindow()
+    public MainWindow() : this(LocalizationService.Factory) { }
+
+    public MainWindow(IStringLocalizerFactory? localizerFactory)
     {
+        _localizerFactory = localizerFactory ?? LocalizationService.Factory;
+        _localizer = _localizerFactory.Create(typeof(MainWindow));
         InitializeComponent();
         WindowFrame.Hook(this);
         WindowStatePersistence.Hook(this,
@@ -60,8 +68,8 @@ public partial class MainWindow : Window
         {
             MessageBox.Show(
                 this,
-                "Не найден интерфейс (wwwroot). Соберите проект через dotnet build.",
-                "TerminalV",
+                _localizer["Error_WwwrootNotFound"],
+                _localizer["Window_Title"],
                 MessageBoxButton.OK,
                 MessageBoxImage.Error);
             Close();
@@ -77,8 +85,8 @@ public partial class MainWindow : Window
         {
             MessageBox.Show(
                 this,
-                "Нужен Microsoft Edge WebView2 Runtime.",
-                "TerminalV",
+                _localizer["Error_WebView2NotFound"],
+                _localizer["Window_Title"],
                 MessageBoxButton.OK,
                 MessageBoxImage.Error);
             Close();
@@ -102,7 +110,7 @@ public partial class MainWindow : Window
             AppPaths.Root,
             CoreWebView2HostResourceAccessKind.Allow);
 
-        _bridge = new TerminalBridge(Dispatcher, core, DescribeGateway);
+        _bridge = new TerminalBridge(Dispatcher, core, DescribeGateway, _localizerFactory);
         _bridge.SettingsChanged += SyncGateway;
         _bridge.RestartRequested += () =>
         {
@@ -115,7 +123,7 @@ public partial class MainWindow : Window
             using var message = System.Text.Json.JsonDocument.Parse(args.WebMessageAsJson);
             if (message.RootElement.TryGetProperty("type", out var type) && type.GetString() == "tailnet-revoke")
             {
-                if (MessageBox.Show(this, "Отключить все привязанные устройства? При следующем подключении потребуется новое подтверждение на ПК.", "TerminalV", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) == MessageBoxResult.Yes)
+                if (MessageBox.Show(this, _localizer["Confirm_TailnetRevoke"], _localizer["Window_Title"], MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) == MessageBoxResult.Yes)
                     _tailnetAccess?.RevokeAll();
                 return;
             }
@@ -123,7 +131,6 @@ public partial class MainWindow : Window
         };
         core.NewWindowRequested += (_, e) =>
         {
-            // window.open() from xterm's default link handler (if any) should not show an embedded popup.
             e.Handled = true;
             var uri = e.Uri;
             if (!string.IsNullOrWhiteSpace(uri)
@@ -141,7 +148,6 @@ public partial class MainWindow : Window
         };
         core.NavigationStarting += (_, e) =>
         {
-            // Virtual hosts are the only allowed in-WebView navigation; everything else goes to the system browser.
             if (e.Uri.StartsWith("https://terminalv.local", StringComparison.OrdinalIgnoreCase)
                 || e.Uri.StartsWith("https://tvdata.local", StringComparison.OrdinalIgnoreCase))
             {
@@ -187,7 +193,7 @@ public partial class MainWindow : Window
             await _bridge.FlushAsync();
             await _bridge.StopExtensionsAsync();
 
-            await Task.Yield(); // Unwind Closing even when the interface has not loaded.
+            await Task.Yield();
             _allowClose = true;
             Close();
         }
@@ -196,20 +202,18 @@ public partial class MainWindow : Window
             _allowClose = false;
             Diag.Log("persistence", "Window close cancelled: session save failed", ex.ToString());
             MessageBox.Show(this,
-                "Не удалось сохранить сессии. Окно оставлено открытым. Повторите закрытие, чтобы снова попробовать сохранить.\n\n" + ex.Message,
-                "TerminalV", MessageBoxButton.OK, MessageBoxImage.Warning);
+                _localizer["Error_SaveSessionsFailed"] + "\n\n" + ex.Message,
+                _localizer["Window_Title"], MessageBoxButton.OK, MessageBoxImage.Warning);
         }
         finally { _closing = false; }
     }
 
-    private static void RestartApplication()
+    private void RestartApplication()
     {
         var path = Environment.ProcessPath;
         if (string.IsNullOrWhiteSpace(path)) return;
         try
         {
-            // Wait for the old process to release its desktop lease. A fixed
-            // delay can launch the replacement while the old window still owns it.
             var script = $"Wait-Process -Id {Environment.ProcessId} -ErrorAction SilentlyContinue; " +
                 $"Start-Process -FilePath '{path.Replace("'", "''")}'";
             var command = Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
@@ -225,8 +229,8 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             Diag.Log("update", "Restart failed after saving sessions", ex.ToString());
-            MessageBox.Show("Сессии сохранены, но перезапуск не удался. Откройте TerminalV вручную.\n\n" + ex.Message,
-                "TerminalV", MessageBoxButton.OK, MessageBoxImage.Warning);
+            MessageBox.Show(_localizer["Error_RestartFailed"] + "\n\n" + ex.Message,
+                _localizer["Window_Title"], MessageBoxButton.OK, MessageBoxImage.Warning);
         }
     }
 
@@ -243,7 +247,7 @@ public partial class MainWindow : Window
             enabled = _gatewayEnabled,
             port = _gatewayPort,
             listening = false,
-            status = gateway?.Status ?? (_gatewayEnabled ? "Не запущен." : "Отключён в настройках.")
+            status = gateway?.Status ?? (_gatewayEnabled ? _localizer["Gateway_Status_NotRunning"] : _localizer["Gateway_Status_Disabled"])
         };
     }
 
@@ -304,7 +308,6 @@ public partial class MainWindow : Window
         }
         catch
         {
-            // Status (e.g. missing URL ACL) stays visible in settings; retry on next save/restart.
         }
 
         _gateway = server;
@@ -331,8 +334,7 @@ public partial class MainWindow : Window
         var maximized = WindowState == WindowState.Maximized;
         MaximizeGlyph.Visibility = maximized ? Visibility.Collapsed : Visibility.Visible;
         RestoreGlyph.Visibility = maximized ? Visibility.Visible : Visibility.Collapsed;
-        MaximizeButton.ToolTip = maximized ? "Свернуть в окно" : "Развернуть";
-        // Keep the airspace inset in sync: no resize border needed when maximized.
+        MaximizeButton.ToolTip = maximized ? _localizer["Caption_Restore"] : _localizer["Caption_Maximize"];
         ContentRoot.Margin = maximized ? new Thickness(0) : new Thickness(6, 0, 6, 6);
     }
 }

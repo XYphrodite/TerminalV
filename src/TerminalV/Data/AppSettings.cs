@@ -15,4 +15,5 @@ internal sealed class AppSettings
     public int GatewayPort { get; set; } = 5454;
     public string GatewayToken { get; set; } = "";
     public bool MobileFitMode { get; set; } = false;
+    public string Language { get; set; } = "ru";
 }

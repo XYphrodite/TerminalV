@@ -1,9 +1,14 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Text;
 using System.Windows;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Localization;
 using SelfUpdateKit;
 using TerminalV.Cli;
+using TerminalV.Data;
+using TerminalV.Localization;
 using TerminalV.Pty;
 using TerminalV.Update;
 
@@ -11,12 +16,63 @@ namespace TerminalV;
 
 public partial class App : Application
 {
+    public static IServiceProvider? Services { get; private set; }
+    public static IStringLocalizerFactory? LocalizerFactory { get; private set; }
+
     protected override void OnStartup(StartupEventArgs e)
     {
+        // DI setup for IStringLocalizerFactory
+        ConfigureLocalization();
+        ApplyCulture();
         PendingUpdateApplier.Apply(Environment.ProcessPath,
             TerminalVUpdate.Options(TerminalVUpdate.InstalledVariant(Environment.ProcessPath)));
         base.OnStartup(e);
         new MainWindow().Show();
+    }
+
+    private static void ConfigureLocalization()
+    {
+        // Reuse existing LocalizationService if already initialized from Program.Main,
+        // otherwise build the DI container here (e.g., when launched via App directly).
+        try
+        {
+            LocalizationService.Initialize();
+            Services = LocalizationService.Provider;
+            LocalizerFactory = LocalizationService.Factory;
+        }
+        catch
+        {
+            var services = new ServiceCollection();
+            services.AddLocalization(options => options.ResourcesPath = "Localization/Resources");
+            Services = services.BuildServiceProvider();
+            LocalizerFactory = Services.GetRequiredService<IStringLocalizerFactory>();
+            LocalizationService.Initialize(Services);
+        }
+    }
+
+    private static void ApplyCulture()
+    {
+        try
+        {
+            string language;
+            using (var db = new AppDatabase())
+            {
+                language = db.LoadSettings().Language;
+            }
+            var cultureName = language == "en" ? "en" : "ru";
+            var culture = new CultureInfo(cultureName);
+            CultureInfo.DefaultThreadCurrentCulture = culture;
+            CultureInfo.DefaultThreadCurrentUICulture = culture;
+            CultureInfo.CurrentCulture = culture;
+            CultureInfo.CurrentUICulture = culture;
+            LocalizationService.ApplyLanguage(cultureName);
+        }
+        catch
+        {
+            var fallback = new CultureInfo("ru");
+            CultureInfo.DefaultThreadCurrentCulture = fallback;
+            CultureInfo.DefaultThreadCurrentUICulture = fallback;
+        }
     }
 
     internal static int RunCli(string[] argv)

@@ -1,3 +1,4 @@
+import { t } from "./i18n.js";
 import { createExtensionRuntime } from "./extensions.js";
 
 export function createExtensionsUi({ post, document: doc = document }) {
@@ -59,7 +60,7 @@ export function createExtensionsUi({ post, document: doc = document }) {
     const item = element("div", "extension-notification");
     item.append(element("strong", "", runtime.catalog.find(item => item.id === id)?.name ?? id),
       element("div", "", text));
-    const close = element("button", "ghost", "Закрыть");
+    const close = element("button", "ghost", t("Extensions_Close"));
     close.type = "button";
     const timer = setTimeout(() => item.remove(), 8000);
     close.addEventListener("click", () => { clearTimeout(timer); item.remove(); });
@@ -79,7 +80,7 @@ export function createExtensionsUi({ post, document: doc = document }) {
     const focus = doc.activeElement?.dataset.extensionToggle;
     list.replaceChildren();
     const catalog = runtime.catalog;
-    if (!catalog.length) list.append(element("p", "shortcut-hint", "Расширения пока не установлены."));
+    if (!catalog.length) list.append(element("p", "shortcut-hint", t("Extensions_NoneInstalled")));
     for (const item of catalog) {
       const row = element("section", "extension-item");
       const label = element("label", "shortcut-option");
@@ -99,8 +100,8 @@ export function createExtensionsUi({ post, document: doc = document }) {
       row.append(label);
       if (item.description) row.append(element("p", "shortcut-hint", item.description));
       row.append(element("p", "shortcut-hint", item.restartRequired
-        ? "Изменение применится после перезапуска TerminalV."
-        : item.active ? "Включено" : item.enabled ? "Не удалось запустить" : "Отключено"));
+        ? t("Extensions_RestartRequired")
+        : item.active ? t("Extensions_Enabled") : item.enabled ? t("Extensions_Failed") : t("Extensions_Disabled")));
       if (item.error || item.uiError) row.append(element("p", "extension-error", item.error || item.uiError));
       const commands = element("div", "extension-commands");
       for (const command of runtime.commands(item.id)) {

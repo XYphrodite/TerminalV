@@ -1,3 +1,5 @@
+import { t } from "./i18n.js";
+
 // An explicit one-shot action, not a persisted setting or terminal command.
 export function createShortcuts({ root, post }) {
   const startMenu = root.querySelector("#shortcut-start-menu");
@@ -10,7 +12,7 @@ export function createShortcuts({ root, post }) {
   function render() {
     startMenu.disabled = desktop.disabled = !supported || Boolean(pending);
     button.disabled = !supported || Boolean(pending) || (!startMenu.checked && !desktop.checked);
-    button.textContent = pending ? "Создаём ярлыки…" : "Создать ярлыки";
+    button.textContent = pending ? t("Shortcuts_Creating") : t("Shortcuts_Create");
     root.setAttribute("aria-busy", String(Boolean(pending)));
   }
   startMenu.addEventListener("change", render);
@@ -18,11 +20,11 @@ export function createShortcuts({ root, post }) {
   button.addEventListener("click", () => {
     if (button.disabled) return;
     pending = { requestId: crypto.randomUUID(), startMenu: startMenu.checked, desktop: desktop.checked };
-    status.textContent = "Создаём выбранные ярлыки…";
+    status.textContent = t("Shortcuts_CreatingSelected");
     status.classList.remove("has-error");
     render();
     try { post({ type: "create-shortcuts", ...pending }); }
-    catch { receive({ requestId: pending.requestId, error: "Не удалось отправить запрос. Попробуйте ещё раз." }); }
+    catch { receive({ requestId: pending.requestId, error: t("Shortcuts_SendFailed") }); }
   });
 
   function receive(message) {
@@ -31,14 +33,14 @@ export function createShortcuts({ root, post }) {
     pending = null;
     let hasError = Boolean(message.error);
     const lines = [];
-    if (message.error) lines.push(`Не удалось создать ярлыки: ${message.error}`);
+    if (message.error) lines.push(t("Shortcuts_FailedPrefix", { error: message.error }));
     else {
-      for (const [destination, label] of [["startMenu", "Меню «Пуск»"], ["desktop", "Рабочий стол"]]) {
+      for (const [destination, label] of [["startMenu", t("Shortcuts_StartMenu")], ["desktop", t("Shortcuts_Desktop")]]) {
         if (!selected[destination]) continue;
         const result = message.results?.find((item) => item.destination === destination);
-        const error = result?.error || (!result?.path ? "Windows не подтвердила создание ярлыка." : null);
+        const error = result?.error || (!result?.path ? t("Shortcuts_NotConfirmed") : null);
         hasError ||= Boolean(error);
-        lines.push(error ? `${label}: ${error}` : `${label}: ярлык готов.\n${result.path}`);
+        lines.push(error ? `${label}: ${error}` : `${label}: ${t("Shortcuts_Done")}\n${result.path}`);
       }
     }
     status.textContent = lines.join("\n");
@@ -51,7 +53,7 @@ export function createShortcuts({ root, post }) {
     receive,
     setSupported(value) {
       supported = value === true;
-      if (!pending) status.textContent = supported ? "" : "Создание ярлыков доступно в приложении TerminalV для Windows.";
+      if (!pending) status.textContent = supported ? "" : t("Shortcuts_Unavailable");
       render();
     }
   };

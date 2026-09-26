@@ -36,21 +36,27 @@ internal sealed class AppDatabase : IDisposable
         var value = cmd.ExecuteScalar() as string;
         if (string.IsNullOrWhiteSpace(value))
         {
-            return new AppSettings();
+            // First launch or after reinstall without DB: detect OS language, then persist via SaveSettings on next UI persist.
+            var fresh = new AppSettings { Language = DetectSystemLanguage() };
+            return fresh;
         }
 
         try
         {
-            return JsonSerializer.Deserialize<AppSettings>(value, Json) ?? new AppSettings();
+            var settings = JsonSerializer.Deserialize<AppSettings>(value, Json) ?? new AppSettings { Language = DetectSystemLanguage() };
+            // Old DB without Language field -> migrate to system language instead of hardcoded ru.
+            settings.Language = string.IsNullOrWhiteSpace(settings.Language) ? DetectSystemLanguage() : NormalizeLanguage(settings.Language);
+            return settings;
         }
         catch (JsonException)
         {
-            return new AppSettings();
+            return new AppSettings { Language = DetectSystemLanguage() };
         }
     }
 
     public void SaveSettings(AppSettings settings)
     {
+        settings.Language = NormalizeLanguage(settings.Language);
         var json = JsonSerializer.Serialize(settings, Json);
         using var cmd = _connection.CreateCommand();
         cmd.CommandText = """
@@ -277,6 +283,19 @@ internal sealed class AppDatabase : IDisposable
             add.ExecuteNonQuery();
         }
     }
+
+    private static string DetectSystemLanguage()
+    {
+        try
+        {
+            var name = System.Globalization.CultureInfo.CurrentUICulture.TwoLetterISOLanguageName;
+            return name == "en" ? "en" : "ru";
+        }
+        catch { return "ru"; }
+    }
+
+    private static string NormalizeLanguage(string? language) =>
+        language == "en" ? "en" : "ru";
 
     private void TryAddColumn(string sql)
     {

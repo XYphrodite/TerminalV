@@ -1,0 +1,145 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
+    <xsd:import namespace="http://www.w3.org/XML/1998/namespace" />
+    <xsd:element name="root" msdata:IsDataSet="true">
+      <xsd:complexType>
+        <xsd:choice maxOccurs="unbounded">
+          <xsd:element name="metadata">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" />
+              <xsd:attribute name="type" type="xsd:string" />
+              <xsd:attribute name="mimetype" type="xsd:string" />
+              <xsd:attribute ref="xml:space" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="assembly">
+            <xsd:complexType>
+              <xsd:attribute name="alias" type="xsd:string" />
+              <xsd:attribute name="name" type="xsd:string" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="data">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+                <xsd:element name="comment" type="xsd:string" minOccurs="0" msdata:Ordinal="2" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" msdata:Ordinal="1" />
+              <xsd:attribute name="type" type="xsd:string" msdata:Ordinal="3" />
+              <xsd:attribute name="mimetype" type="xsd:string" msdata:Ordinal="4" />
+              <xsd:attribute ref="xml:space" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="resheader">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" msdata:Ordinal="1" />
+            </xsd:complexType>
+          </xsd:element>
+        </xsd:choice>
+      </xsd:complexType>
+    </xsd:element>
+  </xsd:schema>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <data name="Window_Title" xml:space="preserve">
+    <value>TerminalV</value>
+  </data>
+  <data name="Window_Loading" xml:space="preserve">
+    <value>Загрузка TerminalV…</value>
+  </data>
+  <data name="Caption_Minimize" xml:space="preserve">
+    <value>Свернуть</value>
+  </data>
+  <data name="Caption_Maximize" xml:space="preserve">
+    <value>Развернуть</value>
+  </data>
+  <data name="Caption_Restore" xml:space="preserve">
+    <value>Свернуть в окно</value>
+  </data>
+  <data name="Caption_Close" xml:space="preserve">
+    <value>Закрыть</value>
+  </data>
+  <data name="Gateway_Status_NotRunning" xml:space="preserve">
+    <value>Не запущен.</value>
+  </data>
+  <data name="Gateway_Status_Disabled" xml:space="preserve">
+    <value>Отключён в настройках.</value>
+  </data>
+  <data name="Error_WwwrootNotFound" xml:space="preserve">
+    <value>Не найден интерфейс (wwwroot). Соберите проект через dotnet build.</value>
+  </data>
+  <data name="Error_WebView2NotFound" xml:space="preserve">
+    <value>Нужен Microsoft Edge WebView2 Runtime.</value>
+  </data>
+  <data name="Confirm_TailnetRevoke" xml:space="preserve">
+    <value>Отключить все привязанные устройства? При следующем подключении потребуется новое подтверждение на ПК.</value>
+  </data>
+  <data name="Error_SaveSessionsFailed" xml:space="preserve">
+    <value>Не удалось сохранить сессии. Окно оставлено открытым. Повторите закрытие, чтобы снова попробовать сохранить.</value>
+  </data>
+  <data name="Error_RestartFailed" xml:space="preserve">
+    <value>Сессии сохранены, но перезапуск не удался. Откройте TerminalV вручную.</value>
+  </data>
+  <data name="Error_SaveAlreadyInProgress" xml:space="preserve">
+    <value>Сохранение уже выполняется.</value>
+  </data>
+  <data name="Error_FlushTimeout" xml:space="preserve">
+    <value>Интерфейс не подтвердил сохранение сессий за 10 секунд.</value>
+  </data>
+  <data name="Error_OpenBrowserAuthor" xml:space="preserve">
+    <value>Не удалось открыть браузер. Профиль автора: </value>
+  </data>
+  <data name="Error_OpenBrowserLink" xml:space="preserve">
+    <value>Не удалось открыть браузер. Ссылка: </value>
+  </data>
+  <data name="Error_UpdateUnsupported" xml:space="preserve">
+    <value>Обновление доступно только для установленной копии TerminalV.</value>
+  </data>
+  <data name="Error_ShortcutsBusy" xml:space="preserve">
+    <value>Ярлыки уже создаются. Дождитесь завершения.</value>
+  </data>
+  <data name="Error_LaunchTargetsBusy" xml:space="preserve">
+    <value>Список уже обновляется. Повторите попытку через несколько секунд.</value>
+  </data>
+  <data name="Error_NoProfiles" xml:space="preserve">
+    <value>Нет списка профилей.</value>
+  </data>
+  <data name="Error_WslQuickStart" xml:space="preserve">
+    <value>Быстрый запуск WSL открывает домашнюю папку Linux.</value>
+  </data>
+  <data name="Error_ProfileFolderNotFound" xml:space="preserve">
+    <value>Папка профиля недоступна. Запуск отменён: </value>
+  </data>
+  <data name="Error_SessionAlreadyRunning" xml:space="preserve">
+    <value>Сессия уже работает. Повторный запуск отменён.</value>
+  </data>
+  <data name="Dialog_BackgroundTitle" xml:space="preserve">
+    <value>Фон сессии</value>
+  </data>
+  <data name="Dialog_ImageFilter" xml:space="preserve">
+    <value>Изображения|*.png;*.jpg;*.jpeg;*.webp;*.bmp;*.gif|Все файлы|*.*</value>
+  </data>
+  <data name="Error_DataAccess" xml:space="preserve">
+    <value>Не удалось открыть данные TerminalV. Проверьте доступ к папке %LOCALAPPDATA%\TerminalV и свободное место на диске.</value>
+  </data>
+  <data name="Info_AlreadyRunning" xml:space="preserve">
+    <value>TerminalV уже открыт. Переключитесь в существующее окно.</value>
+  </data>
+</root>

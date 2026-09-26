@@ -1,3 +1,5 @@
+import { t } from "./i18n.js";
+
 // Pure helpers for the "Remote access" (mirror gateway) settings section.
 // Kept side-effect free so node:test can cover them without a DOM.
 
@@ -13,19 +15,19 @@ export function normalizeGatewaySettings(raw = {}) {
 }
 
 export function gatewayStatusText(gateway) {
-  if (!gateway || typeof gateway !== "object") return "Шлюз: нет данных.";
-  if (gateway.status && !gateway.listening) return `Шлюз: ${gateway.status}`;
-  if (gateway.listening) return `Шлюз слушает ws://0.0.0.0:${gateway.port ?? GATEWAY_DEFAULT_PORT}.`;
-  if (gateway.enabled === false) return "Шлюз отключён.";
-  if (gateway.status) return `Шлюз: ${gateway.status}`;
-  return "Шлюз остановлен.";
+  if (!gateway || typeof gateway !== "object") return t("Gateway_NoData");
+  if (gateway.status && !gateway.listening) return t("Gateway_WithStatus", { status: gateway.status });
+  if (gateway.listening) return t("Gateway_Listening", { port: gateway.port ?? GATEWAY_DEFAULT_PORT });
+  if (gateway.enabled === false) return t("Gateway_Disabled");
+  if (gateway.status) return t("Gateway_WithStatus", { status: gateway.status });
+  return t("Gateway_Stopped");
 }
 
 export function gatewayConnectHint(port, hasToken) {
   const p = Number.isInteger(port) ? port : GATEWAY_DEFAULT_PORT;
   return hasToken
-    ? `В TerminalV Mobile: шлюз, ws://<этот-ПК>:${p} + токен выше.`
-    : `В TerminalV Mobile: шлюз, ws://<этот-ПК>:${p}. Без токена доступен всем в сети!`;
+    ? t("Gateway_HintWithToken", { port: p })
+    : t("Gateway_HintNoToken", { port: p });
 }
 
 // randomSource(n) exists for deterministic tests; default is WebCrypto.
