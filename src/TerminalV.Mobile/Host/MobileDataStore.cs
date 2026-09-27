@@ -26,14 +26,14 @@ internal sealed class MobileDataStore
             if (string.IsNullOrWhiteSpace(raw))
             {
                 // Smaller default for phone (desktop is 14)
-                return new AppSettings { FontSize = 12, Zoom = 0 };
+                return new AppSettings { FontSize = 12, Zoom = 0, HardwareRendering = false };
             }
             var s = JsonSerializer.Deserialize<AppSettings>(raw, Json) ?? new AppSettings();
             // Clamp zoom that may have been set for desktop to a phone-friendly range
             if (s.Zoom < -2) s.Zoom = -2;
             return s;
         }
-        catch { return new AppSettings { FontSize = 12 }; }
+        catch { return new AppSettings { FontSize = 12, HardwareRendering = false }; }
     }
 
     public void SaveSettings(AppSettings settings)

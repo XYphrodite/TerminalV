@@ -713,7 +713,9 @@ body,
 
 .terminal-host.mirror-viewport {
   overflow: auto;
-  touch-action: pan-x pan-y;
+  /* Native pan would scroll only the short host overflow. Touch stays with
+     the handlers: horizontal moves the wide grid, vertical moves xterm history. */
+  touch-action: none;
 }
 
 .terminal-host.mirror-viewport > .xterm {

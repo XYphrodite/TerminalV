@@ -233,7 +233,9 @@ function canSplit(axis) {
 
 function updatePaneToolbar() {
   const count = visibleTabs().length;
-  paneToolbar.hidden = !count;
+  const mobile = document.documentElement.classList.contains("mobile-ui");
+  // One phone pane does not need the desktop split header; it is an empty band.
+  paneToolbar.hidden = count < 1 || (mobile && count < 2);
   document.getElementById("pane-count").textContent = t("PanelsCount", { count });
   updateWorkspaceContext();
   splitRightBtn.disabled = !canSplit("columns");
@@ -1782,6 +1784,8 @@ function handleHost(message) {
       if (message.settings.language) initI18n(message.settings.language);
       else initI18n(settings.language);
     }
+    // WebGL redraws the whole desktop-sized grid inside the phone WebView.
+    if (message.mobile === true) settings.hardwareRendering = false;
     gatewayState = message.gateway ?? null;
     fillFonts(message.fonts);
     window.__liveIds = message.liveIds || [];

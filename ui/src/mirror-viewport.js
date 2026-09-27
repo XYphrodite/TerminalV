@@ -8,10 +8,19 @@ export function layoutMirrorViewport(tab) {
   const style = getComputedStyle(tab.term.element);
   const padding = side => Number.parseFloat(style[side]) || 0;
   const scrollbar = tab.term._core?.viewport?.scrollBarWidth || 0;
-  tab.term.element.style.width = `${Math.ceil(cell.width * tab.mirrorSize.cols + scrollbar
-    + padding("paddingLeft") + padding("paddingRight"))}px`;
-  tab.term.element.style.height = `${Math.ceil(cell.height * tab.mirrorSize.rows
-    + padding("paddingTop") + padding("paddingBottom"))}px`;
+  const width = Math.ceil(cell.width * tab.mirrorSize.cols + scrollbar
+    + padding("paddingLeft") + padding("paddingRight"));
+  const height = Math.ceil(cell.height * tab.mirrorSize.rows
+    + padding("paddingTop") + padding("paddingBottom"));
+  const element = tab.term.element;
+  // A desktop grid shorter than the phone leaves a blank band under the last
+  // row. Zoom fills that height; a taller grid stays 1:1 and scrolls.
+  const avail = tab.host.clientHeight;
+  const zoom = height > 0 && avail > height ? Math.round((avail / height) * 1000) / 1000 : 1;
+  if (element.style.width !== `${width}px`) element.style.width = `${width}px`;
+  if (element.style.height !== `${height}px`) element.style.height = `${height}px`;
+  const zoomText = zoom === 1 ? "" : String(zoom);
+  if (element.style.zoom !== zoomText) element.style.zoom = zoomText;
 }
 
 export function setMirrorSize(tab, cols, rows) {
@@ -35,26 +44,32 @@ export function attachMirrorPan(tab) {
   tab.host.addEventListener("touchstart", event => {
     if (!tab.remoteGeometry || event.touches.length !== 1) { gesture = null; return; }
     const touch = event.touches[0];
-    gesture = { x: touch.clientX, y: touch.clientY, left: tab.host.scrollLeft, top: tab.host.scrollTop, axis: null };
+    const viewport = tab.host.querySelector(".xterm-viewport");
+    gesture = {
+      x: touch.clientX, y: touch.clientY,
+      left: tab.host.scrollLeft, top: tab.host.scrollTop,
+      viewportTop: viewport?.scrollTop || 0, axis: null
+    };
   }, { capture: true, passive: true });
   tab.host.addEventListener("touchmove", event => {
     if (!gesture || event.touches.length !== 1) return;
     const touch = event.touches[0];
     const dx = gesture.x - touch.clientX, dy = gesture.y - touch.clientY;
     if (!gesture.axis) {
-      // Leave the first pixels to the browser. touch-action: pan-x pan-y
-      // scrolls both axes, including a vertical fling. preventDefault here
-      // cancels that and leaves only the short axis-locked pan.
       if (Math.max(Math.abs(dx), Math.abs(dy)) < 6) return;
-      if (Math.abs(dx) > Math.abs(dy) && tab.host.scrollWidth > tab.host.clientWidth)
-        gesture.axis = "x";
-      else if ((dy > 0 && gesture.top < tab.host.scrollHeight - tab.host.clientHeight)
-        || (dy < 0 && gesture.top > 0)) gesture.axis = "y";
-      else { gesture = null; return; } // Let xterm scroll its normal history.
+      // Wide grid pans sideways. Vertical is the pre-mirror xterm viewport:
+      // the whole scrollback, not the few extra rows of the desktop screen.
+      gesture.axis = Math.abs(dx) > Math.abs(dy) && tab.host.scrollWidth > tab.host.clientWidth ? "x" : "y";
     }
     event.preventDefault();
-    event.stopPropagation(); // xterm must not translate this pan into TUI input.
-    if (gesture.axis === "x") tab.host.scrollLeft = gesture.left + dx;
+    event.stopPropagation();
+    if (gesture.axis === "x") {
+      tab.host.scrollLeft = gesture.left + dx;
+      return;
+    }
+    const viewport = tab.host.querySelector(".xterm-viewport");
+    if (viewport && viewport.scrollHeight > viewport.clientHeight + 1)
+      viewport.scrollTop = gesture.viewportTop + dy;
     else tab.host.scrollTop = gesture.top + dy;
   }, { capture: true, passive: false });
   const finish = () => { gesture = null; };

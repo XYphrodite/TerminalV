@@ -143,6 +143,10 @@ test("Mobile fixes: scale default, black bar, collapsed swipe, sync empty, write
   assert.match(html, /sidebar-swipe-handle/, "swipe handle");
   assert.match(html, /@media.*max-width: 700px/, "collapsed drawer CSS");
   assert.match(html, /translateX\(-100%\)/, "hidden when collapsed");
+  const appCss = readFileSync(r("src/TerminalV.Mobile/wwwroot/css/app.css"), "utf8");
+  assert.match(appCss, /#app\.collapsed #mobile-toolbar \{ display:flex; padding-top:0; \}/, "no empty safe-area band");
+  assert.match(appCss, /#app #panes \{ margin: 0; \}/, "terminal uses the pane edge");
+  assert.match(appCss, /bottom: 28px/, "text stops above the key handle");
   const bridge = readFileSync(r("src/TerminalV.Mobile/Host/MobileBridge.cs"), "utf8");
   assert.match(bridge, /Where\(s => liveSet\.Contains/, "filters dead empty sessions");
   assert.match(bridge, /PaneLayout\.Normalize/, "normalizes layouts");
