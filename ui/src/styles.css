@@ -713,7 +713,10 @@ body,
 
 .terminal-host.mirror-viewport {
   overflow: auto;
-  touch-action: pan-x pan-y;
+  touch-action: none;
+  overscroll-behavior: contain;
+  will-change: scroll-position;
+  scroll-behavior: auto;
 }
 
 .terminal-host.mirror-viewport > .xterm {
