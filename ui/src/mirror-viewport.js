@@ -42,13 +42,10 @@ export function attachMirrorPan(tab) {
     const touch = event.touches[0];
     const dx = gesture.x - touch.clientX, dy = gesture.y - touch.clientY;
     if (!gesture.axis) {
-      if (Math.max(Math.abs(dx), Math.abs(dy)) < 6) {
-        // Block xterm's native scroll for tiny moves — otherwise it scrolls
-        // history while host hasn't moved yet, causing "рывками".
-        event.preventDefault();
-        event.stopPropagation();
-        return;
-      }
+      // Leave the first pixels to the browser. touch-action: pan-x pan-y
+      // scrolls both axes, including a vertical fling. preventDefault here
+      // cancels that and leaves only the short axis-locked pan.
+      if (Math.max(Math.abs(dx), Math.abs(dy)) < 6) return;
       if (Math.abs(dx) > Math.abs(dy) && tab.host.scrollWidth > tab.host.clientWidth)
         gesture.axis = "x";
       else if ((dy > 0 && gesture.top < tab.host.scrollHeight - tab.host.clientHeight)
