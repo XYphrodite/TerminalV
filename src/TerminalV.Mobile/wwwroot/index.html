@@ -103,7 +103,22 @@
           <button type="button" class="icon-btn" aria-label="Закрыть уведомление о папке" title="Закрыть уведомление" data-icon="close"></button>
         </div>
         <div id="panes"></div>
-        <div id="mobile-keys" class="mobile-keys" role="group" aria-label="Клавиши" data-mobile-only hidden>
+        <div id="mobile-keys" class="mobile-keys" role="group" aria-label="Клавиши — как на клавиатуре" data-mobile-only hidden>
+          <div class="mobile-keys-row" data-row="func">
+            <button type="button" data-key="Escape" title="Escape" aria-label="Escape">Esc</button>
+            <button type="button" data-key="F1" title="F1" aria-label="F1">F1</button>
+            <button type="button" data-key="F2" title="F2" aria-label="F2">F2</button>
+            <button type="button" data-key="F3" title="F3" aria-label="F3">F3</button>
+            <button type="button" data-key="F4" title="F4" aria-label="F4">F4</button>
+            <button type="button" data-key="F5" title="F5" aria-label="F5">F5</button>
+            <button type="button" data-key="F6" title="F6" aria-label="F6">F6</button>
+            <button type="button" data-key="F7" title="F7" aria-label="F7">F7</button>
+            <button type="button" data-key="F8" title="F8" aria-label="F8">F8</button>
+            <button type="button" data-key="F9" title="F9" aria-label="F9">F9</button>
+            <button type="button" data-key="F10" title="F10" aria-label="F10">F10</button>
+            <button type="button" data-key="F11" title="F11" aria-label="F11">F11</button>
+            <button type="button" data-key="F12" title="F12" aria-label="F12">F12</button>
+          </div>
           <div class="mobile-keys-row" data-row="digits">
             <button type="button" data-key="1">1</button>
             <button type="button" data-key="2">2</button>
@@ -117,10 +132,25 @@
             <button type="button" data-key="0">0</button>
           </div>
           <div class="mobile-keys-row" data-row="nav">
-            <button type="button" data-key="Escape" title="Escape" aria-label="Escape">Esc</button>
             <button type="button" data-key="Tab" title="Tab" aria-label="Tab">Tab</button>
-            <button type="button" data-key="ArrowLeft" title="Влево" aria-label="Стрелка влево">←</button>
+            <button type="button" data-key="Home" title="Home" aria-label="Home">Home</button>
+            <button type="button" data-key="End" title="End" aria-label="End">End</button>
+            <button type="button" data-key="PageUp" title="Page Up" aria-label="Page Up">PgUp</button>
+            <button type="button" data-key="PageDown" title="Page Down" aria-label="Page Down">PgDn</button>
+            <button type="button" data-key="Insert" title="Insert" aria-label="Insert">Ins</button>
+            <button type="button" data-key="Delete" title="Delete" aria-label="Delete">Del</button>
+          </div>
+          <div class="mobile-keys-row" data-row="arrows">
+            <button type="button" data-key="Ctrl" title="Ctrl (липкий, для стрелок)" aria-label="Ctrl" aria-pressed="false">Ctrl</button>
+            <button type="button" data-key="Alt+Enter" title="Перенос строки (Alt+Enter) — универсально для агентов" aria-label="Перенос строки Alt+Enter">↵</button>
+            <span class="mobile-keys-spacer" aria-hidden="true"></span>
             <button type="button" data-key="ArrowUp" title="Вверх" aria-label="Стрелка вверх">↑</button>
+            <span class="mobile-keys-spacer" aria-hidden="true"></span>
+          </div>
+          <div class="mobile-keys-row" data-row="arrows2">
+            <span class="mobile-keys-spacer" aria-hidden="true"></span>
+            <span class="mobile-keys-spacer" aria-hidden="true"></span>
+            <button type="button" data-key="ArrowLeft" title="Влево" aria-label="Стрелка влево">←</button>
             <button type="button" data-key="ArrowDown" title="Вниз" aria-label="Стрелка вниз">↓</button>
             <button type="button" data-key="ArrowRight" title="Вправо" aria-label="Стрелка вправо">→</button>
           </div>

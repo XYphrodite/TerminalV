@@ -79,7 +79,7 @@
 
     // Mobile keys — same sequences as ui/src/mobile-keys.js, ported for MAUI
     const MOBILE_KEY_SEQUENCES = {
-        Escape: "\x1b", Esc: "\x1b", Tab: "\t",
+        Escape: "\x1b", Esc: "\x1b", Tab: "\t", Enter: "\r", "Alt+Enter": "\x1b\r", AltEnter: "\x1b\r",
         ArrowLeft: "\x1b[D", ArrowUp: "\x1b[A", ArrowDown: "\x1b[B", ArrowRight: "\x1b[C",
         Left: "\x1b[D", Up: "\x1b[A", Down: "\x1b[B", Right: "\x1b[C",
         Home: "\x1b[H", End: "\x1b[F", PageUp: "\x1b[5~", PgUp: "\x1b[5~", PageDown: "\x1b[6~", PgDn: "\x1b[6~",

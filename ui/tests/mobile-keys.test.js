@@ -77,14 +77,14 @@ test("second init on same root does not double-wire (mobile double-terminal guar
 });
 
 test("unknown keys are ignored and missing root is a noop", () => {
-  const root = fakeRoot(["Enter"]);
+  const root = fakeRoot(["F13"]);
   const sent = [];
   const api = createMobileKeys({ root, send: (key) => sent.push(key) });
   root.buttons[0].fire("click", {});
   assert.deepEqual(sent, []);
   api.sendKey("ArrowUp");
   assert.deepEqual(sent, ["ArrowUp"]);
-  api.sendKey("Enter");
+  api.sendKey("F13");
   assert.deepEqual(sent, ["ArrowUp"]);
   assert.doesNotThrow(() => createMobileKeys({ root: null, send: () => {} }));
 });
