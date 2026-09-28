@@ -63,7 +63,7 @@ public sealed class TailnetAccount : ITailscaleConnector
         using var request = new HttpRequestMessage(pair ? HttpMethod.Post : HttpMethod.Get, $"http://{ip}:{port}/terminalv/{(pair ? "pair" : "info")}");
         request.Headers.TryAddWithoutValidation("Authorization", "Tailscale");
         using var response = await transport.SendAsync(request, timeout.Token);
-        if (response.StatusCode == System.Net.HttpStatusCode.Forbidden) throw new InvalidOperationException("Доступ не подтверждён на ПК. Повторите запрос и нажмите «Разрешить» на компьютере.");
+        if (response.StatusCode == System.Net.HttpStatusCode.Forbidden) throw new InvalidOperationException("ПК не разрешил подключение.");
         response.EnsureSuccessStatusCode();
         var text = await response.Content.ReadAsStringAsync(timeout.Token);
         if (text.Length > 8192) throw new IOException("Некорректный ответ шлюза.");

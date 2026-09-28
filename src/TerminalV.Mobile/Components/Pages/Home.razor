@@ -37,7 +37,7 @@
             {
                 <button class="computer-choice" disabled="@accountBusy" @onclick="() => ConnectComputerAsync(computer)">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 4h18v13H3zM8 21h8M12 17v4" /></svg>
-                    <span class="computer-choice-copy"><strong>@computer.Name</strong><span>@(computer.Approved ? "Открыть сессии" : "Подтвердить доступ на компьютере")</span></span>
+                    <span class="computer-choice-copy"><strong>@computer.Name</strong><span>Открыть сессии</span></span>
                     <span aria-hidden="true">›</span>
                 </button>
             }

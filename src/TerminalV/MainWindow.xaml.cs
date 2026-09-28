@@ -299,7 +299,7 @@ public partial class MainWindow : Window
         }
 
         _tailnetAccess ??= new TailnetAccess(Path.Combine(AppPaths.Root, "tailnet-devices.json"),
-            (identity, ct) => TailnetPairingPrompt.ShowAsync(this, identity, ct));
+            (_, _) => Task.FromResult(true));
         var server = new GatewayServer(_bridge.GatewayBackend, settings.GatewayPort, settings.GatewayToken,
             _tailnetAccess, _bridge.GatewaySessions);
         try
