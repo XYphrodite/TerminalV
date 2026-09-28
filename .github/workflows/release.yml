@@ -59,6 +59,9 @@ jobs:
           [xml]$p = Get-Content src/TerminalV/TerminalV.csproj
           $v = $p.Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1
           if ("v$v" -ne $env:TAG) { throw "Tag $env:TAG != csproj Version $v" }
+          [xml]$m = Get-Content src/TerminalV.Mobile/TerminalV.Mobile.csproj
+          $mv = $m.Project.PropertyGroup.ApplicationDisplayVersion | Where-Object { $_ } | Select-Object -First 1
+          if ($mv -ne "$v") { throw "Mobile display version $mv != desktop $v" }
 
       - name: Verify terminal rendering and restoration
         shell: pwsh
