@@ -19,7 +19,7 @@
         #app.collapsed #sidebar { width:64px; }
         #app #main { flex:1; min-width:0; }
         /* Mobile: collapsed = полностью скрыт, свайп от левого края открывает — симметричная анимация */
-        @media (max-width: 700px) {
+        @media (max-width: 700px), (max-height: 500px) {
           #app #sidebar { transition:transform 0.24s ease; will-change:transform; }
           #app.collapsed #sidebar { position:fixed; inset:0 auto 0 0; width:min(86vw,340px); max-width:86vw; transform:translateX(-100%); z-index:20; box-shadow: 16px 0 32px rgba(0,0,0,0.5); }
           #app:not(.collapsed) #sidebar { position:fixed; inset:0 auto 0 0; width:min(86vw,340px); max-width:86vw; transform:translateX(0); z-index:20; box-shadow: 16px 0 32px rgba(0,0,0,0.5); }
@@ -29,7 +29,7 @@
           #app:not(.collapsed) #main { margin-left:0; }
           #sidebar-swipe-handle { display:block; }
         }
-        @media (min-width: 701px) { #sidebar-swipe-handle { display:none; } }
+        @media (min-width: 701px) and (min-height: 501px) { #sidebar-swipe-handle { display:none; } }
         #blazor-root { position:fixed; inset:0; z-index:9998; pointer-events:none; }
         #blazor-root > * { pointer-events:auto; }
         #blazor-error-ui { display:none; background:#2a3340; color:#E8EEF5; padding:8px; position:fixed; bottom:0; left:0; right:0; z-index:10000; }

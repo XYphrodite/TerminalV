@@ -211,7 +211,7 @@
     let startX = 0, startY = 0, tracking = false;
     const app = () => document.getElementById('app');
     const handle = () => document.getElementById('sidebar-swipe-handle');
-    function isMobile() { return window.matchMedia('(max-width: 700px)').matches; }
+    function isMobile() { return window.matchMedia('(max-width: 700px), (max-height: 500px)').matches; }
     let previousCollapsed;
     window.__tvSidebarState = function (collapsed) {
       document.getElementById('mobile-sessions-open')?.setAttribute('aria-expanded', String(!collapsed));

@@ -72,7 +72,7 @@ h1:focus { outline: none; }
 #mobile-toolbar { display:none; flex-shrink:0; padding:0 8px; background:var(--surface); border-bottom:1px solid var(--border-soft); }
 #mobile-sessions-open { display:inline-flex; align-items:center; gap:8px; min-height:44px; padding:8px 12px; border:0; border-radius:8px; color:var(--text); background:transparent; font:600 13px var(--font-ui); }
 #mobile-sessions-open:hover { background:var(--tab-hover); }
-@media (max-width:700px) {
+@media (max-width:700px), (max-height:500px) {
     #app.collapsed #mobile-toolbar { display:flex; padding-top:0; }
     #app #panes { margin: 0; }
     #app .terminal-host,
@@ -134,7 +134,7 @@ h1:focus { outline: none; }
 .mobile-keys button:focus-visible { outline: 2px solid var(--accent, #3d9eff); outline-offset: 2px; }
 
 /* Slide panel fallback — mirrored from index.html inline for file-level parity */
-@media (max-width: 700px) {
+@media (max-width: 700px), (max-height: 500px) {
   #app #sidebar { transition: transform 0.24s ease; will-change: transform; }
   #app.collapsed #sidebar { position: fixed; inset: 0 auto 0 0; width: min(86vw,340px); max-width: 86vw; transform: translateX(-100%); z-index: 20; box-shadow: 16px 0 32px rgba(0,0,0,0.5); }
   #app:not(.collapsed) #sidebar { position: fixed; inset: 0 auto 0 0; width: min(86vw,340px); max-width: 86vw; transform: translateX(0); z-index: 20; box-shadow: 16px 0 32px rgba(0,0,0,0.5); }

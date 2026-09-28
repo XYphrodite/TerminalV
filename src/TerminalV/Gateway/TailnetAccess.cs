@@ -23,6 +23,7 @@ internal sealed class TailnetAccess : ITailnetAccess
     private readonly SemaphoreSlim _lookup = new(4, 4);
     private readonly object _gate = new();
     private readonly HashSet<string> _grants;
+    private readonly Dictionary<string, (TailnetIdentity identity, DateTime until)> _identityCache = new();
     private DateTime _nextPrompt;
     private int _generation;
     public TailnetAccess(string path, Func<TailnetIdentity, CancellationToken, Task<bool>> confirm)
@@ -78,6 +79,12 @@ internal sealed class TailnetAccess : ITailnetAccess
     public async Task<TailnetIdentity?> IdentifyAsync(IPEndPoint remote, IPEndPoint local, CancellationToken ct)
     {
         if (!IsTailnet(remote.Address) || !IsTailnet(local.Address)) return null;
+        var cacheKey = remote.Address.ToString();
+        lock (_gate)
+        {
+            if (_identityCache.TryGetValue(cacheKey, out var cached) && cached.until > DateTime.UtcNow)
+                return cached.identity;
+        }
         if (!await _lookup.WaitAsync(0, ct)) return null;
         try
         {
@@ -94,7 +101,12 @@ internal sealed class TailnetAccess : ITailnetAccess
             await error;
             if (process.ExitCode != 0) return null;
             using var doc = JsonDocument.Parse(await output);
-            return ParseIdentity(doc.RootElement);
+            var identity = ParseIdentity(doc.RootElement);
+            if (identity is not null)
+            {
+                lock (_gate) _identityCache[cacheKey] = (identity, DateTime.UtcNow.AddMinutes(2));
+            }
+            return identity;
         }
         catch { return null; } // Missing/offline/unauthorized LocalAPI fails closed.
         finally { _lookup.Release(); }

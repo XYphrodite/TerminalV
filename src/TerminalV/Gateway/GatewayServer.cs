@@ -290,8 +290,10 @@ internal sealed class GatewayServer : IDisposable
                     {
                         try
                         {
-                            await AttachBackendAsync(id, Bind, SendAsync, serverToken, terminalGeometry).ConfigureAwait(false);
-                            await SendAsync(GatewayProtocol.AttachedReply(id)).ConfigureAwait(false);
+                            // History can be large. Sending it must not block reading
+                            // keystrokes; the send gate still keeps history ahead of "attached".
+                            var history = await AttachBackendAsync(id, Bind, SendAsync, serverToken, terminalGeometry).ConfigureAwait(false);
+                            _ = Task.WhenAll(history, SendAsync(GatewayProtocol.AttachedReply(id)));
                         }
                         catch (Exception ex)
                         {
@@ -386,8 +388,8 @@ internal sealed class GatewayServer : IDisposable
                         {
                             try
                             {
-                                await AttachBackendAsync(attachId, bind, send, ct, terminalGeometry).ConfigureAwait(false);
-                                await send(GatewayProtocol.AttachedReply(attachId)).ConfigureAwait(false);
+                                var history = await AttachBackendAsync(attachId, bind, send, ct, terminalGeometry).ConfigureAwait(false);
+                                _ = Task.WhenAll(history, send(GatewayProtocol.AttachedReply(attachId)));
                             }
                             catch (Exception ex)
                             {
@@ -453,7 +455,7 @@ internal sealed class GatewayServer : IDisposable
         catch (JsonException) { }
     }
 
-    private async Task AttachBackendAsync(string id, Action<string> bind, Func<string, Task> send, CancellationToken ct, bool terminalGeometry)
+    private async Task<Task> AttachBackendAsync(string id, Action<string> bind, Func<string, Task> send, CancellationToken ct, bool terminalGeometry)
     {
         var geometrySent = Task.CompletedTask;
         void BeforeReplay()
@@ -470,16 +472,13 @@ internal sealed class GatewayServer : IDisposable
             await replayBackend.ReplayAndBindAsync(id,
                 data => replaySent = send(GatewayProtocol.DataMessage(id, data)),
                 () => bind(id), ct, BeforeReplay).ConfigureAwait(false);
-            await Task.WhenAll(geometrySent, replaySent).ConfigureAwait(false);
+            return Task.WhenAll(geometrySent, replaySent);
         }
-        else
-        {
-            // Independent backends may synchronously emit history from Attach.
-            BeforeReplay();
-            await geometrySent.ConfigureAwait(false);
-            bind(id);
-            _backend.Attach(id);
-        }
+        // Independent backends may synchronously emit history from Attach.
+        BeforeReplay();
+        bind(id);
+        _backend.Attach(id);
+        return geometrySent;
     }
 
     private string SessionListReply()

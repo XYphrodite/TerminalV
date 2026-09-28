@@ -1,5 +1,7 @@
 using System.Collections.Concurrent;
+using System.Text;
 using System.Text.Json;
+using System.Threading.Channels;
 using Microsoft.JSInterop;
 using TerminalV.Data;
 using TerminalV.Host;
@@ -35,12 +37,18 @@ internal sealed class MobileBridge : IDisposable
     private int _checkingConnection;
     private string? _catalogJson;
     private bool _disposed;
+    private readonly Channel<(string Id, string Data)> _writes = Channel.CreateUnbounded<(string, string)>(
+        new UnboundedChannelOptions { SingleReader = true });
+    private readonly object _outputGate = new();
+    private readonly Dictionary<string, StringBuilder> _output = new();
+    private int _outputScheduled;
 
     public MobileBridge(SshService ssh, MobileDataStore store, ITailscaleConnector? account = null)
     {
         _ssh = ssh;
         _store = store;
         _account = account;
+        _ = Task.Run(WriteLoop);
     }
 
     public void SetJS(IJSRuntime js)
@@ -205,8 +213,10 @@ internal sealed class MobileBridge : IDisposable
                 if (message.Id is not null) TryAttach(message.Id, message.Cols, message.Rows);
                 break;
             case "write":
+                // Return before the network send so the next keystroke is not
+                // stuck behind one Tailscale round trip. WriteLoop keeps order.
                 if (message.Id is not null && message.Data is not null)
-                    await HandleWrite(message.Id, message.Data);
+                    _writes.Writer.TryWrite((message.Id, message.Data));
                 break;
             case "resize":
                 if (message.Id is not null) await HandleResize(message.Id, message.Cols, message.Rows);
@@ -702,7 +712,8 @@ internal sealed class MobileBridge : IDisposable
             session.DataReceived += data =>
             {
                 lock (_connectionLock)
-                    if (IsCurrent(observed)) Post(new { type = "data", id, data, replay = false });
+                    if (!IsCurrent(observed)) return;
+                EnqueueOutput(id, data);
             };
             session.ErrorReceived += message =>
             {
@@ -856,6 +867,56 @@ internal sealed class MobileBridge : IDisposable
         return new { enabled = settings.GatewayEnabled, port = settings.GatewayPort, listening = false, status = settings.GatewayEnabled ? "Настройте через SSH подключение." : "Отключён." };
     }
 
+    private async Task WriteLoop()
+    {
+        try
+        {
+            await foreach (var (id, data) in _writes.Reader.ReadAllAsync())
+            {
+                if (_disposed) break;
+                await HandleWrite(id, data);
+            }
+        }
+        catch (ChannelClosedException) { }
+    }
+
+    private void EnqueueOutput(string id, string data)
+    {
+        var start = false;
+        lock (_outputGate)
+        {
+            if (!_output.TryGetValue(id, out var pending))
+                _output[id] = pending = new StringBuilder();
+            pending.Append(data);
+            if (_outputScheduled == 0)
+            {
+                _outputScheduled = 1;
+                start = true;
+            }
+        }
+        if (start) MainThread.BeginInvokeOnMainThread(FlushOutput);
+    }
+
+    private void FlushOutput()
+    {
+        while (true)
+        {
+            List<(string Id, string Data)> batch;
+            lock (_outputGate)
+            {
+                if (_output.Count == 0)
+                {
+                    _outputScheduled = 0;
+                    return;
+                }
+                batch = _output.Select(item => (item.Key, item.Value.ToString())).ToList();
+                _output.Clear();
+            }
+            foreach (var (id, data) in batch)
+                Post(new { type = "data", id, data, replay = false });
+        }
+    }
+
     private void Post(object obj)
     {
         if (_disposed) return;
@@ -876,6 +937,7 @@ internal sealed class MobileBridge : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        _writes.Writer.TryComplete();
         lock (_connectionLock) _observedSessions.Clear();
         _ssh.Dispose();
     }
