@@ -57,7 +57,7 @@ async function runBrowserFixture(t, fixture) {
       fixture === "close-ui" ? process.env.TERMINALV_CLOSE_SCREENSHOT :
       fixture === "search-ui" ? process.env.TERMINALV_SEARCH_SCREENSHOT :
       fixture === "paste-confirmation" && process.env.TERMINALV_TEST_SCREENSHOT;
-    const output = ["viewport-restore", "synchronized-output", "terminal-geometry", "terminal-scroll", "mobile-fit", "mirror-geometry"].includes(fixture)
+    const output = ["viewport-restore", "synchronized-output", "terminal-geometry", "terminal-scroll", "mobile-fit", "mirror-geometry", "extensions-ui"].includes(fixture)
       ? await runFrameFixture(browser, profile, `http://127.0.0.1:${server.address().port}/tests/${fixture}.fixture.html`)
       : await new Promise((resolve, reject) => {
       const child = spawn(browser, [
