@@ -93,11 +93,19 @@
     </TrimmerRootAssembly>
   </ItemGroup>
 
-  <Target Name="CopyDesktopUi" BeforeTargets="ResolveProjectStaticWebAssets" Condition="'$(DesignTimeBuild)' != 'true'">
+  <Target Name="CopyDesktopUi" BeforeTargets="ResolveProjectStaticWebAssets" Condition="'$(DesignTimeBuild)' != 'true' And '$(TargetFramework)' == 'net10.0-windows10.0.19041.0'">
     <Exec Command="npm run build" WorkingDirectory="..\..\ui" />
     <Exec Command="node scripts/copy-mobile-ui.js" WorkingDirectory="..\..\ui" />
     <ItemGroup>
       <!-- Include files generated after project evaluation on a clean checkout. -->
+      <Content Include="wwwroot\assets\**\*" Exclude="@(Content)" />
+    </ItemGroup>
+  </Target>
+  <!-- Fallback for non-Windows hosts (CI without Windows TFM): run once on android -->
+  <Target Name="CopyDesktopUiFallback" BeforeTargets="ResolveProjectStaticWebAssets" Condition="'$(DesignTimeBuild)' != 'true' And '$(TargetFramework)' == 'net10.0-android' And !$([MSBuild]::IsOSPlatform('windows'))">
+    <Exec Command="npm run build" WorkingDirectory="..\..\ui" />
+    <Exec Command="node scripts/copy-mobile-ui.js" WorkingDirectory="..\..\ui" />
+    <ItemGroup>
       <Content Include="wwwroot\assets\**\*" Exclude="@(Content)" />
     </ItemGroup>
   </Target>

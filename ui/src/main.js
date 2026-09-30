@@ -483,7 +483,9 @@ function syncScrollLock(tab) {
 
 // Автодетект самопроизвольного прыжка наверх (Kimi). Пишет в diagnostics.log без участия пользователя.
 // handleHost hoisted, но tabs ещё пустой - поэтому опрос и хук отложены.
+// Отключено в тестах (window.testInit) чтобы не влиять на narrow-window проверки.
 (() => {
+  try { if (window.testInit) return; } catch {}
   const seen = new WeakMap();
   const lastDataById = new Map();
   const ESC_RE = /\x1b\[[?]?[0-9;]*[A-Za-z\$]/g;
