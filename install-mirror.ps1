@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
     Installs TerminalV Mirror - desktop viewer for another PC's TerminalV sessions.
 #>
