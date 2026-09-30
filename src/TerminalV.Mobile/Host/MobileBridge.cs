@@ -128,7 +128,9 @@ internal sealed class MobileBridge : IDisposable
             }
             var live = LiveIds().Concat(_remoteIds).Distinct().ToArray();
             var liveSet = new HashSet<string>(live);
-            if (filterUnbufferedSessions)
+            // После force-stop или при ошибке подключения (connectionError) нельзя фильтровать сессии по liveSet: иначе все кэшированные вкладки без буфера исчезнут (Скрытые · 0).
+            // Фильтр только когда гейт успешно отдал каталог.
+            if (filterUnbufferedSessions && connectionError == null)
                 sessions = sessions.Where(s => liveSet.Contains(s.Id) || !string.IsNullOrEmpty(s.Buffer)).ToList();
             var layouts = PaneLayout.Normalize(_store.LoadLayouts(), sessions);
             _store.SaveSessions(sessions);
@@ -311,14 +313,18 @@ internal sealed class MobileBridge : IDisposable
             var options = BuildOptions(cols, rows, null, null, null);
             if (mirror) options.MirrorSessionId = id;
             lock (_connectionLock) _observedSessions.TryRemove(id, out _);
+            // Создание транспорта не должно блокировать UI-поток: SshService.Create лёгкий,
+            // но последующий ConnectAsync может занять до 5-10с (DNS/Tailscale/WebSocket).
+            // Запускаем подключение в фоне, чтобы tap по «Новая вкладка» не вызал ANR.
             var session = _ssh.Create(id, options);
             var observed = HookSession(session);
-            _connecting[id] = ConnectSessionAsync(observed);
+            var connectTask = Task.Run(() => ConnectSessionAsync(observed));
+            _connecting[id] = connectTask;
             if (mirror && _store.LoadSettings().MobileFitMode)
-                _connecting[id] = _connecting[id].ContinueWith(async _ =>
+                _connecting[id] = connectTask.ContinueWith(async _ =>
                 {
-                    try { await session.ResizeAsync(cols, rows); } catch { }
-                }).Unwrap();
+                    try { await session.ResizeAsync(cols, rows).ConfigureAwait(false); } catch { }
+                }, TaskScheduler.Default).Unwrap();
         }
         catch (Exception ex)
         {

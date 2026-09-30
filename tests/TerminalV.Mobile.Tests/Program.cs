@@ -157,7 +157,56 @@ using (var pendingPeer = await stalledListener.AcceptTcpClientAsync(acceptTimeou
     Require(ConnectionState(js) == "idle", "a pending old connection check cannot replace the logged-out state");
 }
 await CheckDesktopCatalog();
+await CheckAnrAndSessionPersistence();
 Console.WriteLine("Mobile bridge checks passed.");
+
+static async Task CheckAnrAndSessionPersistence()
+{
+    // ANR: create must not block UI when gateway is unreachable (stalled TCP).
+    using var stalled = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+    stalled.Start();
+    var stalledPort = ((System.Net.IPEndPoint)stalled.LocalEndpoint).Port;
+    Preferences.Default.Set("useGateway", true);
+    Preferences.Default.Set("gatewayUrl", $"ws://127.0.0.1:{stalledPort}");
+    Preferences.Default.Set("gatewayToken", "anr-test");
+    Preferences.Default.Set("tailnetGateway", false);
+    var anrStore = new MobileDataStore();
+    anrStore.SaveSessions([new SessionRecord { Id = "existing", Title = "Cached", Buffer = "old" }]);
+    using var anrSsh = new SshService();
+    using var anrBridge = new MobileBridge(anrSsh, anrStore);
+    var anrJs = new JsRuntime();
+    anrBridge.SetJS(anrJs);
+    await anrBridge.SendInitAsync();
+    var sw = System.Diagnostics.Stopwatch.StartNew();
+    var createTask = anrBridge.Handle("{\"type\":\"create\",\"id\":\"newtab\",\"cols\":80,\"rows\":24}");
+    var completed = await System.Threading.Tasks.Task.WhenAny(createTask, System.Threading.Tasks.Task.Delay(500));
+    sw.Stop();
+    Require(completed == createTask && sw.ElapsedMilliseconds < 500, "Handle(create) returns quickly even when gateway TCP stalls (no ANR)");
+    // Зачистка stalled listener: accept the pending connection so ConnectAsync can finish with error, not hang.
+    using var cts = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(2));
+    try { using var pending = await stalled.AcceptTcpClientAsync(cts.Token); pending.Close(); } catch { }
+    stalled.Stop();
+    await System.Threading.Tasks.Task.Delay(100);
+
+    // Session persistence after force-stop/disconnect: cached sessions without buffers must survive
+    // when gateway reports connectionError (e.g., Tailscale not logged in, Нет связи).
+    var persistStore = new MobileDataStore();
+    persistStore.SaveSessions([
+        new SessionRecord { Id = "a", Title = "Tab A", Buffer = null },
+        new SessionRecord { Id = "b", Title = "Tab B", Buffer = "" },
+        new SessionRecord { Id = "c", Title = "Tab C", Buffer = "some output" }
+    ]);
+    Preferences.Default.Set("gatewayUrl", "ws://127.0.0.1:1"); // definitely unreachable
+    using var persistSsh = new SshService();
+    using var persistBridge = new MobileBridge(persistSsh, persistStore);
+    var persistJs = new JsRuntime();
+    persistBridge.SetJS(persistJs);
+    await persistBridge.SendInitAsync();
+    Require(persistStore.LoadSessions().Count == 3, "disconnected gateway preserves all cached sessions even without buffers (force-stop regression)");
+    var persistInit = persistJs.Messages.Last(m => m.GetProperty("type").GetString() == "init");
+    Require(!persistInit.GetProperty("sessionsAuthoritative").GetBoolean(), "failed init is not authoritative, so phone view is not cleared");
+}
+
 
 static async Task CheckDesktopCatalog()
 {
