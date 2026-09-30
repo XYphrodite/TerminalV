@@ -42,7 +42,10 @@ try {
     Write-Step "Downloading $zipUrl"
     Invoke-WebRequest -Uri $zipUrl -OutFile $tempZip -Headers $UserAgent -UseBasicParsing
     Write-Step "Verifying SHA256"
-    $expectedSha = (Invoke-WebRequest -Uri $zipShaUrl -UseBasicParsing -Headers $UserAgent).Content.Split()[0].Trim().ToLowerInvariant()
+    $tempSha = Join-Path $env:TEMP "TerminalV.Mirror.$([guid]::NewGuid().ToString('N')).sha256"
+    Invoke-WebRequest -Uri $zipShaUrl -OutFile $tempSha -UseBasicParsing -Headers $UserAgent
+    $expectedSha = ([IO.File]::ReadAllText($tempSha).Split()[0].Trim().ToLowerInvariant())
+    Remove-Item -LiteralPath $tempSha -Force -ErrorAction SilentlyContinue
     $actualSha = (Get-FileHash -Algorithm SHA256 -LiteralPath $tempZip).Hash.ToLowerInvariant()
     if ($expectedSha -ne $actualSha) { throw "SHA256 mismatch: expected $expectedSha got $actualSha" }
     Write-Step "Extracting to $InstallDir"
