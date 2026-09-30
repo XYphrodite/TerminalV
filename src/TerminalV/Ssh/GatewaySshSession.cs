@@ -47,6 +47,7 @@ public sealed class GatewaySshSession : SshSessionBase
             await DisconnectCoreAsync().ConfigureAwait(false);
             TerminalColumns = TerminalRows = null;
             var ws = new ClientWebSocket();
+            TryEnableDeflate(ws);
             if (_options.GatewayTailnetIdentity) ws.Options.SetRequestHeader("Authorization", "Tailscale");
             else if (!string.IsNullOrWhiteSpace(_options.GatewayToken))
                 ws.Options.SetRequestHeader("Authorization", "Bearer " + _options.GatewayToken);
@@ -71,6 +72,7 @@ public sealed class GatewaySshSession : SshSessionBase
                 keyPassphrase = _options.PrivateKeyPassphrase,
                 sessionId = _options.MirrorSessionId,
                 terminalGeometry = true,
+                binaryData = true,
                 term = TerminalType,
                 cols = Columns,
                 rows = Rows
@@ -277,6 +279,29 @@ public sealed class GatewaySshSession : SshSessionBase
             else if (type == "binary") return false;
             return data is not null || error is not null || exitCode.HasValue;
         } catch { return false; }
+    }
+
+    private static void TryEnableDeflate(ClientWebSocket ws)
+    {
+        try
+        {
+            // .NET 8+ supports permessage-deflate via DangerousDeflateOptions.
+            // Reflection keeps build green on SDKs without it.
+            var options = ws.Options;
+            var prop = options.GetType().GetProperty("DangerousDeflateOptions");
+            if (prop is null) return;
+            var deflateOptionsType = prop.PropertyType;
+            var instance = Activator.CreateInstance(deflateOptionsType);
+            if (instance is null) return;
+            // Disable context takeover for better compression ratio isolation.
+            foreach (var name in new[] { "ClientContextTakeover", "ServerContextTakeover" })
+            {
+                var p = deflateOptionsType.GetProperty(name);
+                p?.SetValue(instance, false);
+            }
+            prop.SetValue(options, instance);
+        }
+        catch { }
     }
 
     private static Uri BuildUri(SshConnectionOptions o)

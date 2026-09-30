@@ -197,6 +197,7 @@ internal sealed class GatewayServer : IDisposable
         string? defaultId = null;
         var geometryBackend = _backend as IGatewayGeometryBackend;
         var terminalGeometry = false;
+        var binaryData = false;
 
         bool IsBound(string id)
         {
@@ -227,9 +228,24 @@ internal sealed class GatewayServer : IDisposable
             finally { sendGate.Release(); }
         }
 
+        async Task SendBinaryAsync(string data)
+        {
+            var bytes = Encoding.UTF8.GetBytes(data);
+            await sendGate.WaitAsync(serverToken).ConfigureAwait(false);
+            try
+            {
+                if (ws.State == WebSocketState.Open)
+                    await ws.SendAsync(bytes, WebSocketMessageType.Binary, true, serverToken).ConfigureAwait(false);
+            }
+            catch { }
+            finally { sendGate.Release(); }
+        }
+
         void OnData(string id, string data)
         {
-            if (IsBound(id)) _ = SendAsync(GatewayProtocol.DataMessage(id, data));
+            if (!IsBound(id)) return;
+            if (binaryData) _ = SendBinaryAsync(data);
+            else _ = SendAsync(GatewayProtocol.DataMessage(id, data));
         }
 
         void OnExit(string id, uint code)
@@ -280,6 +296,7 @@ internal sealed class GatewayServer : IDisposable
             }
             // Older APKs render unknown control frames as terminal text.
             terminalGeometry = handshake.TerminalGeometry;
+            binaryData = handshake.BinaryData;
 
             if (!handshake.Control)
             {
@@ -292,7 +309,7 @@ internal sealed class GatewayServer : IDisposable
                         {
                             // History can be large. Sending it must not block reading
                             // keystrokes; the send gate still keeps history ahead of "attached".
-                            var history = await AttachBackendAsync(id, Bind, SendAsync, serverToken, terminalGeometry).ConfigureAwait(false);
+                            var history = await AttachBackendAsync(id, Bind, SendAsync, SendBinaryAsync, serverToken, terminalGeometry, binaryData).ConfigureAwait(false);
                             _ = Task.WhenAll(history, SendAsync(GatewayProtocol.AttachedReply(id)));
                         }
                         catch (Exception ex)
@@ -337,7 +354,7 @@ internal sealed class GatewayServer : IDisposable
                 }
 
                 await DispatchAsync(Encoding.UTF8.GetString(frame.Value.bytes), Bind, Unbind,
-                    () => defaultId, SendAsync, serverToken, terminalGeometry).ConfigureAwait(false);
+                    () => defaultId, SendAsync, serverToken, terminalGeometry, binaryData, SendBinaryAsync).ConfigureAwait(false);
             }
         }
         catch (WebSocketException) { }
@@ -355,7 +372,7 @@ internal sealed class GatewayServer : IDisposable
     }
 
     private async Task DispatchAsync(string text, Action<string> bind,
-        Action<string> unbind, Func<string?> defaultId, Func<string, Task> send, CancellationToken ct, bool terminalGeometry)
+        Action<string> unbind, Func<string?> defaultId, Func<string, Task> send, CancellationToken ct, bool terminalGeometry, bool binaryData = false, Func<string, Task>? sendBinary = null)
     {
         string? type;
         try
@@ -388,7 +405,9 @@ internal sealed class GatewayServer : IDisposable
                         {
                             try
                             {
-                                var history = await AttachBackendAsync(attachId, bind, send, ct, terminalGeometry).ConfigureAwait(false);
+                                var history = binaryData && sendBinary != null
+                                    ? await AttachBackendAsync(attachId, bind, send, sendBinary, ct, terminalGeometry, true).ConfigureAwait(false)
+                                    : await AttachBackendAsync(attachId, bind, send, null, ct, terminalGeometry, false).ConfigureAwait(false);
                                 _ = Task.WhenAll(history, send(GatewayProtocol.AttachedReply(attachId)));
                             }
                             catch (Exception ex)
@@ -455,7 +474,7 @@ internal sealed class GatewayServer : IDisposable
         catch (JsonException) { }
     }
 
-    private async Task<Task> AttachBackendAsync(string id, Action<string> bind, Func<string, Task> send, CancellationToken ct, bool terminalGeometry)
+    private async Task<Task> AttachBackendAsync(string id, Action<string> bind, Func<string, Task> send, Func<string, Task>? sendBinary, CancellationToken ct, bool terminalGeometry, bool binaryData)
     {
         var geometrySent = Task.CompletedTask;
         void BeforeReplay()
@@ -470,7 +489,7 @@ internal sealed class GatewayServer : IDisposable
         {
             var replaySent = Task.CompletedTask;
             await replayBackend.ReplayAndBindAsync(id,
-                data => replaySent = send(GatewayProtocol.DataMessage(id, data)),
+                data => replaySent = binaryData && sendBinary != null ? sendBinary(data) : send(GatewayProtocol.DataMessage(id, data)),
                 () => bind(id), ct, BeforeReplay).ConfigureAwait(false);
             return Task.WhenAll(geometrySent, replaySent);
         }
@@ -480,6 +499,10 @@ internal sealed class GatewayServer : IDisposable
         _backend.Attach(id);
         return geometrySent;
     }
+
+    // Legacy overload for callers not using binary data.
+    private Task<Task> AttachBackendAsync(string id, Action<string> bind, Func<string, Task> send, CancellationToken ct, bool terminalGeometry)
+        => AttachBackendAsync(id, bind, send, null, ct, terminalGeometry, false);
 
     private string SessionListReply()
     {
@@ -534,8 +557,10 @@ internal sealed class GatewayServer : IDisposable
     {
         try
         {
-            if (ws.State == WebSocketState.Open)
+            if (ws.State is WebSocketState.Open or WebSocketState.CloseReceived)
                 await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "bye", CancellationToken.None).ConfigureAwait(false);
+            else if (ws.State == WebSocketState.CloseSent)
+                await ws.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "bye", CancellationToken.None).ConfigureAwait(false);
         }
         catch { }
         try { ws.Dispose(); } catch { }

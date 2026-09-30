@@ -65,7 +65,7 @@ public static class GatewayProtocol
     public static bool IsControlReply(string? type) =>
         type is Attached or Created or Sessions or Cwd or Geometry;
 
-    public static string ConnectHandshake(string? sessionId, bool control, int cols, int rows, string? term) =>
+    public static string ConnectHandshake(string? sessionId, bool control, int cols, int rows, string? term, bool binaryData = false, bool terminalGeometry = false) =>
         JsonSerializer.Serialize(new
         {
             type = Connect,
@@ -73,7 +73,9 @@ public static class GatewayProtocol
             control = control ? true : (bool?)null,
             cols = Math.Clamp(cols, 1, 1000),
             rows = Math.Clamp(rows, 1, 1000),
-            term = string.IsNullOrWhiteSpace(term) ? DefaultTerm : term
+            term = string.IsNullOrWhiteSpace(term) ? DefaultTerm : term,
+            binaryData = binaryData ? true : (bool?)null,
+            terminalGeometry = terminalGeometry ? true : (bool?)null
         }, Json);
 
     public static string ListRequest() => """{"type":"list"}""";
@@ -155,6 +157,7 @@ public static class GatewayProtocol
         public string? SessionId { get; set; }
         public bool Control { get; set; }
         public bool TerminalGeometry { get; set; }
+        public bool BinaryData { get; set; }
         public int Cols { get; set; } = 80;
         public int Rows { get; set; } = 24;
         public string Term { get; set; } = DefaultTerm;
@@ -182,6 +185,8 @@ public static class GatewayProtocol
                 h.Control = true;
             if (root.TryGetProperty("terminalGeometry", out var geometry) && geometry.ValueKind == JsonValueKind.True)
                 h.TerminalGeometry = true;
+            if (root.TryGetProperty("binaryData", out var binary) && binary.ValueKind == JsonValueKind.True)
+                h.BinaryData = true;
             if (root.TryGetProperty("cols", out var cols) && cols.TryGetInt32(out var ci))
                 h.Cols = Math.Clamp(ci, 1, 1000);
             if (root.TryGetProperty("rows", out var rows) && rows.TryGetInt32(out var ri))

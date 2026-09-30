@@ -471,8 +471,86 @@ function syncScrollLock(tab) {
     mouse === "vt200" || mouse === "drag" || mouse === "any";
   if (appScroll && !tab.host.classList.contains("tui-lock")) tab.term.scrollToBottom();
   // Hiding the scrollbar must never change scrollback capacity or erase history.
+  const wasLock = tab.host.classList.contains("tui-lock");
   tab.host.classList.toggle("tui-lock", appScroll);
+  if (wasLock !== appScroll) {
+    try {
+      const vp = tab.host.querySelector(".xterm-viewport");
+      diag("scroll", `tui-lock ${wasLock}->${appScroll} y=${tab.term.buffer.active.viewportY} base=${tab.term.buffer.active.baseY} mouse=${mouse} alt=${tab.term.buffer.active.type} scrollTop=${vp ? vp.scrollTop : -1}`, tab.id);
+    } catch {}
+  }
 }
+
+// Автодетект самопроизвольного прыжка наверх (Kimi). Пишет в diagnostics.log без участия пользователя.
+// handleHost hoisted, но tabs ещё пустой - поэтому опрос и хук отложены.
+(() => {
+  const seen = new WeakMap();
+  const lastDataById = new Map();
+  const ESC_RE = /\x1b\[[?]?[0-9;]*[A-Za-z\$]/g;
+  function escSummary(s) {
+    if (!s) return "";
+    const m = s.match(ESC_RE);
+    if (!m) return s.length > 80 ? s.slice(0,80) + "…" : s;
+    return m.slice(-6).join(" ") + ` len=${s.length}`;
+  }
+  let lastWheelAt = 0;
+  // колесо пользователя - не считать прыжком
+  try {
+    window.addEventListener("wheel", () => { lastWheelAt = Date.now(); }, { capture: true, passive: true });
+  } catch {}
+  setInterval(() => {
+    for (const tab of tabs) {
+      try {
+        const y = tab.term.buffer.active.viewportY;
+        const base = tab.term.buffer.active.baseY;
+        const alt = tab.term.buffer.active.type;
+        const vp = tab.host.querySelector(".xterm-viewport");
+        const top = vp ? vp.scrollTop : -1;
+        const prev = seen.get(tab);
+        if (prev) {
+          // alt -> normal переход это норма, не логируем как прыжок
+          const altJump = prev.alt !== alt;
+          const recentlyWheel = Date.now() - lastWheelAt < 800;
+          if (!altJump && !recentlyWheel) {
+            const wasAtBottom = prev.y >= prev.base - 2 && prev.base > 20;
+            const nowAtTop = y <= 2 && base > 50 && alt === "normal";
+            const jumped = wasAtBottom && nowAtTop;
+            const bigJump = alt === "normal" && prev.alt === "normal" && Math.abs(y - prev.y) > 80 && prev.y >= prev.base - 5;
+            if (jumped || bigJump) {
+              const esc = escSummary(lastDataById.get(tab.id) || "");
+              diag("scroll-jump", `JUMP id=${tab.id} ${jumped?"TOP":"BIG"} prev y=${prev.y}/${prev.base} -> now y=${y}/${base} scrollTop ${prev.top}->${top} lock=${tab.host.classList.contains("tui-lock")} mouse=${tab.term.modes.mouseTrackingMode} alt=${alt} lastEsc=[${esc}]`, tab.id);
+            } else if (wasAtBottom && alt === "normal" && y < base - 30) {
+              const esc = escSummary(lastDataById.get(tab.id) || "");
+              diag("scroll-jump", `DRIFT id=${tab.id} prev y=${prev.y}/${prev.base} -> now y=${y}/${base} top ${prev.top}->${top} lock=${tab.host.classList.contains("tui-lock")} esc=[${esc}]`, tab.id);
+            }
+          }
+        }
+        seen.set(tab, { y, base, top, alt });
+      } catch {}
+    }
+  }, 250);
+  // хук на handleHost после его объявления (function hoisted)
+  setTimeout(() => {
+    try {
+      const orig = handleHost;
+      handleHost = function(message) {
+        try {
+          if (message && message.type === "data" && typeof message.data === "string") {
+            const s = message.data;
+            if (s.includes("\x1b") || s.length > 50) {
+              lastDataById.set(message.id, s);
+              if (/\x1b\[(\?1049|\?2026|\?47|\?1047|3J|2J|H)/.test(s)) {
+                const t = tabs.find(t=>t.id===message.id);
+                diag("scroll-esc", `esc id=${message.id} y=${t?.term.buffer.active.viewportY} base=${t?.term.buffer.active.baseY} data=${JSON.stringify(s.slice(0,200))}`, message.id);
+              }
+            }
+          }
+        } catch {}
+        return orig.apply(this, arguments);
+      };
+    } catch {}
+  }, 0);
+})();
 
 function applyFit(tab, notifyHost = true) {
   if (tab.remoteGeometry) {
