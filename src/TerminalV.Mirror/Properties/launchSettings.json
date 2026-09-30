@@ -1,0 +1,16 @@
+{
+  "profiles": {
+    "Windows Machine": {
+      "commandName": "MsixPackage",
+      "nativeDebugging": false
+    },
+    "Android Emulator": {
+      "commandName": "AndroidEmulator",
+      "nativeDebugging": false
+    },
+    "iOS Simulator": {
+      "commandName": "iOSSimulator",
+      "nativeDebugging": false
+    }
+  }
+}

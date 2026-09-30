@@ -4,6 +4,7 @@
     <Project Path="src/TerminalV/TerminalV.csproj" />
     <Project Path="src/TerminalV.Com/TerminalV.Com.csproj" />
     <Project Path="src/TerminalV.Mobile/TerminalV.Mobile.csproj" />
+    <Project Path="src/TerminalV.Mirror/TerminalV.Mirror.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/TerminalV.Extensions.Tests/TerminalV.Extensions.Tests.csproj" />

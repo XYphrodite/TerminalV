@@ -1,0 +1,104 @@
+<Project Sdk="Microsoft.NET.Sdk.Razor">
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>TerminalV.Mirror</RootNamespace>
+    <AssemblyName>TerminalV.Mirror</AssemblyName>
+    <ApplicationId>com.terminalv.mirror</ApplicationId>
+    <ApplicationTitle>TerminalV Mirror</ApplicationTitle>
+    <ApplicationVersion>31</ApplicationVersion>
+    <ApplicationDisplayVersion>0.7.35</ApplicationDisplayVersion>
+    <UseMaui>true</UseMaui>
+    <SingleProject>true</SingleProject>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TrimMode>partial</TrimMode>
+    <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'ios'">14.2</SupportedOSPlatformVersion>
+    <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'maccatalyst'">14.0</SupportedOSPlatformVersion>
+    <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">21.0</SupportedOSPlatformVersion>
+    <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">10.0.17763.0</SupportedOSPlatformVersion>
+    <TargetPlatformMinVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">10.0.17763.0</TargetPlatformMinVersion>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <AndroidKeyStore>True</AndroidKeyStore>
+    <AndroidSigningKeyStore>terminalv.keystore</AndroidSigningKeyStore>
+    <AndroidSigningKeyAlias>terminalv</AndroidSigningKeyAlias>
+    <AndroidSigningKeyPass>terminalv123</AndroidSigningKeyPass>
+    <AndroidSigningStorePass>terminalv123</AndroidSigningStorePass>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <MauiIcon Include="Resources\AppIcon\appicon.svg"
+              ForegroundFile="Resources\AppIcon\appiconfg.svg" Color="#161C26">
+      <!-- Keep the whole mark inside Android's adaptive icon safe zone. -->
+      <ForegroundScale Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">0.7</ForegroundScale>
+    </MauiIcon>
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Maui.Controls" Version="10.0.10" />
+    <PackageReference Include="Microsoft.Maui.Controls.Compatibility" Version="10.0.10" />
+    <PackageReference Include="Microsoft.AspNetCore.Components.WebView.Maui" Version="10.0.10" />
+    <PackageReference Include="SSH.NET" Version="2026.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <MauiXaml Update="App.xaml">
+      <Generator>MSBuild:Compile</Generator>
+    </MauiXaml>
+    <MauiXaml Update="MainPage.xaml">
+      <Generator>MSBuild:Compile</Generator>
+    </MauiXaml>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\TerminalV\Ssh\SshConnectionOptions.cs" Link="Ssh\SshConnectionOptions.cs" />
+    <Compile Include="..\TerminalV\Ssh\TailscaleOptions.cs" Link="Ssh\TailscaleOptions.cs" />
+    <Compile Include="..\TerminalV\Ssh\ITailscaleConnector.cs" Link="Ssh\ITailscaleConnector.cs" />
+    <Compile Include="..\TerminalV\Ssh\TailscaleStubConnector.cs" Link="Ssh\TailscaleStubConnector.cs" />
+    <Compile Include="..\TerminalV\Ssh\TsnetSshSession.cs" Link="Ssh\TsnetSshSession.cs" />
+    <Compile Include="..\TerminalV\Ssh\ISshSession.cs" Link="Ssh\ISshSession.cs" />
+    <Compile Include="..\TerminalV\Ssh\SshSessionBase.cs" Link="Ssh\SshSessionBase.cs" />
+    <Compile Include="..\TerminalV\Ssh\SshNetSession.cs" Link="Ssh\SshNetSession.cs" />
+    <Compile Include="..\TerminalV\Ssh\SshShell.cs" Link="Ssh\SshShell.cs" />
+    <Compile Include="..\TerminalV\Ssh\SshKeyboardAuthentication.cs" Link="Ssh\SshKeyboardAuthentication.cs" />
+    <Compile Include="..\TerminalV\Ssh\GatewaySshSession.cs" Link="Ssh\GatewaySshSession.cs" />
+    <Compile Include="..\TerminalV\Ssh\GatewayProtocol.cs" Link="Ssh\GatewayProtocol.cs" />
+    <Compile Include="..\TerminalV\Ssh\GatewayControlClient.cs" Link="Ssh\GatewayControlClient.cs" />
+    <Compile Include="..\TerminalV\Ssh\GatewayTransport.cs" Link="Ssh\GatewayTransport.cs" />
+    <Compile Include="..\TerminalV\Ssh\SshService.cs" Link="Ssh\SshService.cs" />
+    <Compile Include="..\TerminalV\Data\AppSettings.cs" Link="Data\AppSettings.cs" />
+    <Compile Include="..\TerminalV\Data\SessionRecord.cs" Link="Data\SessionRecord.cs" />
+    <Compile Include="..\TerminalV\Data\PaneLayout.cs" Link="Data\PaneLayout.cs" />
+    <Compile Include="..\TerminalV\Data\LaunchProfile.cs" Link="Data\LaunchProfile.cs" />
+    <Compile Include="..\TerminalV\Host\IncomingMessage.cs" Link="Host\IncomingMessage.cs" />
+  </ItemGroup>
+
+  <ItemGroup Condition="Exists('Platforms\Android\libs\tsnet.aar')">
+    <AndroidAarLibrary Include="Platforms\Android\libs\tsnet.aar" />
+  </ItemGroup>
+
+  <Target Name="RequireTsnetAar" BeforeTargets="PrepareForBuild"
+          Condition="'$(TargetFramework)' == 'net10.0-android' And '$(DesignTimeBuild)' != 'true'">
+    <Error Condition="!Exists('$(MSBuildProjectDirectory)\Platforms\Android\libs\tsnet.aar')"
+           Text="Embedded Tailscale requires tsnet.aar. Run tools/tsnet-bridge/build-aar.ps1 -AndroidSdk &quot;path-to-android-sdk&quot; on the build machine before building Android." />
+  </Target>
+
+  <ItemGroup>
+        <ProguardConfiguration Include="Platforms\Android\proguard.cfg" />
+    <TrimmerRootAssembly Include="Renci.SshNet">
+      <RootMode>All</RootMode>
+    </TrimmerRootAssembly>
+  </ItemGroup>
+
+  <Target Name="CopyDesktopUi" BeforeTargets="ResolveProjectStaticWebAssets" Condition="'$(DesignTimeBuild)' != 'true'">
+    <Exec Command="npm run build" WorkingDirectory="..\..\ui" />
+    <Exec Command="node scripts/copy-mobile-ui.js" WorkingDirectory="..\..\ui" />
+    <ItemGroup>
+      <!-- Include files generated after project evaluation on a clean checkout. -->
+      <Content Include="wwwroot\assets\**\*" Exclude="@(Content)" />
+    </ItemGroup>
+  </Target>
+
+</Project>

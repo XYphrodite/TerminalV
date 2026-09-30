@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 100 100">
+  <!-- Same font-independent V and cursor as scripts/make-icon.ps1. -->
+  <g fill="#55B1FF">
+    <path d="M17 26 H28.5 L41 61 L53.5 26 H65 L46 74 H36 Z" />
+    <rect x="65" y="64" width="20" height="10" />
+  </g>
+</svg>
