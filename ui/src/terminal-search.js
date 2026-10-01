@@ -90,7 +90,28 @@ export function createTerminalSearch({ panel, onVisibilityChange }) {
       });
       opening.buffer = tab.term.buffer.onBufferChange(() => {
         window.clearTimeout(timer);
-        timer = window.setTimeout(() => find(1, true), 0);
+        timer = window.setTimeout(() => {
+          // Background buffer switches (a TUI entering/leaving the alternate
+          // screen while output streams) must only refresh highlights. Running
+          // the search from scratch would yank the viewport to the first match
+          // at the very top on every switch; explicit navigation (Enter,
+          // prev/next, typing) still moves it via find().
+          let anchor = null;
+          try {
+            const buffer = tab.term.buffer.active;
+            anchor = { y: buffer.viewportY, bottom: buffer.viewportY >= buffer.baseY - 2 };
+          } catch {}
+          find(1, true);
+          try {
+            // A reopened search owns its own reveal; a stale timer must not
+            // drag the viewport back to the previous session's position.
+            if (!anchor || session !== opening) return;
+            const buffer = tab.term.buffer.active;
+            if (buffer.viewportY === anchor.y) return;
+            if (anchor.bottom) tab.term.scrollToBottom();
+            else tab.term.scrollLines(anchor.y - buffer.viewportY);
+          } catch {}
+        }, 0);
       });
       panel.hidden = false;
       onVisibilityChange(tab);

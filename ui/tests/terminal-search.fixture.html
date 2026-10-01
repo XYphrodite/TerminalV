@@ -198,6 +198,28 @@
     equal(s.count.textContent.endsWith(" / 2"), true);
   });
 
+  await check("buffer switches refresh matches without moving the viewport", async (s) => {
+    await s.write(Array.from({ length: 120 }, (_, i) => `history ${String(i).padStart(3, "0")}`).join("\r\n"));
+    s.term.scrollToBottom();
+    s.controller.open(s.tab);
+    await s.query("history 001");
+    equal(s.count.textContent, "1 / 1");
+    // The reader returns to live output while a TUI redraws (e.g. an agent
+    // entering/leaving the alternate screen). Refreshing highlights must not
+    // yank them back to the first match at the very top.
+    s.term.scrollToBottom();
+    await s.write("\x1b[?1049hTUI frame\x1b[?1049l");
+    await delay();
+    equal(s.count.textContent, "1 / 1");
+    equal(s.term.buffer.active.viewportY, s.term.buffer.active.baseY);
+    // A reader parked in history keeps their line across the same switch.
+    s.term.scrollLines(-20);
+    const parked = s.term.buffer.active.viewportY;
+    await s.write("\x1b[?1049hTUI frame\x1b[?1049l");
+    await delay();
+    equal(s.term.buffer.active.viewportY, parked);
+  });
+
   await check("closing while output refresh is pending does not leak decorations", async (s) => {
     await s.write("hit");
     s.controller.open(s.tab);
