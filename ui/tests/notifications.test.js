@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createNotifications } from "../src/notifications.js";
+import xterm from "@xterm/xterm";
+import { createNotificationOutput, createNotifications } from "../src/notifications.js";
 
 function setup() {
   const a = {}, b = {};
@@ -66,4 +67,20 @@ test("opening a tab clears only its attention and does not reset sound throttlin
   s.known.delete(s.b);
   s.time(8000); s.controller.bell(s.b);
   assert.equal(s.sounds.length, 1);
+});
+
+test("ED3 (Kimi full redraw) returns to the live screen after parse", async () => {
+  const term = new xterm.Terminal({ cols: 80, rows: 24, allowProposedApi: true });
+  const scrolls = [];
+  term.scrollToBottom = () => scrolls.push("bottom");
+  const output = createNotificationOutput(term, () => {});
+  output.write("\x1b[?2026h\x1b[2J\x1b[3J\x1b[Hframe");
+  await new Promise(resolve => output.whenParsed(resolve));
+  assert.equal(scrolls.includes("bottom"), true, "3J must follow the live screen");
+  scrolls.length = 0;
+  output.write("plain output");
+  await new Promise(resolve => output.whenParsed(resolve));
+  assert.equal(scrolls.includes("bottom"), false, "plain output must not steal a history reader");
+  output.dispose();
+  term.dispose();
 });

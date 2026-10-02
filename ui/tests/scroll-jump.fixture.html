@@ -1,0 +1,111 @@
+<!doctype html>
+<meta charset="utf-8">
+<link rel="stylesheet" href="/node_modules/@xterm/xterm/css/xterm.css">
+<style>
+  #host { width: 800px; height: 500px; }
+</style>
+<div id="host"></div>
+<script src="/node_modules/@xterm/xterm/lib/xterm.js"></script>
+<script type="module">
+  import { createNotificationOutput } from "/src/notifications.js";
+
+  const results = [];
+  const delay = async () => {
+    await new Promise(resolve => setTimeout(resolve, 50));
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  };
+  function equal(actual, expected, label) {
+    if (actual !== expected) throw new Error(`${label || "value"}: expected ${expected}, got ${actual}`);
+  }
+  async function check(name, run) {
+    document.body.dataset.testProgress = name;
+    try { await run(); results.push({ name, ok: true }); }
+    catch (error) { results.push({ name, ok: false, error: error.stack }); }
+  }
+
+  async function withTerm(run) {
+    const host = document.getElementById("host");
+    const term = new Terminal({ cols: 80, rows: 24, scrollback: 8000, allowProposedApi: true,
+      windowsPty: { backend: "conpty", buildNumber: 22621 } });
+    term.open(host);
+    // Production write path: every session byte goes through createNotificationOutput.
+    const output = createNotificationOutput(term, () => {});
+    const write = data => new Promise(resolve => {
+      output.write(data);
+      output.whenParsed(resolve);
+    });
+    try {
+      await run({ term, write, host, output });
+    } finally {
+      output.dispose();
+      term.dispose();
+      host.innerHTML = "";
+    }
+  }
+
+  const seed = async (s, lines = 180) => {
+    await s.write(Array.from({ length: lines }, (_, i) => `history ${String(i).padStart(3, "0")}\r\n`).join(""));
+    await delay();
+    s.term.scrollToBottom();
+    await delay();
+    equal(s.term.buffer.active.viewportY, s.term.buffer.active.baseY, "seed leaves the reader at the bottom");
+  };
+
+  // Captured from Kimi inline TUI full redraw through ConPTY (diagnostics.log).
+  const kimiRedraw = (frameLines = 200) =>
+    "\x1b[?2026h\x1b[2J\x1b[3J\x1b[H\x1b[K\r\n"
+    + Array.from({ length: frameLines }, (_, i) => `│ frame line ${String(i).padStart(3, "0")}`).join("\r\n")
+    + "\x1b[?2026l";
+
+  await check("ED3 full redraw while following output stays on the live screen", async () => {
+    await withTerm(async s => {
+      await seed(s);
+      await s.write(kimiRedraw());
+      await delay();
+      equal(s.term.buffer.active.type, "normal", "normal buffer");
+      equal(s.term.buffer.active.viewportY, s.term.buffer.active.baseY,
+        "after 2J 3J re-dump the viewport must stay on the live screen, not the top");
+    });
+  });
+
+  await check("ED3 full redraw after reading history lands on the live screen", async () => {
+    await withTerm(async s => {
+      await seed(s);
+      s.term.scrollToTop();
+      await delay();
+      equal(s.term.buffer.active.viewportY < s.term.buffer.active.baseY, true, "reader is in history");
+      await s.write(kimiRedraw());
+      await delay();
+      // 3J already erased the history; showing the top of the re-dumped frame
+      // is never useful. Follow the live screen.
+      equal(s.term.buffer.active.viewportY, s.term.buffer.active.baseY,
+        "after 3J the reader must land on the live screen");
+    });
+  });
+
+  await check("ED3 split across writes keeps following after the frame body", async () => {
+    await withTerm(async s => {
+      await seed(s);
+      await s.write("\x1b[?2026h\x1b[2J\x1b[3J\x1b[H\x1b[K\r\n");
+      await delay();
+      await s.write(Array.from({ length: 200 }, (_, i) => `│ frame line ${String(i).padStart(3, "0")}`).join("\r\n") + "\x1b[?2026l");
+      await delay();
+      equal(s.term.buffer.active.viewportY, s.term.buffer.active.baseY,
+        "split 3J + frame body must still follow the live screen");
+    });
+  });
+
+  await check("plain output without ED3 preserves a history reader", async () => {
+    await withTerm(async s => {
+      await seed(s);
+      s.term.scrollToLine(40);
+      await delay();
+      const parked = s.term.buffer.active.viewportY;
+      await s.write("more output\r\n".repeat(50));
+      await delay();
+      equal(s.term.buffer.active.viewportY, parked, "reader stays parked without a scrollback clear");
+    });
+  });
+
+  document.body.dataset.testResult = btoa(unescape(encodeURIComponent(JSON.stringify(results))));
+</script>

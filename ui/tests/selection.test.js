@@ -57,7 +57,7 @@ async function runBrowserFixture(t, fixture) {
       fixture === "close-ui" ? process.env.TERMINALV_CLOSE_SCREENSHOT :
       fixture === "search-ui" ? process.env.TERMINALV_SEARCH_SCREENSHOT :
       fixture === "paste-confirmation" && process.env.TERMINALV_TEST_SCREENSHOT;
-    const output = ["viewport-restore", "synchronized-output", "terminal-geometry", "terminal-scroll", "mobile-fit", "mirror-geometry", "extensions-ui"].includes(fixture)
+    const output = ["viewport-restore", "synchronized-output", "terminal-geometry", "terminal-scroll", "scroll-jump", "mobile-fit", "mirror-geometry", "extensions-ui"].includes(fixture)
       ? await runFrameFixture(browser, profile, `http://127.0.0.1:${server.address().port}/tests/${fixture}.fixture.html`)
       : await new Promise((resolve, reject) => {
       const child = spawn(browser, [
@@ -102,6 +102,7 @@ test("scroll position when reopening xterm panes", (t) => runBrowserFixture(t, "
 test("synchronized TUI output in real xterm DOM", (t) => runBrowserFixture(t, "synchronized-output"));
 test("terminal geometry stays consistent during restore and unhide", (t) => runBrowserFixture(t, "terminal-geometry"));
 test("terminal scrolling survives TUI mode changes", (t) => runBrowserFixture(t, "terminal-scroll"));
+test("Kimi-style ED3 redraw does not pin the viewport to the top", (t) => runBrowserFixture(t, "scroll-jump"));
 test("mobile terminal fits after drawer transitions", (t) => runBrowserFixture(t, "mobile-fit"));
 test("mobile session synchronization and input", (t) => runBrowserFixture(t, "mobile-sessions"));
 test("multiline paste confirmation in xterm.js", (t) => runBrowserFixture(t, "paste-confirmation"));
