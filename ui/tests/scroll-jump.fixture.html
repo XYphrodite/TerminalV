@@ -8,6 +8,7 @@
 <script src="/node_modules/@xterm/xterm/lib/xterm.js"></script>
 <script type="module">
   import { createNotificationOutput } from "/src/notifications.js";
+  import { claimLiveScreenInput } from "/src/terminal-viewport.js";
 
   const results = [];
   const delay = async () => {
@@ -104,6 +105,32 @@
       await s.write("more output\r\n".repeat(50));
       await delay();
       equal(s.term.buffer.active.viewportY, parked, "reader stays parked without a scrollback clear");
+    });
+  });
+
+  await check("mouse-tracked TUI click in history returns to the live screen once", async () => {
+    await withTerm(async s => {
+      await seed(s);
+      // Mouse tracking on: clicks are for the TUI, whose hit-test is the live screen.
+      await s.write("\x1b[?1003;1006h");
+      await s.write("APPROVE BUTTON ON LIVE SCREEN\r\n" + Array.from({ length: 80 }, (_, i) => `live ${i}`).join("\r\n"));
+      await delay();
+      s.term.scrollToTop();
+      await delay();
+      equal(s.term.buffer.active.viewportY < s.term.buffer.active.baseY, true, "reader is in history");
+      equal(claimLiveScreenInput(s.term, s.host), true, "first TUI input claims the live screen");
+      equal(s.term.buffer.active.viewportY, s.term.buffer.active.baseY);
+      equal(claimLiveScreenInput(s.term, s.host), false, "second input is delivered on the live screen");
+    });
+  });
+
+  await check("plain shell click in history does not steal the reader", async () => {
+    await withTerm(async s => {
+      await seed(s);
+      s.term.scrollToTop();
+      await delay();
+      equal(claimLiveScreenInput(s.term, s.host), false, "no mouse tracking and no tui-lock");
+      equal(s.term.buffer.active.viewportY < s.term.buffer.active.baseY, true, "still reading history");
     });
   });
 

@@ -23,7 +23,7 @@ import { createLaunchMenu } from "./launch-menu.js";
 import { normalizeLayouts, layoutFor, leafIds, splitSession, detachSession, layoutGeometry,
   neighborPane, paneShortcut, MAX_PANES, MIN_PANE_WIDTH, MIN_PANE_HEIGHT, isSplitChild, isSplitParent, splitIndentLevel, splitWouldNest } from "./pane-layout.js";
 import { createPaneView } from "./pane-view.js";
-import { syncTerminalViewport } from "./terminal-viewport.js";
+import { syncTerminalViewport, claimLiveScreenInput } from "./terminal-viewport.js";
 import { attachMirrorPan, layoutMirrorViewport, setMirrorSize } from "./mirror-viewport.js";
 import { SynchronizedOutputAddon } from "./synchronized-output.js";
 import { createShortcuts } from "./shortcuts.js";
@@ -583,6 +583,10 @@ function applyFit(tab, notifyHost = true) {
   // Keep the parser's grid aligned with every PTY resize. A backend-only
   // one-column "redraw" pulse wraps incoming output into the wrong cells.
   tab.term.resize(proposed.cols, proposed.rows);
+  // Reflow can leave DOM scrollTop at the pre-resize buffer offset (e.g. 8000
+  // lines claimed at the bottom while the scrollbar sits at 0). Reconcile here
+  // so the next click hits the cell the user actually sees.
+  syncTerminalViewport(tab.term);
   if (resizeHost) {
     post({ type: "resize", id: tab.id, cols: proposed.cols, rows: proposed.rows });
     tab.ptySize = { cols: proposed.cols, rows: proposed.rows };
@@ -1239,6 +1243,13 @@ function attachCopyPaste(tab) {
         return false;
       }
     }
+    // A TUI (Mimo/Codex-style Approve) hit-tests the live screen only. A key
+    // aimed at a scrolled-back frame must not land on a different live control.
+    if (claimLiveScreenInput(tab.term, tab.host)) {
+      event.preventDefault();
+      event.stopPropagation();
+      return false;
+    }
     return true;
   });
 
@@ -1251,6 +1262,17 @@ function attachCopyPaste(tab) {
     }
     void pasteController.request(tab);
   });
+
+  // Mouse reports are screen-relative. A click aimed at a scrolled-back Approve
+  // would hit a different row of the live TUI; return to the live screen first
+  // and drop this press so the next click is intentional.
+  tab.host.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0 && event.button !== 1) return;
+    if (claimLiveScreenInput(tab.term, tab.host)) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  }, true);
 }
 
 function newTab(options = {}) {
