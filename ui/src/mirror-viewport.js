@@ -39,6 +39,38 @@ export function setMirrorSize(tab, cols, rows) {
   return true;
 }
 
+// Finger pixels → content pixels. 1:1 felt sluggish on a phone (a full row is
+// ~20 CSS px and scrollback is thousands of lines); v0.7.22 used 1.2.
+export const MIRROR_SCROLL_GAIN = 1.35;
+
+function scrollerFor(tab, hint) {
+  const viewport = hint && hint.isConnected ? hint : tab.host.querySelector(".xterm-viewport");
+  if (viewport && viewport.scrollHeight > viewport.clientHeight + 1) return { el: viewport, history: true };
+  return { el: tab.host, history: false };
+}
+
+function fling(tab, samples, gain) {
+  if (samples.length < 2) return;
+  const first = samples[0], last = samples[samples.length - 1];
+  const dt = last.t - first.t;
+  if (dt < 16) return;
+  // Finger velocity in px/ms, already in scroll direction.
+  let velocity = ((first.p - last.p) / dt) * gain;
+  if (Math.abs(velocity) < 0.08) return;
+  let lastT = performance.now();
+  const step = () => {
+    const now = performance.now();
+    const frame = Math.min(now - lastT, 32);
+    lastT = now;
+    // ~half-life 90ms: a flick coasts a few screens, a careful drag stops soon.
+    velocity *= Math.pow(0.5, frame / 90);
+    const { el } = scrollerFor(tab, null);
+    el.scrollTop += velocity * frame;
+    if (Math.abs(velocity) > 0.03) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
+
 export function attachMirrorPan(tab) {
   let gesture = null;
   tab.host.addEventListener("touchstart", event => {
@@ -48,7 +80,9 @@ export function attachMirrorPan(tab) {
     gesture = {
       x: touch.clientX, y: touch.clientY,
       left: tab.host.scrollLeft, top: tab.host.scrollTop,
-      viewportTop: viewport?.scrollTop || 0, axis: null
+      viewportTop: viewport?.scrollTop || 0, axis: null,
+      viewport,
+      samples: [{ t: performance.now(), p: touch.clientY }]
     };
   }, { capture: true, passive: true });
   tab.host.addEventListener("touchmove", event => {
@@ -67,12 +101,21 @@ export function attachMirrorPan(tab) {
       tab.host.scrollLeft = gesture.left + dx;
       return;
     }
-    const viewport = tab.host.querySelector(".xterm-viewport");
+    gesture.samples.push({ t: performance.now(), p: touch.clientY });
+    while (gesture.samples.length > 6) gesture.samples.shift();
+    const historyDy = dy * MIRROR_SCROLL_GAIN;
+    const viewport = gesture.viewport && gesture.viewport.isConnected
+      ? gesture.viewport : tab.host.querySelector(".xterm-viewport");
     if (viewport && viewport.scrollHeight > viewport.clientHeight + 1)
-      viewport.scrollTop = gesture.viewportTop + dy;
-    else tab.host.scrollTop = gesture.top + dy;
+      viewport.scrollTop = gesture.viewportTop + historyDy;
+    else tab.host.scrollTop = gesture.top + historyDy;
   }, { capture: true, passive: false });
-  const finish = () => { gesture = null; };
+  const finish = () => {
+    if (!gesture) return;
+    const samples = gesture.samples, gain = MIRROR_SCROLL_GAIN;
+    gesture = null;
+    fling(tab, samples, gain);
+  };
   tab.host.addEventListener("touchend", finish, { passive: true });
   tab.host.addEventListener("touchcancel", finish, { passive: true });
   tab.term.onRender(() => layoutMirrorViewport(tab));

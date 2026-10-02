@@ -3,6 +3,7 @@ import test from "node:test";
 import { readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { MIRROR_SCROLL_GAIN } from "../src/mirror-viewport.js";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, "../..");
 const r = (p) => resolve(repoRoot, p);
@@ -15,9 +16,16 @@ test("mirror vertical scroll uses xterm history and horizontal pans the grid", (
   assert.match(css, /\.terminal-host\.mirror-viewport\s*\{[^}]*touch-action:\s*none/, "host does not eat the gesture");
 
   const src = readFileSync(r("ui/src/mirror-viewport.js"), "utf8");
-  assert.match(src, /viewport\.scrollTop\s*=\s*gesture\.viewportTop\s*\+\s*dy/, "vertical scrolls xterm history");
+  assert.match(src, /viewport\.scrollTop\s*=\s*gesture\.viewportTop\s*\+\s*historyDy/, "vertical scrolls xterm history");
   assert.match(src, /tab\.host\.scrollLeft\s*=\s*gesture\.left\s*\+\s*dx/, "horizontal pans the grid");
+  assert.match(src, /historyDy\s*=\s*dy\s*\*\s*MIRROR_SCROLL_GAIN/, "finger travel is amplified");
+  assert.match(src, /function fling\(/, "a flick coasts after the finger lifts");
   const threshold = src.indexOf("Math.max(Math.abs(dx), Math.abs(dy)) < 6");
   const nextReturn = src.indexOf("return;", threshold);
   assert.equal(src.slice(threshold, nextReturn).includes("preventDefault"), false, "a tap does not cancel the gesture");
+});
+
+test("phone scroll gain is above 1:1 so history is reachable without huge swipes", () => {
+  assert.equal(MIRROR_SCROLL_GAIN > 1.2, true, `gain ${MIRROR_SCROLL_GAIN} should exceed the old 1.2`);
+  assert.equal(MIRROR_SCROLL_GAIN < 2, true, "gain stays usable for precise pans");
 });
