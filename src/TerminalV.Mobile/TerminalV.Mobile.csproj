@@ -7,8 +7,8 @@
     <AssemblyName>TerminalV.Mobile</AssemblyName>
     <ApplicationId>com.terminalv.mobile</ApplicationId>
     <ApplicationTitle>TerminalV</ApplicationTitle>
-    <ApplicationVersion>36</ApplicationVersion>
-    <ApplicationDisplayVersion>0.7.40</ApplicationDisplayVersion>
+    <ApplicationVersion>37</ApplicationVersion>
+    <ApplicationDisplayVersion>0.7.41</ApplicationDisplayVersion>
     <UseMaui>true</UseMaui>
     <SingleProject>true</SingleProject>
     <ImplicitUsings>enable</ImplicitUsings>

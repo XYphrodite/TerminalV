@@ -1243,13 +1243,10 @@ function attachCopyPaste(tab) {
         return false;
       }
     }
-    // A TUI (Mimo/Codex-style Approve) hit-tests the live screen only. A key
-    // aimed at a scrolled-back frame must not land on a different live control.
-    if (claimLiveScreenInput(tab.term, tab.host)) {
-      event.preventDefault();
-      event.stopPropagation();
-      return false;
-    }
+    // A TUI (Mimo/Codex-style Approve) hit-tests the live screen only. Snap out
+    // of a deep history read before the key, but never drop the key itself —
+    // swallowing Enter here broke Approve on 0.7.39.
+    claimLiveScreenInput(tab.term, tab.host, { swallow: false });
     return true;
   });
 

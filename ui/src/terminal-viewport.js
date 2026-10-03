@@ -11,19 +11,25 @@ export function syncTerminalViewport(term) {
 
 // xterm mouse reports are viewport-relative (visible rows 0..rows-1), not
 // scrollback positions. A TUI hit-test therefore maps a click on a scrolled-back
-// "Approve" onto whatever cell occupies that row of the live screen. For apps
-// that own the screen (mouse tracking or tui-lock), the first input while the
-// reader is in history returns to the live screen and swallows that event so a
-// stale frame cannot activate the wrong control.
-export function claimLiveScreenInput(term, host) {
+// "Approve" onto whatever cell occupies that row of the live screen.
+//
+// 0.7.39 swallowed every key and click whenever viewportY < baseY. Live TUIs
+// often sit one row above baseY (trailing blank, redraw), so Approve never
+// arrived. Only a real history offset claims the live screen, and keyboard is
+// never dropped — it is delivered after the snap so Enter/Space still approve.
+export function claimLiveScreenInput(term, host, { swallow = true } = {}) {
   try {
     const buffer = term.buffer.active;
     const appOwnsInput = term.modes.mouseTrackingMode !== "none" ||
       Boolean(host?.classList?.contains("tui-lock"));
-    if (!appOwnsInput || buffer.viewportY >= buffer.baseY) return false;
+    if (!appOwnsInput) return false;
+    const rows = term.rows || 24;
+    // Trailing blank rows and TUI redraws leave a 1–2 row lag at the "bottom".
+    const lag = buffer.baseY - buffer.viewportY;
+    if (lag <= Math.max(2, Math.floor(rows * 0.2))) return false;
     term.scrollToBottom();
     syncTerminalViewport(term);
-    return true;
+    return swallow;
   } catch {
     return false;
   }
