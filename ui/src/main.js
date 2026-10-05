@@ -954,9 +954,30 @@ function dropWebgl(tab) {
   tab.webgl = null;
 }
 
+function isMobileUi() {
+  return document.documentElement.classList.contains("mobile-ui");
+}
+
+// WebGL uploads a texture the size of the whole xterm grid. A phone WebView
+// redrawing a mirrored desktop-sized grid lagged input (0.7.28), so hardware
+// rendering is allowed on phones only for phone-sized grids: local fit or
+// MobileFitMode after the desktop PTY shrinks to the viewport.
+const PHONE_GRID_MAX_COLS = 120;
+const PHONE_GRID_MAX_ROWS = 50;
+
+function webglAllowed(tab) {
+  if (!settings.hardwareRendering) return false;
+  if (!isMobileUi()) return true;
+  if (!tab?.remoteGeometry) return true;
+  if (!settings.mobileFitMode) return false;
+  const cols = tab.mirrorSize?.cols ?? 0;
+  const rows = tab.mirrorSize?.rows ?? 0;
+  return cols > 0 && rows > 0 && cols <= PHONE_GRID_MAX_COLS && rows <= PHONE_GRID_MAX_ROWS;
+}
+
 function applyRenderer() {
   for (const tab of tabs) {
-    if (settings.hardwareRendering) {
+    if (webglAllowed(tab)) {
       if (isPaneVisible(tab)) {
         ensureWebgl(tab);
       }
@@ -967,7 +988,7 @@ function applyRenderer() {
 }
 
 function ensureWebgl(tab) {
-  if (tab.webgl || !settings.hardwareRendering) {
+  if (tab.webgl || !webglAllowed(tab)) {
     return;
   }
 
@@ -1883,8 +1904,9 @@ function handleHost(message) {
       if (message.settings.language) initI18n(message.settings.language);
       else initI18n(settings.language);
     }
-    // WebGL redraws the whole desktop-sized grid inside the phone WebView.
-    if (message.mobile === true) settings.hardwareRendering = false;
+    // Hardware rendering on phones follows webglAllowed(): a mirrored
+    // desktop-sized grid stays on the DOM renderer, phone-sized fit grids
+    // may use WebGL.
     gatewayState = message.gateway ?? null;
     fillFonts(message.fonts);
     window.__liveIds = message.liveIds || [];
@@ -2007,6 +2029,8 @@ function handleHost(message) {
 
   if (message.type === "terminal-size") {
     setMirrorSize(tab, message.cols, message.rows);
+    // Grid size changes the WebGL cost — re-evaluate hardware rendering.
+    if (webglAllowed(tab)) ensureWebgl(tab); else dropWebgl(tab);
     return;
   }
 
@@ -2112,6 +2136,8 @@ if (mobileFitModeEl) mobileFitModeEl.addEventListener("change", () => {
       }
     }
   }
+  // Fit mode shrinks the mirror grid to the phone and unlocks WebGL there.
+  applyRenderer();
 });
 gatewayEnabledEl.addEventListener("change", () => {
   settings.gatewayEnabled = gatewayEnabledEl.checked;

@@ -713,14 +713,20 @@ body,
 
 .terminal-host.mirror-viewport {
   overflow: auto;
-  /* Native pan would scroll only the short host overflow. Touch stays with
-     the handlers: horizontal moves the wide grid, vertical moves xterm history. */
-  touch-action: none;
+  /* Vertical is native (inertia, compositor). Horizontal stays with the JS
+     handlers because the wide desktop grid has no native sideways scroll. */
+  touch-action: pan-y;
 }
 
 .terminal-host.mirror-viewport > .xterm {
   max-width: none;
   max-height: none;
+}
+
+/* Let an exhausted/empty xterm history chain the vertical pan to the host,
+   which holds the bottom of a tall desktop grid. */
+.terminal-host.mirror-viewport .xterm-viewport {
+  overscroll-behavior: auto;
 }
 
 .settings {

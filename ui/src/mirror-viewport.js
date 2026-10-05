@@ -1,21 +1,50 @@
 // A mirrored PTY has one character grid. Viewport changes on the phone may
 // change the visible portion, but must not reflow cursor-addressed desktop data.
-export function layoutMirrorViewport(tab) {
-  if (!tab.mirrorSize || !tab.term.element) return;
+//
+// Layout measurement (getComputedStyle + cell metrics) is cached: onRender fires
+// on every xterm paint and used to force a style recalc each frame.
+
+const measureCache = new WeakMap();
+
+function measureMirror(tab) {
   const dimensions = tab.term._core?._renderService?.dimensions?.css;
   const cell = dimensions?.cell;
-  if (!(cell?.width > 0 && cell?.height > 0)) return;
+  if (!(cell?.width > 0 && cell?.height > 0)) return null;
+  const key = `${cell.width}x${cell.height}`;
+  const cached = measureCache.get(tab);
+  if (cached && cached.key === key) return cached;
   const style = getComputedStyle(tab.term.element);
   const padding = side => Number.parseFloat(style[side]) || 0;
-  const scrollbar = tab.term._core?.viewport?.scrollBarWidth || 0;
-  const width = Math.ceil(cell.width * tab.mirrorSize.cols + scrollbar
-    + padding("paddingLeft") + padding("paddingRight"));
+  const measured = {
+    key,
+    cell,
+    scrollbar: tab.term._core?.viewport?.scrollBarWidth || 0,
+    paddingLeft: padding("paddingLeft"),
+    paddingRight: padding("paddingRight"),
+    paddingTop: padding("paddingTop"),
+    paddingBottom: padding("paddingBottom"),
+  };
+  measureCache.set(tab, measured);
+  return measured;
+}
+
+export function invalidateMirrorMeasure(tab) {
+  measureCache.delete(tab);
+}
+
+export function layoutMirrorViewport(tab) {
+  if (!tab.mirrorSize || !tab.term.element) return;
+  const m = measureMirror(tab);
+  if (!m) return;
+  const { cell } = m;
+  const avail = tab.host.clientHeight;
+  const width = Math.ceil(cell.width * tab.mirrorSize.cols + m.scrollbar
+    + m.paddingLeft + m.paddingRight);
   const height = Math.ceil(cell.height * tab.mirrorSize.rows
-    + padding("paddingTop") + padding("paddingBottom"));
+    + m.paddingTop + m.paddingBottom);
   const element = tab.term.element;
   // A desktop grid shorter than the phone leaves a blank band under the last
   // row. Zoom fills that height; a taller grid stays 1:1 and scrolls.
-  const avail = tab.host.clientHeight;
   const zoom = height > 0 && avail > height ? Math.round((avail / height) * 1000) / 1000 : 1;
   if (element.style.width !== `${width}px`) element.style.width = `${width}px`;
   if (element.style.height !== `${height}px`) element.style.height = `${height}px`;
@@ -39,8 +68,8 @@ export function setMirrorSize(tab, cols, rows) {
   return true;
 }
 
-// Finger pixels → content pixels. 1:1 felt sluggish on a phone (a full row is
-// ~20 CSS px and scrollback is thousands of lines); v0.7.22 used 1.2.
+// Finger pixels → content pixels on the manual (synthetic / non-native) path.
+// Real touches use native scrolling and do not need this.
 export const MIRROR_SCROLL_GAIN = 1.35;
 
 function scrollerFor(tab, hint) {
@@ -73,6 +102,7 @@ function fling(tab, samples, gain) {
 
 export function attachMirrorPan(tab) {
   let gesture = null;
+  let layoutRaf = 0;
   tab.host.addEventListener("touchstart", event => {
     if (!tab.remoteGeometry || event.touches.length !== 1) { gesture = null; return; }
     const touch = event.touches[0];
@@ -82,7 +112,10 @@ export function attachMirrorPan(tab) {
       left: tab.host.scrollLeft, top: tab.host.scrollTop,
       viewportTop: viewport?.scrollTop || 0, axis: null,
       viewport,
-      samples: [{ t: performance.now(), p: touch.clientY }]
+      samples: [{ t: performance.now(), p: touch.clientY }],
+      // Synthetic TouchEvents (tests) cannot trigger native scrolling.
+      // Trusted touches are left to the browser (touch-action: pan-y).
+      manual: !event.isTrusted
     };
   }, { capture: true, passive: true });
   tab.host.addEventListener("touchmove", event => {
@@ -94,6 +127,11 @@ export function attachMirrorPan(tab) {
       // Wide grid pans sideways. Vertical is the pre-mirror xterm viewport:
       // the whole scrollback, not the few extra rows of the desktop screen.
       gesture.axis = Math.abs(dx) > Math.abs(dy) && tab.host.scrollWidth > tab.host.clientWidth ? "x" : "y";
+    }
+    if (gesture.axis === "y" && !gesture.manual) {
+      // Native vertical: touch-action pan-y. Never preventDefault or the
+      // browser stops the pan and inertia.
+      return;
     }
     event.preventDefault();
     event.stopPropagation();
@@ -113,10 +151,20 @@ export function attachMirrorPan(tab) {
   const finish = () => {
     if (!gesture) return;
     const samples = gesture.samples, gain = MIRROR_SCROLL_GAIN;
+    const nativeVertical = gesture.axis === "y" && !gesture.manual;
     gesture = null;
+    // Browser already provides inertia for trusted vertical pans.
+    if (nativeVertical) return;
     fling(tab, samples, gain);
   };
   tab.host.addEventListener("touchend", finish, { passive: true });
   tab.host.addEventListener("touchcancel", finish, { passive: true });
-  tab.term.onRender(() => layoutMirrorViewport(tab));
+  // Coalesce paints: one layout per frame, measurement cached per cell size.
+  tab.term.onRender(() => {
+    if (layoutRaf) return;
+    layoutRaf = requestAnimationFrame(() => {
+      layoutRaf = 0;
+      layoutMirrorViewport(tab);
+    });
+  });
 }

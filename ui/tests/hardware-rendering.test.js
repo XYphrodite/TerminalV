@@ -23,3 +23,17 @@ test("renderer honors the setting with fallback", () => {
 test("host settings model carries the flag default-on", () => {
   assert.match(cs, /bool\s+HardwareRendering\s*\{[^}]*\}\s*=\s*true/, "C# default must be true");
 });
+
+test("phone WebGL is allowed only for phone-sized grids, not desktop mirrors", () => {
+  assert.doesNotMatch(main, /if \(message\.mobile === true\) settings\.hardwareRendering = false/,
+    "mobile must not force the setting off");
+  assert.match(main, /function webglAllowed\(tab\)/, "per-tab gate exists");
+  assert.match(main, /if \(!isMobileUi\(\)\) return true/, "desktop follows the setting alone");
+  assert.match(main, /if \(!tab\?\.remoteGeometry\) return true/, "local/direct tabs are fine on phones");
+  assert.match(main, /if \(!settings\.mobileFitMode\) return false/, "desktop-sized mirrors stay on DOM");
+  assert.match(main, /PHONE_GRID_MAX_COLS/, "mirror grid is size-capped");
+  assert.match(main, /webglAllowed\(tab\)/, "ensureWebgl/applyRenderer consult the gate");
+  const html = readFileSync(resolve(dir, "index.html"), "utf8");
+  assert.match(html, /data-mobile-only>На телефоне WebGL/, "settings explain the phone gate");
+  assert.match(html, /включится быстрый WebGL-рендер/, "fit mode advertises the faster renderer");
+});
