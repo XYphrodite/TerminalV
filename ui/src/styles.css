@@ -718,6 +718,12 @@ body,
   touch-action: pan-y;
 }
 
+/* Mouse-tracking TUIs (mimo) own vertical scrolling. The gesture is turned
+   into xterm wheel events; the browser must not also pan the locked viewport. */
+.terminal-host.app-wheel {
+  touch-action: none;
+}
+
 .terminal-host.mirror-viewport > .xterm {
   max-width: none;
   max-height: none;
@@ -727,6 +733,7 @@ body,
    which holds the bottom of a tall desktop grid. */
 .terminal-host.mirror-viewport .xterm-viewport {
   overscroll-behavior: auto;
+  touch-action: pan-y;
 }
 
 .settings {

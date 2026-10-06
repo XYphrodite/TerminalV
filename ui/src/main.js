@@ -24,7 +24,7 @@ import { normalizeLayouts, layoutFor, leafIds, splitSession, detachSession, layo
   neighborPane, paneShortcut, MAX_PANES, MIN_PANE_WIDTH, MIN_PANE_HEIGHT, isSplitChild, isSplitParent, splitIndentLevel, splitWouldNest } from "./pane-layout.js";
 import { createPaneView } from "./pane-view.js";
 import { syncTerminalViewport, claimLiveScreenInput } from "./terminal-viewport.js";
-import { attachMirrorPan, layoutMirrorViewport, setMirrorSize } from "./mirror-viewport.js";
+import { attachMirrorPan, layoutMirrorViewport, setMirrorSize, syncWheelMode } from "./mirror-viewport.js";
 import { SynchronizedOutputAddon } from "./synchronized-output.js";
 import { createShortcuts } from "./shortcuts.js";
 import { createMobileKeys, MOBILE_KEY_SEQUENCES } from "./mobile-keys.js";
@@ -80,6 +80,11 @@ const notificationStatus = document.getElementById("notification-status");
 let showHiddenSessions = false;
 
 const tabs = [];
+// Dev/automation only: CDP tests reach tab.term to inject terminal output.
+// Vite replaces import.meta.env.DEV with false in production builds and the
+// minifier dead-code-eliminates this block. Optional chaining keeps the raw
+// test harness (no import.meta.env) from throwing.
+if (import.meta.env?.DEV) window.__tvTabs = tabs;
 let activeId = null;
 let layouts = [];
 let shellName = "PowerShell";
@@ -473,6 +478,7 @@ function syncScrollLock(tab) {
   // Hiding the scrollbar must never change scrollback capacity or erase history.
   const wasLock = tab.host.classList.contains("tui-lock");
   tab.host.classList.toggle("tui-lock", appScroll);
+  syncWheelMode(tab);
   if (wasLock !== appScroll) {
     try {
       const vp = tab.host.querySelector(".xterm-viewport");
