@@ -18,5 +18,6 @@
     <Compile Include="../../src/TerminalV/Data/LaunchProfile.cs" />
     <Compile Include="../../src/TerminalV/Host/IncomingMessage.cs" />
     <Compile Include="../../src/TerminalV.Mobile/Host/*.cs" Link="Mobile/%(Filename)%(Extension)" />
+    <Compile Include="../../src/TerminalV.Mobile/Update/*.cs" Link="Mobile/Update/%(Filename)%(Extension)" />
   </ItemGroup>
 </Project>
