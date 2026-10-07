@@ -1,0 +1,187 @@
+<!doctype html>
+<meta charset="utf-8">
+<link rel="stylesheet" href="/node_modules/@xterm/xterm/css/xterm.css">
+<script src="/node_modules/@xterm/xterm/lib/xterm.js"></script>
+<script type="module">
+  import { getPlainSelection } from "/src/selection.js";
+  import { attachTuiMouse, preserveSelectionOnMouseReports } from "/src/tui-mouse.js";
+
+  const results = [];
+  function equal(actual, expected) {
+    if (actual !== expected) {
+      throw new Error(`Expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
+    }
+  }
+  async function check(name, run) {
+    const host = document.createElement("div");
+    host.style.width = "800px";
+    host.style.height = "400px";
+    document.body.append(host);
+    const term = new Terminal({ cols: 80, rows: 12, windowsPty: { backend: "conpty", buildNumber: 22621 } });
+    preserveSelectionOnMouseReports(term);
+    term.open(host);
+    const write = (data) => new Promise((resolve) => term.write(data, resolve));
+    const reports = [];
+    term.onData((data) => reports.push(data));
+    const tab = { term, host };
+    attachTuiMouse(tab);
+    try {
+      await run({ term, write, host, reports });
+      results.push({ name, ok: true });
+    } catch (error) {
+      results.push({ name, ok: false, error: String(error && error.stack || error) });
+    } finally {
+      term.dispose();
+      host.remove();
+    }
+  }
+
+  // hermes --tui: full tracking (clicks, drags, hover, wheel) with SGR reports.
+  const HERMES_MODES = "\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006h";
+  const CHAT = "chat answer line one\r\nchat answer line two\r\nchat answer line three";
+
+  function geometry(term, host) {
+    const rect = host.querySelector(".xterm-screen").getBoundingClientRect();
+    return { rect, cellW: rect.width / term.cols, cellH: rect.height / term.rows };
+  }
+
+  function at({ rect, cellW, cellH }, col, row) {
+    return { x: rect.left + cellW * col + 2, y: rect.top + cellH * (row + 0.5) };
+  }
+
+  function pointer(target, type, x, y, init = {}) {
+    const Event = window.PointerEvent || MouseEvent;
+    return target.dispatchEvent(new Event(type, {
+      bubbles: true, cancelable: true, pointerType: "mouse", button: 0,
+      buttons: type === "pointerup" ? 0 : 1, clientX: x, clientY: y, ...init
+    }));
+  }
+
+  // A real browser fires these compatibility events around the pointer stream,
+  // and suppresses mousedown/mouseup/click when the pointerdown was cancelled.
+  function compat(target, type, x, y, init = {}) {
+    target.dispatchEvent(new MouseEvent(type, {
+      bubbles: true, cancelable: true, button: 0, detail: 1,
+      buttons: type === "mouseup" ? 0 : 1, clientX: x, clientY: y, ...init
+    }));
+  }
+
+  function press(target, x, y, init) {
+    const delivered = pointer(target, "pointerdown", x, y, init);
+    if (delivered) compat(target, "mousedown", x, y, init);
+    return delivered;
+  }
+
+  function drag(term, host, from, to, init = {}) {
+    const screen = host.querySelector(".xterm-screen");
+    press(screen, from.x, from.y, init);
+    pointer(screen, "pointermove", (from.x + to.x) / 2, (from.y + to.y) / 2, init);
+    compat(screen, "mousemove", (from.x + to.x) / 2, (from.y + to.y) / 2, { buttons: 1, ...init });
+    pointer(screen, "pointermove", to.x, to.y, init);
+    compat(screen, "mousemove", to.x, to.y, { buttons: 1, ...init });
+    pointer(screen, "pointerup", to.x, to.y, init);
+    // Sent unconditionally: it also covers browsers that keep compatibility
+    // mouseup after a cancelled pointerdown (the interceptor must swallow it).
+    compat(screen, "mouseup", to.x, to.y, init);
+    return new Promise((resolve) => setTimeout(resolve, 1));
+  }
+
+  function tap(term, host, point, init = {}) {
+    const screen = host.querySelector(".xterm-screen");
+    const delivered = press(screen, point.x, point.y, init);
+    pointer(screen, "pointerup", point.x, point.y, init);
+    compat(screen, "mouseup", point.x, point.y, init);
+    if (delivered) compat(screen, "click", point.x, point.y, init);
+    return new Promise((resolve) => setTimeout(resolve, 1));
+  }
+
+  const SGR_REPORT = /^\x1b\[<\d+;\d+;\d+[Mm]$/;
+
+  await check("plain drag selects chat text and sends nothing to the app", async ({ term, write, host, reports }) => {
+    await write(HERMES_MODES);
+    await write(CHAT);
+    const geom = geometry(term, host);
+    await drag(term, host, at(geom, 2, 0), at(geom, 12, 1));
+    equal(term.hasSelection(), true);
+    equal(getPlainSelection(term), "at answer line one\r\nchat answer");
+    equal(reports.length, 0);
+  });
+
+  await check("a tap still clicks: the app gets exactly press and release", async ({ term, write, host, reports }) => {
+    await write(HERMES_MODES);
+    await write(CHAT);
+    const geom = geometry(term, host);
+    await drag(term, host, at(geom, 2, 0), at(geom, 12, 1));
+    await tap(term, host, at(geom, 40, 2));
+    equal(reports.filter((data) => SGR_REPORT.test(data)).length, 2);
+    equal(reports.some((data) => data.endsWith("M")), true);
+    equal(reports.some((data) => data.endsWith("m")), true);
+    equal(term.hasSelection(), false);
+  });
+
+  await check("hover reports keep flowing but no longer wipe the selection", async ({ term, write, host, reports }) => {
+    await write(HERMES_MODES);
+    await write(CHAT);
+    const geom = geometry(term, host);
+    await drag(term, host, at(geom, 2, 0), at(geom, 12, 1));
+    const hover = at(geom, 30, 3);
+    compat(host.querySelector(".xterm-screen"), "mousemove", hover.x, hover.y, { buttons: 0 });
+    equal(reports.filter((data) => SGR_REPORT.test(data)).length, 1);
+    equal(term.hasSelection(), true);
+  });
+
+  await check("wheel reports keep the selection too", async ({ term, write, host, reports }) => {
+    await write(HERMES_MODES);
+    await write(CHAT);
+    const geom = geometry(term, host);
+    await drag(term, host, at(geom, 2, 0), at(geom, 12, 1));
+    const point = at(geom, 30, 3);
+    host.querySelector(".xterm-screen").dispatchEvent(new WheelEvent("wheel", {
+      bubbles: true, cancelable: true, deltaY: -100, clientX: point.x, clientY: point.y
+    }));
+    equal(reports.filter((data) => SGR_REPORT.test(data)).length, 1);
+    equal(term.hasSelection(), true);
+  });
+
+  await check("typing still clears the selection and reaches the app", async ({ term, write, host, reports }) => {
+    await write(HERMES_MODES);
+    await write(CHAT);
+    const geom = geometry(term, host);
+    await drag(term, host, at(geom, 2, 0), at(geom, 12, 1));
+    term.input("x");
+    equal(reports.includes("x"), true);
+    equal(term.hasSelection(), false);
+  });
+
+  await check("Shift+drag (native xterm path) still selects", async ({ term, write, host, reports }) => {
+    await write(HERMES_MODES);
+    await write(CHAT);
+    const geom = geometry(term, host);
+    await drag(term, host, at(geom, 2, 0), at(geom, 12, 1), { shiftKey: true });
+    equal(term.hasSelection(), true);
+    equal(getPlainSelection(term), "at answer line one\r\nchat answer");
+    equal(reports.length, 0);
+  });
+
+  await check("double press and drag selects whole words", async ({ term, write, host }) => {
+    await write(HERMES_MODES);
+    await write(CHAT);
+    const geom = geometry(term, host);
+    const from = at(geom, 6, 0);
+    await tap(term, host, from);
+    await drag(term, host, from, at(geom, 8, 1));
+    equal(term.hasSelection(), true);
+    equal(getPlainSelection(term), "answer line one\r\nchat answer");
+  });
+
+  await check("without mouse tracking nothing changes: plain drag selects natively", async ({ term, write, host, reports }) => {
+    await write(CHAT);
+    const geom = geometry(term, host);
+    await drag(term, host, at(geom, 2, 0), at(geom, 12, 1));
+    equal(term.hasSelection(), true);
+    equal(getPlainSelection(term), "at answer line one\r\nchat answer");
+    equal(reports.length, 0);
+  });
+
+  document.body.dataset.testResult = btoa(unescape(encodeURIComponent(JSON.stringify(results))));
+</script>

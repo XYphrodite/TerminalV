@@ -24,6 +24,7 @@ import { normalizeLayouts, layoutFor, leafIds, splitSession, detachSession, layo
   neighborPane, paneShortcut, MAX_PANES, MIN_PANE_WIDTH, MIN_PANE_HEIGHT, isSplitChild, isSplitParent, splitIndentLevel, splitWouldNest } from "./pane-layout.js";
 import { createPaneView } from "./pane-view.js";
 import { syncTerminalViewport, claimLiveScreenInput } from "./terminal-viewport.js";
+import { attachTuiMouse, preserveSelectionOnMouseReports } from "./tui-mouse.js";
 import { attachMirrorPan, layoutMirrorViewport, setMirrorSize, syncWheelMode } from "./mirror-viewport.js";
 import { SynchronizedOutputAddon } from "./synchronized-output.js";
 import { createShortcuts } from "./shortcuts.js";
@@ -1287,16 +1288,9 @@ function attachCopyPaste(tab) {
     void pasteController.request(tab);
   });
 
-  // Mouse reports are screen-relative. A click aimed at a scrolled-back Approve
-  // would hit a different row of the live TUI; return to the live screen first
-  // and drop this press so the next click is intentional.
-  tab.host.addEventListener("pointerdown", (event) => {
-    if (event.button !== 0 && event.button !== 1) return;
-    if (claimLiveScreenInput(tab.term, tab.host)) {
-      event.preventDefault();
-      event.stopPropagation();
-    }
-  }, true);
+  // Pointer gestures: live-screen claiming for scrolled-back clicks, tap replay
+  // and drag selection while a TUI owns the mouse (see tui-mouse.js).
+  attachTuiMouse(tab);
 }
 
 function newTab(options = {}) {
@@ -1362,6 +1356,8 @@ function newTab(options = {}) {
       activate: (event, uri) => handleLink(event, uri)
     }
   });
+  // A selection must survive the app's mouse reports (see tui-mouse.js).
+  preserveSelectionOnMouseReports(term);
   const fit = new FitAddon();
   term.loadAddon(fit);
   term.loadAddon(new WebLinksAddon((event, uri) => handleLink(event, uri)));
