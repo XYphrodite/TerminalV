@@ -1567,6 +1567,11 @@ function handleUpdate(message) {
     setUpdateBar(true, t("UpdateRestarting", { latest: message.latest }), { hideButton: true });
     return;
   }
+  if (message.status === "installing") {
+    // Android cannot install an APK silently: the system dialog is the last step.
+    setUpdateBar(true, t("UpdateInstalling"), { hideButton: true });
+    return;
+  }
   if (message.status === "current") {
     setUpdateBar(true, t("UpdateCurrent", { current: message.current }), {
       hideButton: true
@@ -1786,11 +1791,13 @@ function applyAppInfo(message) {
   }
   const mobile = message.mobile === true;
   updateSupported = Boolean(message.updateSupported);
-  versionBtn.disabled = mobile || !appVersion;
+  versionBtn.disabled = (mobile && !updateSupported) || !appVersion;
   versionBtn.setAttribute("aria-label", `${mobile ? "TerminalV Mobile" : "TerminalV"}: ${appVersion ? `${t("VersionLoading")} ${appVersion}` : t("VersionLoading")}`);
-  versionBtn.title = mobile
-    ? t("VersionMobile", { version: appVersion ? `: ${appVersion}` : "" })
-    : updateSupported ? t("CheckUpdates") : t("UpdateInstalledCopy");
+  versionBtn.title = updateSupported
+    ? t("CheckUpdates")
+    : mobile
+      ? t("VersionMobile", { version: appVersion ? `: ${appVersion}` : "" })
+      : t("UpdateInstalledCopy");
 }
 
 function reconcileMobileSessions(message) {

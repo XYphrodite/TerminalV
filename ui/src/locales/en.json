@@ -70,6 +70,7 @@
   "UpdateAvailable": "Available {latest}",
   "UpdateDownload": "Downloading update…",
   "UpdateRestarting": "Installed {latest}. Restarting…",
+  "UpdateInstalling": "Update downloaded. Confirm the install in the system dialog.",
   "UpdateCurrent": "Current version {current} installed",
   "UpdateFailed": "Failed to check for update",
   "VersionLoading": "version loading",

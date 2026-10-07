@@ -5,6 +5,7 @@ using System.Threading.Channels;
 using Microsoft.JSInterop;
 using TerminalV.Data;
 using TerminalV.Host;
+using TerminalV.Mobile.Update;
 using TerminalV.Ssh;
 
 namespace TerminalV.Mobile.Host;
@@ -34,6 +35,8 @@ internal sealed class MobileBridge : IDisposable
     private string _connectionFallback = "idle";
     private bool _connectionEnabled = true;
     private int _connectionEpoch;
+    private readonly CancellationTokenSource _updateCts = new();
+    private int _updateBusy;
     private int _checkingConnection;
     private string? _catalogJson;
     private bool _disposed;
@@ -65,7 +68,7 @@ internal sealed class MobileBridge : IDisposable
         {
             if (_disposed) return;
             // App metadata must not wait for a remote gateway or Tailscale login.
-            Post(new { type = "app-info", mobile = true, version = AppInfo.Version, updateSupported = false });
+            Post(new { type = "app-info", mobile = true, version = AppInfo.Version, updateSupported = AppUpdater.IsSupported });
             lock (_connectionLock)
             {
                 _connectionEpoch++;
@@ -140,7 +143,7 @@ internal sealed class MobileBridge : IDisposable
             {
                 type = "init", mobile = true, reconnect, connectionError, sessionsAuthoritative,
                 shellName = "SSH", buildNumber = 22621, version = AppInfo.Version,
-                updateSupported = false, shortcutsSupported = false, settings, sessions, layouts,
+                updateSupported = AppUpdater.IsSupported, shortcutsSupported = false, settings, sessions, layouts,
                 profiles = _store.LoadProfiles(), liveIds = live,
                 cwdTrackingSupported = true, launchProfilesSupported = true,
                 environmentRefreshSupported = true, fonts = Array.Empty<string>(),
@@ -282,8 +285,10 @@ internal sealed class MobileBridge : IDisposable
                 _ = HandleImportAsync(message.RequestId);
                 break;
             case "update-check":
+                _ = CheckUpdatesAsync();
+                break;
             case "update-apply":
-                Post(new { type = "update", status = "unsupported", message = "Обновление на мобильном через магазин." });
+                _ = ApplyUpdateAsync();
                 break;
             case "diag":
                 // log
@@ -297,6 +302,68 @@ internal sealed class MobileBridge : IDisposable
             // Already handled via PersistSettingsRaw if needed
         }
     }
+
+    private async Task CheckUpdatesAsync()
+    {
+        if (!AppUpdater.IsSupported)
+        {
+            Post(new { type = "update", status = "unsupported", message = "Обновление на мобильном через магазин." });
+            return;
+        }
+
+        try
+        {
+            var report = await AppUpdater.CheckAsync(_updateCts.Token).ConfigureAwait(false);
+            PostUpdate(report);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception ex)
+        {
+            Post(new { type = "update", status = "error", message = ex.Message });
+        }
+    }
+
+    private async Task ApplyUpdateAsync()
+    {
+        if (!AppUpdater.IsSupported)
+        {
+            Post(new { type = "update", status = "unsupported", message = "Обновление на мобильном через магазин." });
+            return;
+        }
+
+        if (Interlocked.Exchange(ref _updateBusy, 1) == 1) return;
+        try
+        {
+            // "downloading" reuses the desktop label; the install step posts its own state.
+            Post(new { type = "update", status = "downloading", current = AppInfo.Version });
+            var report = await AppUpdater.ApplyAsync(_updateCts.Token).ConfigureAwait(false);
+            PostUpdate(report);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception ex)
+        {
+            Post(new { type = "update", status = "error", message = ex.Message });
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _updateBusy, 0);
+        }
+    }
+
+    private void PostUpdate(AppUpdater.Report report) =>
+        Post(new
+        {
+            type = "update",
+            status = report.Status,
+            current = report.Current,
+            latest = report.Latest,
+            tag = report.Tag,
+            message = report.Message
+        });
 
     private void HandleCreate(IncomingMessage message)
     {
@@ -943,6 +1010,8 @@ internal sealed class MobileBridge : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        _updateCts.Cancel();
+        _updateCts.Dispose();
         _writes.Writer.TryComplete();
         lock (_connectionLock) _observedSessions.Clear();
         _ssh.Dispose();

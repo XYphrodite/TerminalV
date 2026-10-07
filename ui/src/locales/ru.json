@@ -70,6 +70,7 @@
   "UpdateAvailable": "Доступно {latest}",
   "UpdateDownload": "Скачивание обновления…",
   "UpdateRestarting": "Установлено {latest}. Перезапуск…",
+  "UpdateInstalling": "Обновление скачано. Подтвердите установку в системном окне.",
   "UpdateCurrent": "Установлена актуальная версия {current}",
   "UpdateFailed": "Не удалось проверить обновление",
   "VersionLoading": "версия загружается",
