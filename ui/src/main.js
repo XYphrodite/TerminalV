@@ -30,7 +30,7 @@ import { SynchronizedOutputAddon } from "./synchronized-output.js";
 import { createShortcuts } from "./shortcuts.js";
 import { createMobileKeys, MOBILE_KEY_SEQUENCES } from "./mobile-keys.js";
 import { WRITE_CHUNK, chunkText } from "./write-chunk.js";
-import { shouldStoreAsFile, PASTE_FILE_STORE_TIMEOUT_MS } from "./paste-file.js";
+import { shouldStoreAsFile, PASTE_FILE_STORE_TIMEOUT_MS, pasteTextForClipboard, formatPastedPath } from "./paste-file.js";
 import { normalizeGatewaySettings, gatewayStatusText, gatewayConnectHint, generateGatewayToken } from "./gateway-settings.js";
 import { init as initI18n, t } from "./i18n.js";
 
@@ -1148,17 +1148,41 @@ async function readClipboard() {
 
 // Large pastes go to a host temp file; the path is pasted instead of the
 // text. On store failure or timeout the original text is pasted as before.
+// An image-only clipboard becomes a temp PNG path the same way: TUI chats
+// (hermes --tui) attach the image when the path starts the input.
 async function readClipboardForPaste() {
   const text = await readClipboard();
-  if (!shouldStoreAsFile(text)) {
-    return text;
+  if (shouldStoreAsFile(text)) {
+    const path = await storePasteAsFile(text);
+    if (!path) {
+      return text;
+    }
+    diag("ui", `paste-file stored len=${text.length} path=${path}`);
+    return formatPastedPath(path);
   }
-  const path = await storePasteAsFile(text);
-  if (!path) {
-    return text;
+  const imagePath = text ? null : await storeClipboardImageAsFile();
+  return pasteTextForClipboard(text, imagePath);
+}
+
+// The host writes a temp PNG for an image-only clipboard and returns its path.
+// Mobile and Mirror drive sessions on another machine, where a path to a file
+// on the viewer is meaningless — those keep the "paste nothing" behavior.
+function storeClipboardImageAsFile() {
+  if (isMobileUi()) {
+    return Promise.resolve(null);
   }
-  diag("ui", `paste-file stored len=${text.length} path=${path}`);
-  return path;
+  return new Promise((resolve) => {
+    const requestId = uuid();
+    pasteFileWaiters.set(requestId, resolve);
+    post({ type: "clipboard-image-store", requestId });
+    setTimeout(() => {
+      if (pasteFileWaiters.has(requestId)) {
+        pasteFileWaiters.delete(requestId);
+        diag("ui", "clipboard-image store timeout");
+        resolve(null);
+      }
+    }, PASTE_FILE_STORE_TIMEOUT_MS);
+  });
 }
 
 function storePasteAsFile(text) {

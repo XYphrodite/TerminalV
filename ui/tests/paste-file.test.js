@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { PASTE_FILE_THRESHOLD, PASTE_FILE_STORE_TIMEOUT_MS, shouldStoreAsFile } from "../src/paste-file.js";
+import {
+  PASTE_FILE_THRESHOLD,
+  PASTE_FILE_STORE_TIMEOUT_MS,
+  shouldStoreAsFile,
+  formatPastedPath,
+  pasteTextForClipboard
+} from "../src/paste-file.js";
 
 test("threshold is a sane positive value with a bounded store timeout", () => {
   assert.ok(PASTE_FILE_THRESHOLD > 0);
@@ -24,4 +30,23 @@ test("non-string input never triggers file store", () => {
   assert.equal(shouldStoreAsFile(null), false);
   assert.equal(shouldStoreAsFile(undefined), false);
   assert.equal(shouldStoreAsFile(12345), false);
+});
+
+test("stored paths stay one token: quoted only when they contain whitespace", () => {
+  assert.equal(formatPastedPath("C:\\Temp\\TerminalV\\pastes\\paste-1.png"), "C:\\Temp\\TerminalV\\pastes\\paste-1.png");
+  assert.equal(formatPastedPath("C:\\Users\\John Smith\\AppData\\Local\\Temp\\p.png"), "\"C:\\Users\\John Smith\\AppData\\Local\\Temp\\p.png\"");
+  assert.equal(formatPastedPath("/tmp/TerminalV/pastes/paste-1.png"), "/tmp/TerminalV/pastes/paste-1.png");
+  assert.equal(formatPastedPath(null), null);
+});
+
+test("clipboard text wins over a stored image path", () => {
+  assert.equal(pasteTextForClipboard("hello", "C:\\Temp\\p.png"), "hello");
+  assert.equal(pasteTextForClipboard("", "C:\\Temp\\p.png"), "C:\\Temp\\p.png");
+});
+
+test("empty clipboard with an image stores a quoted path; without one pastes nothing", () => {
+  assert.equal(pasteTextForClipboard("", "C:\\Users\\John Smith\\p.png"), "\"C:\\Users\\John Smith\\p.png\"");
+  assert.equal(pasteTextForClipboard("", null), "");
+  assert.equal(pasteTextForClipboard("", undefined), "");
+  assert.equal(pasteTextForClipboard(null, null), "");
 });

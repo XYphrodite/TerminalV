@@ -6,6 +6,7 @@ using System.Media;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using Microsoft.Extensions.Localization;
 using Microsoft.Web.WebView2.Core;
@@ -290,6 +291,9 @@ internal sealed class TerminalBridge : IDisposable
                 break;
             case "paste-file-store":
                 StorePasteFile(message.RequestId, message.Data);
+                break;
+            case "clipboard-image-store":
+                StoreClipboardImage(message.RequestId);
                 break;
             case "clipboard-write":
                 if (!string.IsNullOrEmpty(message.Data))
@@ -816,6 +820,45 @@ internal sealed class TerminalBridge : IDisposable
                 Diag.Log("bridge", $"paste-file store failed: {ex.Message}", null);
                 Post(new { type = "paste-file-stored", requestId, error = ex.Message });
             }
+        });
+    }
+
+    // An image-only clipboard becomes a temp PNG; the UI pastes its path.
+    private void StoreClipboardImage(string? requestId)
+    {
+        _dispatcher.BeginInvoke(() =>
+        {
+            BitmapSource? image = null;
+            try
+            {
+                image = Clipboard.ContainsImage() ? Clipboard.GetImage() as BitmapSource : null;
+            }
+            catch
+            {
+            }
+            if (image == null)
+            {
+                Post(new { type = "paste-file-stored", requestId, error = "no image in clipboard" });
+                return;
+            }
+            if (image.CanFreeze)
+            {
+                image.Freeze();
+            }
+            _ = Task.Run(() =>
+            {
+                try
+                {
+                    var path = PasteFileStore.SaveImage(image);
+                    Diag.Log("bridge", $"clipboard-image stored path={path}", null);
+                    Post(new { type = "paste-file-stored", requestId, path });
+                }
+                catch (Exception ex)
+                {
+                    Diag.Log("bridge", $"clipboard-image store failed: {ex.Message}", null);
+                    Post(new { type = "paste-file-stored", requestId, error = ex.Message });
+                }
+            });
         });
     }
 
