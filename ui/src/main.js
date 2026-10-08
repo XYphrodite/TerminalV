@@ -24,6 +24,7 @@ import { normalizeLayouts, layoutFor, leafIds, splitSession, detachSession, layo
   neighborPane, paneShortcut, MAX_PANES, MIN_PANE_WIDTH, MIN_PANE_HEIGHT, isSplitChild, isSplitParent, splitIndentLevel, splitWouldNest } from "./pane-layout.js";
 import { createPaneView } from "./pane-view.js";
 import { syncTerminalViewport, claimLiveScreenInput } from "./terminal-viewport.js";
+import { attachScrollToBottom, updateScrollToBottom } from "./scroll-to-bottom.js";
 import { attachTuiMouse, preserveSelectionOnMouseReports } from "./tui-mouse.js";
 import { attachMirrorPan, layoutMirrorViewport, setMirrorSize, syncWheelMode } from "./mirror-viewport.js";
 import { SynchronizedOutputAddon } from "./synchronized-output.js";
@@ -480,6 +481,7 @@ function syncScrollLock(tab) {
   const wasLock = tab.host.classList.contains("tui-lock");
   tab.host.classList.toggle("tui-lock", appScroll);
   syncWheelMode(tab);
+  updateScrollToBottom(tab);
   if (wasLock !== appScroll) {
     try {
       const vp = tab.host.querySelector(".xterm-viewport");
@@ -1482,6 +1484,7 @@ function newTab(options = {}) {
   });
   attachCopyPaste(tab);
   attachMirrorPan(tab);
+  attachScrollToBottom(tab);
   tab.term.buffer.onBufferChange(() => syncScrollLock(tab));
   // xterm routes wheel events to native scrollback, requested mouse reports,
   // or alternate-buffer cursor keys. Reserve Ctrl/Meta+wheel for UI zoom.

@@ -1,0 +1,134 @@
+<!doctype html>
+<meta charset="utf-8">
+<style>body { margin: 0; } iframe { display: block; width: 1120px; height: 700px; border: 0; }</style>
+<script type="module">
+  const results = [];
+  const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+  const paint = () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  const display = value => String(JSON.stringify(value)).slice(0, 400);
+  const equal = (actual, expected, label) => {
+    if (JSON.stringify(actual) !== JSON.stringify(expected))
+      throw new Error(`${label}: expected ${display(expected)}, got ${display(actual)}`);
+  };
+  async function check(name, run) {
+    document.body.dataset.testProgress = name;
+    try { await run(); results.push({ name, ok: true }); }
+    catch (error) { results.push({ name, ok: false, error: error.stack }); }
+  }
+
+  // Exercise the production button, listeners and CSS with only the WebView
+  // host replaced. No terminal application or shell process is started.
+  const source = await (await fetch("/index.html")).text();
+  const styles = ["/node_modules/@xterm/xterm/css/xterm.css", "/src/styles.css", "/src/chrome.css", "/src/extensions.css"];
+  const init = { liveIds: ["scroll"], cwdTrackingSupported: true, settings: { hardwareRendering: false, fontFamily: "Courier New, monospace", fontSize: 14 },
+    sessions: [{ id: "scroll", title: "Scrolling session", active: true }] };
+  const frame = document.createElement("iframe");
+  frame.srcdoc = source.replace("<head>", `<head><base href="${location.origin}/">`
+    + styles.map(href => `<link rel="stylesheet" href="${href}">`).join("")
+    + `<script>window.testInit = ${JSON.stringify(init)};<\/script><script src="/tests/search-host.js"><\/script>`)
+    .replace('src="/src/main.js"', 'src="/tests/source-main.js"');
+  const loaded = new Promise(resolve => frame.addEventListener("load", resolve, { once: true }));
+  document.body.append(frame);
+  await loaded;
+  const app = frame.contentWindow;
+  for (let i = 0; i < 40; i++) {
+    if (app.__sourceTabs?.length) break;
+    await delay(100);
+  }
+  await paint();
+  const tab = app.__sourceTabs?.find(item => item.id === "scroll");
+  const settle = async () => {
+    await new Promise(resolve => tab.output.whenParsed(resolve));
+    await paint();
+    await delay(30);
+    await paint();
+  };
+  const write = async data => {
+    app.sendHost({ type: "data", id: "scroll", data });
+    await settle();
+  };
+  const button = () => tab.pane.querySelector(".scroll-to-bottom");
+
+  const seed = async () => {
+    await write("\x1b[?1049l\x1b[?1000;1002;1003;1006l");
+    tab.term.reset();
+    await write(Array.from({ length: 180 }, (_, i) => `history ${String(i).padStart(3, "0")}\r\n`).join(""));
+    equal(tab.term.buffer.normal.baseY > 100, true, "fixture has scrollable history");
+  };
+  const hidden = () => equal(button().hidden, true, "button is hidden");
+  const visible = () => equal(button().hidden, false, "button is visible");
+  const scrollUp = async () => {
+    tab.term.scrollLines(-15);
+    await settle();
+    equal(tab.term.buffer.active.viewportY < tab.term.buffer.active.baseY - 10, true, "fixture is scrolled into history");
+  };
+
+  await check("button exists once per pane, hidden at the live bottom", async () => {
+    equal(Boolean(tab), true, `source terminal loaded (${JSON.stringify(app.hostErrors)})`);
+    equal(Boolean(button()), true, "floating button is attached to the pane");
+    equal(tab.pane.querySelectorAll(".scroll-to-bottom").length, 1, "exactly one button per pane");
+    equal(button().closest(".pane"), tab.pane, "button lives in the pane, not the scrolling host");
+    equal(button().getAttribute("aria-label")?.length > 0, true, "button has an aria label");
+    await seed();
+    tab.term.scrollToBottom();
+    await settle();
+    hidden();
+  });
+
+  await check("scrolling into history shows the button; clicking returns to the bottom", async () => {
+    await seed();
+    await scrollUp();
+    visible();
+    button().click();
+    await settle();
+    equal(tab.term.buffer.active.viewportY >= tab.term.buffer.active.baseY - 2, true, "click scrolls to the live bottom");
+    hidden();
+  });
+
+  await check("wheel scrolling into history shows the button", async () => {
+    await seed();
+    tab.term.scrollToBottom();
+    await settle();
+    const screen = tab.host.querySelector(".xterm-screen");
+    const box = screen.getBoundingClientRect();
+    screen.dispatchEvent(new app.WheelEvent("wheel", { bubbles: true, cancelable: true,
+      clientX: box.left + 30, clientY: box.top + 30, deltaMode: 1, deltaY: -15 }));
+    await settle();
+    visible();
+    tab.term.scrollToBottom();
+    await settle();
+    hidden();
+  });
+
+  await check("button hides while a TUI owns scrolling and returns after", async () => {
+    await seed();
+    await scrollUp();
+    visible();
+    await write("\x1b[?1003;1006h");
+    hidden();
+    await write("\x1b[?1003;1006l");
+    tab.term.scrollToBottom();
+    await settle();
+    hidden();
+    await scrollUp();
+    visible();
+  });
+
+  await check("button hides in the alternate buffer", async () => {
+    await seed();
+    await scrollUp();
+    visible();
+    await write("\x1b[?1049hFULLSCREEN");
+    hidden();
+    await write("\x1b[?1049l");
+    await settle();
+    // Back in the normal buffer at the previous history position.
+    visible();
+    tab.term.scrollToBottom();
+    await settle();
+    hidden();
+  });
+
+  frame.remove();
+  document.body.dataset.testResult = btoa(unescape(encodeURIComponent(JSON.stringify(results))));
+</script>

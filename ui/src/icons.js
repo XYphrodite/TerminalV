@@ -21,7 +21,8 @@ const paths = {
   check: ["m5 12 4 4L19 6"],
   image: ["M3 3h18v18H3z", "m3 16 6-6 5 5 3-3 4 4", "M16 7h.01"],
   up: ["m6 14 6-6 6 6"],
-  arrowDown: ["m6 10 6 6 6-6"]
+  arrowDown: ["m6 10 6 6 6-6"],
+  toBottom: ["m6 10 6 6 6-6", "M5 19h14"]
 };
 
 export function icon(name) {

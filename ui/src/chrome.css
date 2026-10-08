@@ -190,6 +190,31 @@ kbd { font: 10px var(--font-ui); letter-spacing: .02em; white-space: nowrap; }
 .pane-divider:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; border-radius: 3px; }
 .overlay { z-index: 4; border-color: var(--border-soft); box-shadow: 0 6px 24px #00000025; }
 
+/* Floating scroll-to-bottom (Telegram-style), one per pane. Sits in .pane, not
+   .terminal-host: the mirror viewport makes the host itself scroll. */
+.scroll-to-bottom {
+  position: absolute;
+  right: 20px;
+  bottom: 20px;
+  z-index: 3;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border-radius: 50%;
+  background: var(--surface);
+  border: 1px solid var(--border-soft);
+  color: var(--label);
+  box-shadow: 0 6px 24px #00000025;
+  cursor: pointer;
+}
+.scroll-to-bottom:hover { color: var(--accent); border-color: var(--accent); }
+.scroll-to-bottom[hidden] { display: none; }
+@media (pointer: coarse) {
+  .scroll-to-bottom { width: 44px; height: 44px; right: 16px; bottom: 16px; }
+}
+
 /* Search and notices stay in layout: they never cover terminal output. */
 .terminal-search { padding: 8px 16px; background: var(--surface); border-color: var(--border-soft); }
 .terminal-search input { border-radius: 7px; border-color: var(--border-soft); height: 33px; font-size: 12px; }
