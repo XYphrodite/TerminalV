@@ -23,13 +23,16 @@
   await loaded;
   const app = frame.contentWindow, doc = frame.contentDocument;
   for (let i = 0; !app.__sourceTabs && i < 100; i++) await delay(20);
-  await check("current mobile source initializes a DOM terminal", async () => {
+  await check("current mobile source initializes a canvas terminal", async () => {
     equal(Array.isArray(app.__sourceTabs), true, `source module loaded (${JSON.stringify(app.hostErrors)})`);
     app.sendHost({ type: "init", mobile: true, liveIds: ["fit"], sessions: [{ id: "fit", title: "fit" }] });
     // Let initial fitting and layout observers settle first.
     await delay(650);
     equal(app.__sourceTabs.length, 1, "terminal count");
-    equal(!!doc.querySelector(".xterm-rows"), true, "DOM renderer");
+    // Mobile deliberately uses the canvas renderer (WebGL is banned for
+    // desktop-sized mirror grids; DOM was too slow on budget phones).
+    equal(!!doc.querySelector(".xterm canvas"), true, "canvas renderer");
+    equal(!!doc.querySelector(".xterm-rows"), false, "DOM renderer is not the mobile fallback");
     equal(app.hostErrors.length, 0, "page errors");
   });
   const tab = app.__sourceTabs?.[0];

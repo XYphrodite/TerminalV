@@ -26,6 +26,7 @@
   for (let i = 0; !app.__sourceTabs && i < 100; i++) await delay(20);
   let tab;
   const parsed = () => new Promise(resolve => tab.output.whenParsed(resolve));
+  const paint = () => new Promise(resolve => requestAnimationFrame(() => setTimeout(resolve, 30)));
   const size = () => ({ cols: tab.term.cols, rows: tab.term.rows });
   const draw = (cols, rows, label) => `\x1b[?1049h\x1b[2J\x1b[H${label}\x1b[1;${cols}HR\x1b[${rows};1HFOOTER\x1b[${rows};${cols}HZ`;
   const assertScreen = (cols, rows, label) => {
@@ -81,8 +82,11 @@
           touches: type === "touchend" ? [] : [point], changedTouches: [point] }));
       };
       touch("touchstart", 280, 150); touch("touchmove", 100, 150); touch("touchend", 100, 150);
+      // Pan commits are rAF-coalesced: one scroll write per frame, not per event.
+      await paint(); await paint();
       equal(tab.host.scrollLeft > 100, true, "horizontal drag moves viewport");
       touch("touchstart", 100, 240); touch("touchmove", 100, 100); touch("touchend", 100, 100);
+      await paint(); await paint();
       equal(tab.host.scrollTop > 100, true, "vertical drag moves viewport");
       equal(app.hostMessages.filter(message => ["resize", "write"].includes(message.type)), [], "pan is local only");
       assertScreen(102, 33, "NEW");

@@ -23,6 +23,7 @@ export function createSessionPersistence({ isReady, getTabs, save, saveSettings,
   clearTimer = (timer) => clearTimeout(timer) }) {
   let timer = null;
   let deadline = null;
+  const at = value => typeof value === "function" ? value() : value;
 
   function cancel() {
     clearTimer(timer);
@@ -58,8 +59,8 @@ export function createSessionPersistence({ isReady, getTabs, save, saveSettings,
     schedule() {
       if (!isReady()) return;
       clearTimer(timer);
-      timer = setTimer(() => persist(), delay);
-      if (deadline === null) deadline = setTimer(() => persist(), maxDelay);
+      timer = setTimer(() => persist(), at(delay));
+      if (deadline === null) deadline = setTimer(() => persist(), at(maxDelay));
     },
     flush(requestId) { persist(requestId, true); }
   };

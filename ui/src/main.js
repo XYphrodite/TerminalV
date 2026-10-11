@@ -2,6 +2,9 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
+// The addon's "module" entry points at a file the beta package doesn't ship;
+// import the actual bundle path instead.
+import { CanvasAddon } from "@xterm/addon-canvas/lib/xterm-addon-canvas.mjs";
 import { SerializeAddon } from "@xterm/addon-serialize";
 import { SearchAddon } from "@xterm/addon-search";
 import "@xterm/xterm/css/xterm.css";
@@ -268,7 +271,7 @@ function renderPaneLayout() {
   for (const tab of tabs) {
     const visible = isPaneVisible(tab);
     tab.pane.classList.toggle("active", tab.id === activeId && visible);
-    if (visible) ensureWebgl(tab); else dropWebgl(tab);
+    if (visible) { ensureWebgl(tab); ensureCanvas(tab); } else { dropWebgl(tab); dropCanvas(tab); }
     patchTabRow(tab);
   }
   updatePaneToolbar();
@@ -510,6 +513,7 @@ function syncScrollLock(tab) {
     window.addEventListener("wheel", () => { lastWheelAt = Date.now(); }, { capture: true, passive: true });
   } catch {}
   setInterval(() => {
+    if (isMobileUi()) return;
     for (const tab of tabs) {
       try {
         const y = tab.term.buffer.active.viewportY;
@@ -546,7 +550,7 @@ function syncScrollLock(tab) {
       const orig = handleHost;
       handleHost = function(message) {
         try {
-          if (message && message.type === "data" && typeof message.data === "string") {
+          if (!isMobileUi() && message && message.type === "data" && typeof message.data === "string") {
             const s = message.data;
             if (s.includes("\x1b") || s.length > 50) {
               lastDataById.set(message.id, s);
@@ -712,6 +716,10 @@ const sessionPersistence = createSessionPersistence({
   getTabs: () => tabs,
   save: saveSessions,
   saveSettings: persistSettings,
+  // On a phone, serializing the whole scrollback every 2 s stalls a weak CPU
+  // during streaming; a slow cadence still keeps the offline snapshot fresh.
+  delay: () => isMobileUi() ? 5000 : 400,
+  maxDelay: () => isMobileUi() ? 15000 : 2000,
   skipped: (requestId) => post({ type: "flush-skipped", requestId })
 });
 function persistSessions() { sessionPersistence.persist(); }
@@ -992,8 +1000,32 @@ function applyRenderer() {
       }
     } else {
       dropWebgl(tab);
+      // A phone mirror falls back from WebGL (banned for desktop-sized grids)
+      // to the canvas renderer — the DOM default is the slowest of the three
+      // and is what made scrolling the mirror janky on budget devices.
+      if (isPaneVisible(tab)) ensureCanvas(tab);
     }
   }
+}
+
+function ensureCanvas(tab) {
+  if (tab.canvas || !isMobileUi() || tab.webgl) return;
+  try {
+    tab.canvas = new CanvasAddon();
+    tab.term.loadAddon(tab.canvas);
+  } catch {
+    tab.canvas = null;
+  }
+}
+
+function dropCanvas(tab) {
+  if (!tab.canvas) return;
+  try {
+    tab.canvas.dispose();
+  } catch {
+    // already gone
+  }
+  tab.canvas = null;
 }
 
 function ensureWebgl(tab) {
@@ -1005,6 +1037,8 @@ function ensureWebgl(tab) {
     tab.webgl = new WebglAddon();
     tab.webgl.onContextLoss?.(() => dropWebgl(tab));
     tab.term.loadAddon(tab.webgl);
+    // WebGL supersedes the mobile canvas fallback.
+    dropCanvas(tab);
   } catch {
     tab.webgl = null;
   }
@@ -1370,7 +1404,7 @@ function newTab(options = {}) {
     fontSize: effectiveFontSize(),
     lineHeight: 1.2,
     letterSpacing: 0,
-    cursorBlink: true,
+    cursorBlink: !isMobileUi(),
     cursorStyle: "bar",
     cursorWidth: 2,
     scrollback: 8000,
@@ -1418,7 +1452,8 @@ function newTab(options = {}) {
     ptySize: null,
     serialize,
     search,
-    webgl: null
+    webgl: null,
+    canvas: null
   };
 
   overlayBtn.addEventListener("click", () => restart(tab));
@@ -1507,6 +1542,7 @@ function newTab(options = {}) {
   }
   if (!options.skipActivate && !tab.hidden) {
     ensureWebgl(tab);
+    ensureCanvas(tab);
   }
   const cols = term.cols || 80;
   const rows = term.rows || 24;
@@ -2066,7 +2102,7 @@ function handleHost(message) {
   if (message.type === "terminal-size") {
     setMirrorSize(tab, message.cols, message.rows);
     // Grid size changes the WebGL cost — re-evaluate hardware rendering.
-    if (webglAllowed(tab)) ensureWebgl(tab); else dropWebgl(tab);
+    if (webglAllowed(tab)) ensureWebgl(tab); else { dropWebgl(tab); ensureCanvas(tab); }
     return;
   }
 

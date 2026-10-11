@@ -102,6 +102,19 @@ export function syncWheelMode(tab) {
   tab.host.classList.toggle("app-wheel", appWantsWheel(tab));
 }
 
+// Coalesce per-touchmove scroll writes into one commit per animation frame.
+// The captured gesture object survives touchend (finish() only nulls the outer
+// variable), so the final position still lands before fling() takes over.
+function commitScroll(gesture, el, prop, value) {
+  gesture.pendingScroll = { el, prop, value };
+  if (gesture.scrollRaf) return;
+  gesture.scrollRaf = requestAnimationFrame(() => {
+    gesture.scrollRaf = 0;
+    const pending = gesture.pendingScroll;
+    if (pending) pending.el[pending.prop] = pending.value;
+  });
+}
+
 function scrollerFor(tab, hint) {
   const viewport = hint && hint.isConnected ? hint : tab.host.querySelector(".xterm-viewport");
   if (viewport && viewport.scrollHeight > viewport.clientHeight + 1) return { el: viewport, history: true };
@@ -239,8 +252,10 @@ export function attachMirrorPan(tab) {
     // here: the grid is CSS-zoomed to fit the phone, and Android WebView does
     // not scroll a zoomed subtree from touch. fling() supplies the inertia.
     event.preventDefault();
+    // touchmove fires faster than vsync; commit scrollTop at most once per
+    // frame so each paint repaints the grid once instead of per event.
     if (gesture.axis === "x") {
-      tab.host.scrollLeft = gesture.left + dx;
+      commitScroll(gesture, tab.host, "scrollLeft", gesture.left + dx);
       return;
     }
     gesture.samples.push({ t: performance.now(), p: touch.clientY, x: touch.clientX, y: touch.clientY });
@@ -249,8 +264,8 @@ export function attachMirrorPan(tab) {
     const viewport = gesture.viewport && gesture.viewport.isConnected
       ? gesture.viewport : tab.host.querySelector(".xterm-viewport");
     if (viewport && viewport.scrollHeight > viewport.clientHeight + 1)
-      viewport.scrollTop = gesture.viewportTop + historyDy;
-    else tab.host.scrollTop = gesture.top + historyDy;
+      commitScroll(gesture, viewport, "scrollTop", gesture.viewportTop + historyDy);
+    else commitScroll(gesture, tab.host, "scrollTop", gesture.top + historyDy);
   }, { capture: true, passive: false });
   const finish = () => {
     if (!gesture) return;

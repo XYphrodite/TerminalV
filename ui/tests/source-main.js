@@ -5,7 +5,10 @@ const packages = [
   ["@xterm/addon-web-links", "addon-web-links", "WebLinksAddon", "window.WebLinksAddon"],
   ["@xterm/addon-webgl", "addon-webgl", "WebglAddon", "window.WebglAddon"],
   ["@xterm/addon-serialize", "addon-serialize", "SerializeAddon", "window.SerializeAddon"],
-  ["@xterm/addon-search", "addon-search", "SearchAddon", "window.SearchAddon"]
+  ["@xterm/addon-search", "addon-search", "SearchAddon", "window.SearchAddon"],
+  // main.js imports the actual bundle path (the beta's "module" entry is broken),
+  // so the matcher must tolerate a suffix after the package name.
+  ["@xterm/addon-canvas", "addon-canvas", "CanvasAddon", "window.CanvasAddon"]
 ];
 let source = await (await fetch("/src/main.js")).text();
 for (const [pkg, file, name, global] of packages) {
@@ -16,7 +19,7 @@ for (const [pkg, file, name, global] of packages) {
     script.onerror = () => reject(new Error(`Unable to load ${pkg}`));
     document.head.append(script);
   });
-  source = source.replace(`import { ${name} } from "${pkg}";`, `const { ${name} } = ${global};`);
+  source = source.replace(new RegExp(`import \\{ ${name} \\} from "${pkg}[^"]*";`), `const { ${name} } = ${global};`);
 }
 source = source.replace(/^import "[^"\n]+\.css";\r?\n/gm, "")
   .replace(/from "(\.[^"\n]+)"(\s+with\s+\{[^}]+\})?/g, (_, path, withClause) => `from "${new URL(path, new URL("/src/main.js", document.baseURI)).href}"${withClause || ""}`);

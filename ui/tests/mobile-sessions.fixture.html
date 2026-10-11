@@ -198,7 +198,12 @@
     equal(app.hostMessages.some(m => m.type === "write" && m.id === "desktop" && m.data === "a"), true);
     doc.querySelector('.tab[data-id="another"]').click();
     await delay(1200);
-    const snapshot = app.hostMessages.filter(m => m.type === "persist-sessions").at(-1);
+    // Mobile deliberately debounces snapshot persistence (5s) — flush explicitly
+    // instead of waiting for the debounce to fire.
+    app.terminalvFlush("snap-mobile");
+    await delay(300);
+    const snapshot = app.hostMessages.filter(m => m.type === "persist-sessions" && m.requestId === "snap-mobile").at(-1);
+    equal(Boolean(snapshot), true, "flush posts persist-sessions");
     equal(snapshot.sessions.find(s => s.id === "desktop").buffer.includes("MOBILE-SNAPSHOT"), true);
     equal(app.hostErrors.length, 0);
   });

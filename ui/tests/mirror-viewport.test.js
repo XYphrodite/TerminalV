@@ -22,8 +22,11 @@ test("mirror vertical scroll uses xterm history and horizontal pans the grid", (
     "mouse-tracking TUIs disable native pan so the gesture becomes wheel");
 
   const src = readFileSync(r("ui/src/mirror-viewport.js"), "utf8");
-  assert.match(src, /viewport\.scrollTop\s*=\s*gesture\.viewportTop\s*\+\s*historyDy/, "manual vertical scrolls xterm history");
-  assert.match(src, /tab\.host\.scrollLeft\s*=\s*gesture\.left\s*\+\s*dx/, "horizontal pans the grid");
+  assert.match(src, /commitScroll\(gesture, viewport, "scrollTop", gesture\.viewportTop\s*\+\s*historyDy\)/,
+    "manual vertical scrolls xterm history");
+  assert.match(src, /commitScroll\(gesture, tab\.host, "scrollLeft", gesture\.left\s*\+\s*dx\)/, "horizontal pans the grid");
+  assert.match(src, /gesture\.scrollRaf = requestAnimationFrame/,
+    "pan commits are coalesced to one scroll write per frame");
   assert.match(src, /historyDy\s*=\s*dy\s*\*\s*MIRROR_SCROLL_GAIN/, "finger travel is amplified");
   assert.match(src, /function fling\(/, "a flick coasts after the finger lifts");
   // Android WebView will not scroll a CSS-zoomed subtree from touch, so the
