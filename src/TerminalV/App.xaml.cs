@@ -44,7 +44,7 @@ public partial class App : Application
         {
             var services = new ServiceCollection();
             services.AddLogging();
-            services.AddLocalization(options => options.ResourcesPath = "Localization/Resources");
+            services.AddLocalization(options => options.ResourcesPath = "Resources");
             Services = services.BuildServiceProvider();
             LocalizerFactory = Services.GetRequiredService<IStringLocalizerFactory>();
             LocalizationService.Initialize(Services);

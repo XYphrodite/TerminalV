@@ -23,7 +23,12 @@ public static class LocalizationService
 
         var services = new ServiceCollection();
         services.AddLogging();
-        services.AddLocalization(options => options.ResourcesPath = "Localization/Resources");
+        // Resx live at Localization/Resources/Strings.*.resx and embed as
+        // TerminalV.Localization.Resources.Strings. ResourcesPath is appended to
+        // the marker type's namespace, so it must be just "Resources" — otherwise
+        // the factory looks for TerminalV.Localization.Localization.Resources.Strings
+        // and every {loc:Translate Key} falls back to showing the raw key.
+        services.AddLocalization(options => options.ResourcesPath = "Resources");
         _provider = services.BuildServiceProvider();
         _factory = _provider.GetRequiredService<IStringLocalizerFactory>();
         _localizer = _factory.Create(typeof(Strings));

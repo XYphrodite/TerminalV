@@ -17,6 +17,28 @@ void Equal<T>(T actual, T expected)
 
 try
 {
+    Check("localization ResourcesPath matches the embedded Strings resource name", () =>
+    {
+        // {loc:Translate Key} falls back to the raw key when the factory looks up
+        // the wrong manifest name. The resx embed as TerminalV.Localization.Resources.Strings,
+        // so ResourcesPath must be "Resources" (appended to the marker type namespace
+        // TerminalV.Localization). "Localization/Resources" made the title bar show
+        // the literal text "Window_Title".
+        var dir = new DirectoryInfo(Directory.GetCurrentDirectory());
+        string? sourceFile = null;
+        for (var i = 0; i < 8 && dir is not null; i++, dir = dir.Parent)
+        {
+            var candidate = Path.Combine(dir.FullName, "src", "TerminalV", "Localization", "LocalizationService.cs");
+            if (File.Exists(candidate)) { sourceFile = candidate; break; }
+        }
+        if (sourceFile is null)
+            throw new Exception("LocalizationService.cs not found from " + Directory.GetCurrentDirectory());
+        var source = File.ReadAllText(sourceFile);
+        if (!source.Contains("ResourcesPath = \"Resources\"", StringComparison.Ordinal))
+            throw new Exception("LocalizationService must set ResourcesPath to \"Resources\"");
+        if (source.Contains("ResourcesPath = \"Localization/Resources\"", StringComparison.Ordinal))
+            throw new Exception("ResourcesPath \"Localization/Resources\" makes every translate show its raw key");
+    });
     Check("window state survives reopening independently of UI settings and sessions", () =>
     {
         var windowPath = Path.Combine(root, "window.db");
