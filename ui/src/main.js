@@ -132,7 +132,7 @@ const pasteController = createPasteController({
   dialog: document.getElementById("paste-confirmation"),
   readClipboard: readClipboardForPaste,
   canPaste: (tab) => tabs.includes(tab) && tab.id === activeId && !tab.exited && !closeController.isOpen && !sessionOptions.isOpen && !launchProfiles.isOpen && !launchMenu.isOpen,
-  restoreFocus: () => currentTab()?.term.focus()
+  restoreFocus: () => focusTerminal()
 });
 
 const searchController = createTerminalSearch({
@@ -150,7 +150,7 @@ const closeController = createCloseConfirmation({
     if (searchController.isOpen && previous?.isConnected && searchController.contains(previous)) {
       previous.focus({ preventScroll: true });
     } else {
-      currentTab()?.term.focus();
+      focusTerminal();
     }
   }
 });
@@ -177,7 +177,7 @@ const sessionOptions = createSessionOptions({
   onHide: hideTab,
   restoreFocus: () => {
     const tab = currentTab();
-    if (tab) tab.term.focus();
+    if (tab) focusTerminal(tab);
     else (tabsEl.querySelector(".tab") || emptyNewBtn).focus();
   }
 });
@@ -188,7 +188,7 @@ const launchProfiles = createLaunchProfiles({
   onChanged: () => launchMenu.refreshProfiles(),
   restoreFocus: () => {
     const tab = currentTab();
-    if (tab) tab.term.focus();
+    if (tab) focusTerminal(tab);
     else document.getElementById("launch-profiles-btn").focus();
   }
 });
@@ -295,7 +295,7 @@ detachPaneBtn.addEventListener("click", () => {
   layouts = detachSession(layouts, activeId);
   renderPaneLayout();
   persistSessions();
-  currentTab()?.term.focus();
+  focusTerminal();
 });
 new ResizeObserver(() => { updatePaneToolbar(); scheduleFit(); }).observe(panesEl);
 
@@ -355,7 +355,7 @@ sessionFilter.addEventListener("keydown", (event) => {
     event.preventDefault();
     sessionFilter.value = "";
     renderTabs();
-    currentTab()?.term.focus();
+    focusTerminal();
   } else if (event.key === "Enter") {
     event.preventDefault();
     const first = sessionGroups(tabs, { hidden: showHiddenSessions, query: sessionFilter.value })[0]?.tabs[0];
@@ -689,7 +689,7 @@ cwdNotice.querySelector("button").addEventListener("click", () => {
   if (tab?.cwdNotice) tab.cwdNotice = "";
   else legacyHostNotice = "";
   renderCwdNotice();
-  if (!isModalOpen() && !searchController.isOpen) tab?.term.focus();
+  if (!isModalOpen() && !searchController.isOpen) focusTerminal(tab);
 });
 
 function saveSessions(requestId) {
@@ -978,6 +978,13 @@ function isMobileUi() {
   return document.documentElement.classList.contains("mobile-ui");
 }
 
+// Soft keyboards open on focus. Entering or switching a session must not
+// ambush the user with the IME — only a tap on the grid focuses xterm.
+function focusTerminal(tab = currentTab()) {
+  if (!tab || isMobileUi()) return;
+  tab.term.focus();
+}
+
 // WebGL uploads a texture the size of the whole xterm grid. A phone WebView
 // redrawing a mirrored desktop-sized grid lagged input (0.7.28), so hardware
 // rendering is allowed on phones only for phone-sized grids: local fit or
@@ -1097,7 +1104,8 @@ function activate(id, { focus = true } = {}) {
   renderPaneLayout();
   // Change the input target now: a keystroke before the next paint must not
   // reach the previously focused panel. Deferred focus could also steal a click.
-  if (focus && !searchController.isOpen && !isModalOpen() && settingsEl.classList.contains("hidden")) tab.term.focus();
+  // On phones this would pop the IME; the grid tap focuses instead.
+  if (focus && !searchController.isOpen && !isModalOpen() && settingsEl.classList.contains("hidden")) focusTerminal(tab);
   requestAnimationFrame(() => {
     if (!tabs.includes(tab) || tab.id !== activeId) return;
     tab.term.refresh(0, Math.max(0, tab.term.rows - 1));
@@ -1605,7 +1613,7 @@ function restart(tab) {
   post({ type: "create", id: tab.id, cols: tab.term.cols, rows: tab.term.rows, cwd: tab.cwd,
     shell: tab.shell, startupCommand: tab.startupCommand, wslDistribution: tab.wslDistribution });
   tab.ptySize = { cols: tab.term.cols, rows: tab.term.rows };
-  tab.term.focus();
+  focusTerminal(tab);
   renderTabs();
 }
 
@@ -1811,7 +1819,7 @@ function openSettings() {
 function closeSettings() {
   settingsEl.classList.add("hidden");
   appEl.inert = false;
-  if (currentTab()) currentTab().term.focus(); else settingsBtn.focus({ preventScroll: true });
+  if (currentTab()) focusTerminal(); else settingsBtn.focus({ preventScroll: true });
 }
 
 function toggleSidebar() {

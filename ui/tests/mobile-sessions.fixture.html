@@ -180,6 +180,12 @@
     equal(app.hostMessages.filter(m => m.type === "attach" && m.id === "desktop").length, 1);
     equal(app.hostMessages.filter(m => m.type === "attach" && m.id === "another").length, 1);
   });
+  await check("entering a session does not focus the terminal (no soft keyboard)", () => {
+    const input = doc.querySelector('.xterm-helper-textarea');
+    input.blur();
+    doc.querySelector('.tab[data-id="desktop"]').click();
+    equal(doc.activeElement !== input, true, "session row tap must not pop the IME");
+  });
   app.sendHost({ type:"data",id:"desktop",data:"MOBILE-SNAPSHOT\r\n" });
   await delay();
   await check("soft keyboard input events reach the session without keypress", async () => {
