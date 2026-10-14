@@ -36,6 +36,7 @@ import { createMobileKeys, MOBILE_KEY_SEQUENCES } from "./mobile-keys.js";
 import { WRITE_CHUNK, chunkText } from "./write-chunk.js";
 import { shouldStoreAsFile, PASTE_FILE_STORE_TIMEOUT_MS, pasteTextForClipboard, formatPastedPath } from "./paste-file.js";
 import { normalizeGatewaySettings, gatewayStatusText, gatewayConnectHint, generateGatewayToken } from "./gateway-settings.js";
+import { updateProgressView } from "./update-progress.js";
 import { init as initI18n, t } from "./i18n.js";
 
 mountIcons(document);
@@ -48,6 +49,8 @@ const newTabArrowBtn = document.getElementById("new-tab-arrow");
 const emptyNewBtn = document.getElementById("empty-new");
 const updateBar = document.getElementById("update-bar");
 const updateText = document.getElementById("update-text");
+const updateProgress = document.getElementById("update-progress");
+const updateProgressFill = document.getElementById("update-progress-fill");
 const updateApply = document.getElementById("update-apply");
 const versionBtn = document.getElementById("app-version");
 const appEl = document.getElementById("app");
@@ -1615,6 +1618,20 @@ function setUpdateBar(visible, text, options = {}) {
   if (options.buttonLabel) {
     updateApply.textContent = options.buttonLabel;
   }
+  const progress = options.progress;
+  if (progress === undefined || progress === false || progress === null) {
+    updateProgress.classList.add("hidden");
+    updateProgress.classList.remove("indeterminate");
+  } else {
+    updateProgress.classList.remove("hidden");
+    if (progress === true) {
+      updateProgress.classList.add("indeterminate");
+      updateProgressFill.style.width = "";
+    } else {
+      updateProgress.classList.remove("indeterminate");
+      updateProgressFill.style.width = `${Math.max(0, Math.min(100, progress))}%`;
+    }
+  }
 }
 
 function handleUpdate(message) {
@@ -1622,8 +1639,16 @@ function handleUpdate(message) {
     setUpdateBar(true, t("UpdateAvailable", { latest: message.latest }), { buttonLabel: t("Update") });
     return;
   }
-  if (message.status === "downloading") {
-    setUpdateBar(true, t("UpdateDownload"), { hideButton: true });
+  const downloadView = updateProgressView(message, {
+    download: t("UpdateDownload"),
+    downloadPercent: t("UpdateDownloadPercent"),
+    verifying: t("UpdateVerifying")
+  });
+  if (downloadView) {
+    setUpdateBar(true, downloadView.text, {
+      hideButton: true,
+      progress: downloadView.bar === "indeterminate" ? true : downloadView.percent
+    });
     return;
   }
   if (message.status === "restarting") {
@@ -1632,7 +1657,7 @@ function handleUpdate(message) {
   }
   if (message.status === "installing") {
     // Android cannot install an APK silently: the system dialog is the last step.
-    setUpdateBar(true, t("UpdateInstalling"), { hideButton: true });
+    setUpdateBar(true, t("UpdateInstalling"), { hideButton: true, progress: 100 });
     return;
   }
   if (message.status === "current") {

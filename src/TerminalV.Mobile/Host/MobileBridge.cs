@@ -338,7 +338,13 @@ internal sealed class MobileBridge : IDisposable
         {
             // "downloading" reuses the desktop label; the install step posts its own state.
             Post(new { type = "update", status = "downloading", current = AppInfo.Version });
-            var report = await AppUpdater.ApplyAsync(_updateCts.Token).ConfigureAwait(false);
+            var lastProgress = System.Diagnostics.Stopwatch.StartNew();
+            var report = await AppUpdater.ApplyAsync(_updateCts.Token, (received, total) =>
+            {
+                if (lastProgress.ElapsedMilliseconds < 150) return;
+                lastProgress.Restart();
+                Post(new { type = "update", status = "downloading", current = AppInfo.Version, received, total });
+            }).ConfigureAwait(false);
             PostUpdate(report);
         }
         catch (OperationCanceledException)

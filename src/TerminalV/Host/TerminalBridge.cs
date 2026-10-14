@@ -522,7 +522,35 @@ internal sealed class TerminalBridge : IDisposable
             var options = TerminalVUpdate.Options(TerminalVUpdate.InstalledVariant(Environment.ProcessPath));
             using var source = new GitHubReleaseSource(options);
             var service = new SelfUpdateService(Environment.ProcessPath!, AppVersion.Current, source, options);
-            var report = await service.UpdateAsync(new SelfUpdateRequest(), _updateCts.Token).ConfigureAwait(false);
+            var lastProgress = Stopwatch.StartNew();
+            var report = await service.UpdateAsync(new SelfUpdateRequest(), _updateCts.Token, progress =>
+            {
+                if (progress.Phase == SelfUpdatePhase.Downloading)
+                {
+                    // Throttle to the same cadence the CLI paints at: the WebView
+                    // cannot render faster than the screen anyway.
+                    if (lastProgress.ElapsedMilliseconds < 150) return;
+                    lastProgress.Restart();
+                    Post(new
+                    {
+                        type = "update",
+                        status = "downloading",
+                        current = AppVersion.Informational,
+                        received = progress.ReceivedBytes,
+                        total = progress.TotalBytes
+                    });
+                    return;
+                }
+                if (progress.Phase == SelfUpdatePhase.Verifying)
+                {
+                    Post(new { type = "update", status = "verifying", current = AppVersion.Informational });
+                    return;
+                }
+                if (progress.Phase == SelfUpdatePhase.Installing)
+                {
+                    Post(new { type = "update", status = "installing", current = AppVersion.Informational });
+                }
+            }).ConfigureAwait(false);
             if (report.Status == SelfUpdateStatus.AlreadyCurrent)
             {
                 PostUpdate("current", report);

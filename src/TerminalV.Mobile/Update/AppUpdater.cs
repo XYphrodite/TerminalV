@@ -49,10 +49,10 @@ internal static class AppUpdater
     public static Task<Report> CheckAsync(CancellationToken ct) =>
         RunAsync(install: false, ct);
 
-    public static Task<Report> ApplyAsync(CancellationToken ct) =>
-        RunAsync(install: true, ct);
+    public static Task<Report> ApplyAsync(CancellationToken ct, Action<long, long?>? downloadProgress = null) =>
+        RunAsync(install: true, ct, downloadProgress);
 
-    private static async Task<Report> RunAsync(bool install, CancellationToken ct)
+    private static async Task<Report> RunAsync(bool install, CancellationToken ct, Action<long, long?>? downloadProgress = null)
     {
         var current = NormalizeVersion(MobileAppInfo.Version);
         try
@@ -69,7 +69,7 @@ internal static class AppUpdater
             if (!install)
                 return new Report("available", current, latest, tag);
 
-            var apkPath = await DownloadAsync(apkUrl, shaUrl, ct).ConfigureAwait(false);
+            var apkPath = await DownloadAsync(apkUrl, shaUrl, ct, downloadProgress).ConfigureAwait(false);
             Install(apkPath);
             return new Report("installing", current, latest, tag);
         }
@@ -133,7 +133,7 @@ internal static class AppUpdater
     /// is allowed to be installed. The payload is staged as .part so an interrupted
     /// download can never be mistaken for a complete one.
     /// </summary>
-    private static async Task<string> DownloadAsync(string apkUrl, string shaUrl, CancellationToken ct)
+    private static async Task<string> DownloadAsync(string apkUrl, string shaUrl, CancellationToken ct, Action<long, long?>? progress = null)
     {
         var directory = Path.Combine(CacheDirectory, "updates");
         Directory.CreateDirectory(directory);
@@ -146,7 +146,7 @@ internal static class AppUpdater
             if (expected is null)
                 throw new InvalidOperationException("Не удалось получить контрольную сумму обновления.");
 
-            await DownloadToFileAsync(apkUrl, stagingPath, ct).ConfigureAwait(false);
+            await DownloadToFileAsync(apkUrl, stagingPath, ct, progress).ConfigureAwait(false);
 
             var actual = await HashAsync(stagingPath, ct).ConfigureAwait(false);
             if (!string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase))
@@ -173,13 +173,24 @@ internal static class AppUpdater
         return parts.Length > 0 && parts[0].Length == 64 ? parts[0] : null;
     }
 
-    private static async Task DownloadToFileAsync(string url, string path, CancellationToken ct)
+    private static async Task DownloadToFileAsync(string url, string path, CancellationToken ct, Action<long, long?>? progress = null)
     {
         using var response = await Http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
         response.EnsureSuccessStatusCode();
+        var total = response.Content.Headers.ContentLength;
         await using var source = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
         await using var target = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None, 81920, useAsync: true);
-        await source.CopyToAsync(target, ct).ConfigureAwait(false);
+        var buffer = new byte[81920];
+        long received = 0;
+        progress?.Invoke(0, total);
+        while (true)
+        {
+            var read = await source.ReadAsync(buffer.AsMemory(0, buffer.Length), ct).ConfigureAwait(false);
+            if (read == 0) break;
+            await target.WriteAsync(buffer.AsMemory(0, read), ct).ConfigureAwait(false);
+            received += read;
+            progress?.Invoke(received, total);
+        }
     }
 
     private static async Task<string> HashAsync(string path, CancellationToken ct)
