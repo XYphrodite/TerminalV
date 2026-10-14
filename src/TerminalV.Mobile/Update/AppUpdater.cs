@@ -79,8 +79,55 @@ internal static class AppUpdater
         }
         catch (Exception ex)
         {
-            return new Report("error", current, Message: ex.Message);
+            return new Report("error", current, Message: DescribeFailure(ex));
         }
+    }
+
+    // Android's HTTP stack surfaces keep-alive and truncated-response failures as
+    // IOException/JsonException ("unexpected end of stream"). A fresh request
+    // usually lands, so transient failures get a bounded retry instead of dying.
+    private const int MaxAttempts = 3;
+
+    internal static bool IsTransient(Exception ex) =>
+        ex is HttpRequestException
+        || ex is IOException
+        || ex is JsonException
+        || (ex is TaskCanceledException && ex.InnerException is TimeoutException or null);
+
+    internal static string DescribeFailure(Exception ex) =>
+        ex switch
+        {
+            HttpRequestException or IOException or JsonException =>
+                "Сеть прервала загрузку обновления. Проверьте подключение и попробуйте снова.",
+            _ => ex.Message
+        };
+
+    private static async Task<T> WithRetryAsync<T>(Func<CancellationToken, Task<T>> action, CancellationToken ct)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                return await action(ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex) when (attempt < MaxAttempts && IsTransient(ex))
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(400 * attempt), ct).ConfigureAwait(false);
+            }
+        }
+    }
+
+    private static async Task WithRetryAsync(Func<CancellationToken, Task> action, CancellationToken ct)
+    {
+        await WithRetryAsync(async token =>
+        {
+            await action(token).ConfigureAwait(false);
+            return true;
+        }, ct).ConfigureAwait(false);
     }
 
     private static HttpClient CreateClient()
@@ -94,13 +141,14 @@ internal static class AppUpdater
         return client;
     }
 
-    private static async Task<JsonDocument> GetJsonAsync(string url, CancellationToken ct)
-    {
-        using var response = await Http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
-        response.EnsureSuccessStatusCode();
-        await using var stream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
-        return await JsonDocument.ParseAsync(stream, cancellationToken: ct).ConfigureAwait(false);
-    }
+    private static async Task<JsonDocument> GetJsonAsync(string url, CancellationToken ct) =>
+        await WithRetryAsync(async token =>
+        {
+            using var response = await Http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, token).ConfigureAwait(false);
+            response.EnsureSuccessStatusCode();
+            await using var stream = await response.Content.ReadAsStreamAsync(token).ConfigureAwait(false);
+            return await JsonDocument.ParseAsync(stream, cancellationToken: token).ConfigureAwait(false);
+        }, ct).ConfigureAwait(false);
 
     /// <summary>
     /// Reads the release tag and the direct download URLs of the APK and its checksum.
@@ -163,34 +211,43 @@ internal static class AppUpdater
         }
     }
 
-    private static async Task<string?> DownloadChecksumAsync(string shaUrl, CancellationToken ct)
-    {
-        using var response = await Http.GetAsync(shaUrl, ct).ConfigureAwait(false);
-        if (!response.IsSuccessStatusCode) return null;
-        var text = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-        // Sidecar is "<hex digest>  <file name>"; only the digest is authoritative.
-        var parts = text.Trim().Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
-        return parts.Length > 0 && parts[0].Length == 64 ? parts[0] : null;
-    }
+    private static async Task<string?> DownloadChecksumAsync(string shaUrl, CancellationToken ct) =>
+        await WithRetryAsync(async token =>
+        {
+            using var response = await Http.GetAsync(shaUrl, token).ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode) return null;
+            var text = await response.Content.ReadAsStringAsync(token).ConfigureAwait(false);
+            // Sidecar is "<hex digest>  <file name>"; only the digest is authoritative.
+            var parts = text.Trim().Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+            return parts.Length > 0 && parts[0].Length == 64 ? parts[0] : null;
+        }, ct).ConfigureAwait(false);
 
     private static async Task DownloadToFileAsync(string url, string path, CancellationToken ct, Action<long, long?>? progress = null)
     {
-        using var response = await Http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
-        response.EnsureSuccessStatusCode();
-        var total = response.Content.Headers.ContentLength;
-        await using var source = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
-        await using var target = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None, 81920, useAsync: true);
-        var buffer = new byte[81920];
-        long received = 0;
-        progress?.Invoke(0, total);
-        while (true)
+        await WithRetryAsync(async token =>
         {
-            var read = await source.ReadAsync(buffer.AsMemory(0, buffer.Length), ct).ConfigureAwait(false);
-            if (read == 0) break;
-            await target.WriteAsync(buffer.AsMemory(0, read), ct).ConfigureAwait(false);
-            received += read;
-            progress?.Invoke(received, total);
-        }
+            using var response = await Http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, token).ConfigureAwait(false);
+            response.EnsureSuccessStatusCode();
+            var total = response.Content.Headers.ContentLength;
+            await using var source = await response.Content.ReadAsStreamAsync(token).ConfigureAwait(false);
+            await using var target = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None, 81920, useAsync: true);
+            var buffer = new byte[81920];
+            long received = 0;
+            progress?.Invoke(0, total);
+            while (true)
+            {
+                var read = await source.ReadAsync(buffer.AsMemory(0, buffer.Length), token).ConfigureAwait(false);
+                if (read == 0) break;
+                await target.WriteAsync(buffer.AsMemory(0, read), token).ConfigureAwait(false);
+                received += read;
+                progress?.Invoke(received, total);
+            }
+            // A keep-alive cut lands as a short read: the stream ends cleanly but
+            // fewer bytes arrived than the header promised. Treat that as a
+            // transient failure so the retry can finish the download.
+            if (total is long expected && received != expected)
+                throw new IOException($"Загрузка оборвалась: получено {received} из {expected} байт.");
+        }, ct).ConfigureAwait(false);
     }
 
     private static async Task<string> HashAsync(string path, CancellationToken ct)

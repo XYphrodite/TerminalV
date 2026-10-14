@@ -158,7 +158,34 @@ using (var pendingPeer = await stalledListener.AcceptTcpClientAsync(acceptTimeou
 }
 await CheckDesktopCatalog();
 await CheckAnrAndSessionPersistence();
+CheckUpdateRetryPolicy();
 Console.WriteLine("Mobile bridge checks passed.");
+
+// "unexpected end of stream" on Android is a truncated HTTP response. The updater
+// must retry those and never surface the raw library text to the user.
+static void CheckUpdateRetryPolicy()
+{
+    Require(TerminalV.Mobile.Update.AppUpdater.IsTransient(new IOException("unexpected end of stream")),
+        "an OkHttp truncated stream is transient and gets a retry");
+    Require(TerminalV.Mobile.Update.AppUpdater.IsTransient(new HttpRequestException("connection reset")),
+        "a dropped connection is transient");
+    Require(TerminalV.Mobile.Update.AppUpdater.IsTransient(new JsonException("expected end of stream")),
+        "a truncated JSON body is transient");
+    Require(TerminalV.Mobile.Update.AppUpdater.IsTransient(new TaskCanceledException("timeout", new TimeoutException())),
+        "an HttpClient timeout is transient");
+    Require(!TerminalV.Mobile.Update.AppUpdater.IsTransient(new InvalidOperationException("Контрольная сумма обновления не совпала.")),
+        "a checksum mismatch is a real failure, not a network blip");
+    Require(!TerminalV.Mobile.Update.AppUpdater.IsTransient(new PlatformNotSupportedException("nope")),
+        "a platform failure must not retry");
+
+    var networkMessage = TerminalV.Mobile.Update.AppUpdater.DescribeFailure(new IOException("unexpected end of stream"));
+    Require(networkMessage.Contains("Сеть", StringComparison.Ordinal) &&
+            !networkMessage.Contains("end of stream", StringComparison.OrdinalIgnoreCase),
+        "a network failure is described in Russian, without the raw library text");
+    Require(TerminalV.Mobile.Update.AppUpdater.DescribeFailure(new InvalidOperationException("Контрольная сумма обновления не совпала."))
+            == "Контрольная сумма обновления не совпала.",
+        "domain failures keep their own message");
+}
 
 static async Task CheckAnrAndSessionPersistence()
 {
