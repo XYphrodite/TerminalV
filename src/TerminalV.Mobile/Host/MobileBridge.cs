@@ -497,10 +497,30 @@ internal sealed class MobileBridge : IDisposable
 
     private void HandleKill(string id)
     {
+        // User-confirmed close of a desktop session must stop the desktop shell.
+        // Dropping only the phone transport (the catalog path) leaves the process
+        // running and the next catalog refresh brings the tab back.
+        if (_remoteIds.Contains(id)) _ = KillRemoteAsync(id);
         _connecting.TryRemove(id, out _);
         lock (_connectionLock) _observedSessions.TryRemove(id, out _);
         _ssh.Remove(id);
         SetConnectionFallback("idle");
+    }
+
+    private async Task KillRemoteAsync(string id)
+    {
+        try
+        {
+            if (!UsesGateway() || !HasConnectionSettings()) return;
+            var options = BuildOptions(80, 24, null, null, null);
+            using var client = new GatewayControlClient(options.GatewayUrl!, options.GatewayToken,
+                timeout: TimeSpan.FromSeconds(5), tailnetIdentity: options.GatewayTailnetIdentity, dial: options.GatewayDial);
+            await client.KillAsync(id).ConfigureAwait(false);
+        }
+        catch
+        {
+            // The phone view is already closed; a failed kill is not a UI error.
+        }
     }
 
     private async void HandleClipboardRead(string? requestId)

@@ -159,7 +159,38 @@ using (var pendingPeer = await stalledListener.AcceptTcpClientAsync(acceptTimeou
 await CheckDesktopCatalog();
 await CheckAnrAndSessionPersistence();
 CheckUpdateRetryPolicy();
+await CheckUserKillStopsDesktopShell();
 Console.WriteLine("Mobile bridge checks passed.");
+
+// Closing a live desktop session from the phone must stop the desktop shell.
+// Dropping only the phone transport used to leave the process running and the
+// next catalog refresh restored the tab — "cannot finish the session".
+static async Task CheckUserKillStopsDesktopShell()
+{
+    var listener = new TcpListener(IPAddress.Loopback, 0);
+    listener.Start();
+    var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+    listener.Stop();
+    var backend = new Backend { SessionIds = ["desktop", "other"] };
+    using var server = new GatewayServer(backend, port, "kill-test");
+    server.Start();
+    Preferences.Default.Set("useGateway", true);
+    Preferences.Default.Set("gatewayUrl", $"ws://127.0.0.1:{port}");
+    Preferences.Default.Set("gatewayToken", "kill-test");
+    Preferences.Default.Set("tailnetGateway", false);
+    using var ssh = new SshService();
+    using var bridge = new MobileBridge(ssh, new MobileDataStore());
+    var js = new JsRuntime();
+    bridge.SetJS(js);
+    await bridge.SendInitAsync();
+    await Until(() => js.Messages.Any(m => m.GetProperty("type").GetString() == "init"));
+
+    Require(backend.KillCount == 0, "init alone never kills a desktop shell");
+    await bridge.Handle("""{"type":"kill","id":"desktop"}""");
+    await Until(() => backend.KillCount >= 1);
+    Require(ssh.TryGet("desktop") is null, "user kill drops the phone transport after stopping the shell");
+    Require(backend.KillCount == 1, "user kill stops exactly one desktop shell");
+}
 
 // "unexpected end of stream" on Android is a truncated HTTP response. The updater
 // must retry those and never surface the raw library text to the user.
@@ -445,6 +476,6 @@ sealed class Backend : IGatewaySessionBackend
     public void Exit() => Exited?.Invoke("desktop", 0);
     public void Write(string id, string data) => Writes.Add(data);
     public void Resize(string id, int cols, int rows) { }
-    public void Kill(string id) { Interlocked.Increment(ref KillCount); throw new Exception("must not kill desktop session"); }
+    public void Kill(string id) => Interlocked.Increment(ref KillCount);
     public void Create(string id, int cols, int rows, string? cwd, string? shell, string? startupCommand, string? wslDistribution) => CreateCount++;
 }
