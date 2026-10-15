@@ -23,7 +23,8 @@
   document.body.append(frame);
   await loaded;
   const app = frame.contentWindow, doc = frame.contentDocument;
-  for (let i = 0; !app.__sourceTabs && i < 100; i++) await delay(20);
+  for (let i = 0; !app.__sourceTabs && i < 250; i++) await delay(20);
+  if (!app.__sourceTabs) throw new Error("UI source module did not expose tabs");
   let tab;
   const parsed = () => new Promise(resolve => tab.output.whenParsed(resolve));
   const paint = () => new Promise(resolve => requestAnimationFrame(() => setTimeout(resolve, 30)));
