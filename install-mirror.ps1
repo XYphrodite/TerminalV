@@ -32,7 +32,7 @@ function Resolve-Version {
 }
 
 $resolvedVersion = Resolve-Version -Version $Version
-if ($resolvedVersion -eq 'latest') { $resolvedVersion = 'v0.7.51' }
+if ($resolvedVersion -eq 'latest') { $resolvedVersion = 'v0.7.52' }
 Write-Step "Installing TerminalV Mirror $resolvedVersion to $InstallDir"
 
 $zipUrl = "https://github.com/$Repository/releases/download/$resolvedVersion/$AssetName"
