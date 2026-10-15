@@ -117,7 +117,7 @@ const settings = {
   sidebarCollapsed: false,
   sessionDensity: "standard",
   hardwareRendering: true,
-  mobileFitMode: false,
+  mobileFitMode: true,
   backgroundPath: null,
   backgroundOpacity: 0.25,
   gatewayEnabled: true,
