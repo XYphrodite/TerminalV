@@ -571,10 +571,21 @@ function syncScrollLock(tab) {
 })();
 
 function applyFit(tab, notifyHost = true) {
-  if (tab.remoteGeometry) {
+  // Fit mode: the phone drives the PTY even when the desktop reported its
+  // grid. A remote size wider than the screen would otherwise be mirrored
+  // and panned horizontally — unusable on a phone.
+  if (tab.remoteGeometry && !settings.mobileFitMode) {
     layoutMirrorViewport(tab);
     syncTerminalViewport(tab.term);
     return false;
+  }
+  if (tab.remoteGeometry && settings.mobileFitMode) {
+    // The phone takes the grid back from the desktop: drop the mirror zoom
+    // so local fit and the PTY resize below become the source of truth.
+    tab.remoteGeometry = false;
+    tab.host.classList.remove("mirror-viewport");
+    if (tab.term.element) tab.term.element.style.zoom = "";
+    tab.mirrorSize = null;
   }
   if (!isPaneVisible(tab)) {
     return false;
@@ -2133,6 +2144,13 @@ function handleHost(message) {
   }
 
   if (message.type === "terminal-size") {
+    // Fit mode: the desktop's window size must not override the phone grid.
+    // Re-fit instead of mirroring, or the next layout would restore the
+    // wide grid and the horizontal pan.
+    if (settings.mobileFitMode) {
+      if (tab) applyFit(tab);
+      return;
+    }
     setMirrorSize(tab, message.cols, message.rows);
     // Grid size changes the WebGL cost — re-evaluate hardware rendering.
     if (webglAllowed(tab)) ensureWebgl(tab); else { dropWebgl(tab); ensureCanvas(tab); }

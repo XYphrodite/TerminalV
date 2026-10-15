@@ -47,15 +47,20 @@ export function layoutMirrorViewport(tab) {
   const m = measureMirror(tab);
   if (!m) return;
   const { cell } = m;
-  const avail = tab.host.clientHeight;
+  const availH = tab.host.clientHeight;
+  const availW = tab.host.clientWidth;
   const width = Math.ceil(cell.width * tab.mirrorSize.cols + m.scrollbar
     + m.paddingLeft + m.paddingRight);
   const height = Math.ceil(cell.height * tab.mirrorSize.rows
     + m.paddingTop + m.paddingBottom);
   const element = tab.term.element;
-  // A desktop grid shorter than the phone leaves a blank band under the last
-  // row. Zoom fills that height; a taller grid stays 1:1 and scrolls.
-  const zoom = height > 0 && avail > height ? Math.round((avail / height) * 1000) / 1000 : 1;
+  // Fit both axes: fill height when the grid is short, but never overflow
+  // width — a horizontal scrollbar on a phone is unusable. Zooming to fit
+  // width is the last resort; the PTY resize path (fit mode) keeps the font
+  // readable and only falls back here for a frozen remote size.
+  const zoomH = height > 0 && availH > height ? availH / height : 1;
+  const zoomW = width > 0 && availW > 0 && width > availW ? availW / width : 1;
+  const zoom = Math.round(Math.min(zoomH, zoomW) * 1000) / 1000;
   if (element.style.width !== `${width}px`) element.style.width = `${width}px`;
   if (element.style.height !== `${height}px`) element.style.height = `${height}px`;
   const zoomText = zoom === 1 ? "" : String(zoom);
@@ -227,12 +232,10 @@ export function attachMirrorPan(tab) {
     const dx = gesture.x - touch.clientX, dy = gesture.y - touch.clientY;
     if (!gesture.axis) {
       if (Math.max(Math.abs(dx), Math.abs(dy)) < 6) return;
-      // Wide grid pans sideways. Vertical is the pre-mirror xterm viewport:
-      // the whole scrollback, not the few extra rows of the desktop screen.
-      // Demand a clear horizontal intent first: a slightly diagonal swipe on a
-      // wide grid used to lock to "x" and kill the vertical pan.
-      const wide = tab.remoteGeometry && tab.host.scrollWidth > tab.host.clientWidth;
-      gesture.axis = wide && Math.abs(dx) > Math.abs(dy) * 1.35 ? "x" : "y";
+      // Wide grid pans sideways only if the content really overflows; with
+      // width-fit zoom it never does. A horizontal scroll on a phone is
+      // unusable — vertical history pan is the only gesture.
+      gesture.axis = "y";
     }
     if (gesture.axis === "y" && gesture.wheel) {
       event.preventDefault();
@@ -254,10 +257,6 @@ export function attachMirrorPan(tab) {
     event.preventDefault();
     // touchmove fires faster than vsync; commit scrollTop at most once per
     // frame so each paint repaints the grid once instead of per event.
-    if (gesture.axis === "x") {
-      commitScroll(gesture, tab.host, "scrollLeft", gesture.left + dx);
-      return;
-    }
     gesture.samples.push({ t: performance.now(), p: touch.clientY, x: touch.clientX, y: touch.clientY });
     while (gesture.samples.length > 6) gesture.samples.shift();
     const historyDy = dy * MIRROR_SCROLL_GAIN;

@@ -39,7 +39,7 @@
     equal(buffer.getLine(rows - 1).translateToString(false)[cols - 1], "Z", "bottom right");
   };
   await check("mobile mirror parses the first desktop frame at the desktop grid", async () => {
-    app.sendHost({ type: "init", mobile: true, liveIds: ["mirror"], sessions: [{ id: "mirror", title: "Mirror" }] });
+    app.sendHost({ type: "init", mobile: true, liveIds: ["mirror"], sessions: [{ id: "mirror", title: "Mirror" }], settings: { mobileFitMode: false } });
     await delay(550);
     tab = app.__sourceTabs.find(item => item.id === "mirror");
     equal(!!tab, true, "terminal created");
@@ -48,8 +48,9 @@
     await parsed();
     await delay(80);
     assertScreen(160, 45, "DESKTOP");
-    equal(tab.host.scrollWidth > tab.host.clientWidth, true, "wide grid is horizontally reachable");
-    equal(tab.host.scrollHeight > tab.host.clientHeight, true, "tall grid is vertically reachable");
+    // No horizontal scrollbar: the zoomed grid always fits the phone width.
+    equal(tab.host.scrollWidth <= tab.host.clientWidth + 1, true, "wide grid fits width without horizontal scroll");
+    equal(tab.host.scrollHeight > tab.host.clientHeight, false, "width-fit keeps the short grid fully visible");
   });
   if (tab) {
     await check("keyboard, rotation and drawer changes do not resize the shared PTY", async () => {
@@ -85,7 +86,7 @@
       touch("touchstart", 280, 150); touch("touchmove", 100, 150); touch("touchend", 100, 150);
       // Pan commits are rAF-coalesced: one scroll write per frame, not per event.
       await paint(); await paint();
-      equal(tab.host.scrollLeft > 100, true, "horizontal drag moves viewport");
+      equal(tab.host.scrollLeft, 0, "horizontal drag does not move the viewport");
       touch("touchstart", 100, 240); touch("touchmove", 100, 100); touch("touchend", 100, 100);
       await paint(); await paint();
       equal(tab.host.scrollTop > 100, true, "vertical drag moves viewport");

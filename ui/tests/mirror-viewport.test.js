@@ -10,9 +10,10 @@ const r = (p) => resolve(repoRoot, p);
 
 // Vertical uses native scrolling on real touches (touch-action: pan-y + inertia).
 // Synthetic events (tests) fall back to the manual xterm-history / host path.
-// Horizontal always pans the wide grid via JS.
+// Horizontal pan is gone: a phone never shows a horizontal scrollbar — the
+// grid is zoomed to fit width (and fit mode shrinks the PTY instead).
 // Mouse-tracking TUIs (mimo) get wheel events instead of a dead panning host.
-test("mirror vertical scroll uses xterm history and horizontal pans the grid", () => {
+test("mirror vertical scroll uses xterm history and never pans horizontally", () => {
   const css = readFileSync(r("ui/src/styles.css"), "utf8");
   assert.match(css, /\.terminal-host\.mirror-viewport\s*\{[^}]*overflow:\s*auto/, "grid can pan");
   assert.match(css, /\.terminal-host\.mirror-viewport\s*\{[^}]*touch-action:\s*pan-y/, "native vertical, JS horizontal");
@@ -24,7 +25,9 @@ test("mirror vertical scroll uses xterm history and horizontal pans the grid", (
   const src = readFileSync(r("ui/src/mirror-viewport.js"), "utf8");
   assert.match(src, /commitScroll\(gesture, viewport, "scrollTop", gesture\.viewportTop\s*\+\s*historyDy\)/,
     "manual vertical scrolls xterm history");
-  assert.match(src, /commitScroll\(gesture, tab\.host, "scrollLeft", gesture\.left\s*\+\s*dx\)/, "horizontal pans the grid");
+  assert.doesNotMatch(src, /commitScroll\(gesture, tab\.host, "scrollLeft"/,
+    "horizontal pan is removed — no sideways scroll on a phone");
+  assert.match(src, /gesture\.axis = "y"/, "every gesture is vertical");
   assert.match(src, /gesture\.scrollRaf = requestAnimationFrame/,
     "pan commits are coalesced to one scroll write per frame");
   assert.match(src, /historyDy\s*=\s*dy\s*\*\s*MIRROR_SCROLL_GAIN/, "finger travel is amplified");
@@ -34,9 +37,9 @@ test("mirror vertical scroll uses xterm history and horizontal pans the grid", (
   assert.match(src, /Vertical history\/host pan always runs in JS/,
     "native pan-y is not relied on for the zoomed grid");
   assert.match(src, /manual:\s*!event\.isTrusted/, "synthetic touches use the manual path");
-  // A slightly diagonal swipe on a wide grid must not steal the vertical pan.
-  assert.match(src, /Math\.abs\(dx\) > Math\.abs\(dy\) \* 1\.35/,
-    "horizontal lock requires a clear sideways intent");
+  // Layout must fit both axes so width never overflows into a scrollbar.
+  assert.match(src, /zoomW\s*=\s*width > 0 && availW > 0 && width > availW \? availW \/ width : 1/,
+    "layout zooms down to fit width");
   const threshold = src.indexOf("Math.max(Math.abs(dx), Math.abs(dy)) < 6");
   const nextReturn = src.indexOf("return;", threshold);
   assert.equal(src.slice(threshold, nextReturn).includes("preventDefault"), false, "a tap does not cancel the gesture");
