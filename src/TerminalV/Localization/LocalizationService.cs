@@ -104,7 +104,7 @@ public static class LocalizationService
         }
 
         public IEnumerable<LocalizedString> GetAllStrings(bool includeParentCultures) =>
-            resources.GetResourceSet(System.Globalization.CultureInfo.CurrentUICulture, includeParentCultures, createIfNotExists: true)
+            resources.GetResourceSet(System.Globalization.CultureInfo.CurrentUICulture, createIfNotExists: true, tryParents: includeParentCultures)
                 ?.Cast<System.Collections.DictionaryEntry>()
                 .Select(e => new LocalizedString((string)e.Key, e.Value?.ToString() ?? "", resourceNotFound: false))
                 ?? [];
