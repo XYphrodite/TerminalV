@@ -70,7 +70,10 @@ internal static class AppUpdater
                 return new Report("available", current, latest, tag);
 
             var apkPath = await DownloadAsync(apkUrl, shaUrl, ct, downloadProgress).ConfigureAwait(false);
-            Install(apkPath);
+            // StartActivity must run on the UI thread: from the download
+            // continuation (ConfigureAwait(false)) OEM launchers often swallow
+            // the settings/install intent and the user only sees the text.
+            await Microsoft.Maui.ApplicationModel.MainThread.InvokeOnMainThreadAsync(() => Install(apkPath)).ConfigureAwait(false);
             return new Report("installing", current, latest, tag);
         }
         catch (OperationCanceledException)
@@ -272,18 +275,21 @@ internal static class AppUpdater
     private static void Install(string apkPath)
     {
 #if ANDROID
-        var context = Android.App.Application.Context
+        // Prefer the resumed Activity: Application.Context.StartActivity cannot
+        // reliably bring the system settings/installer UI to the front on OEM
+        // builds (Tecno/HiOS, MIUI, …) and the request looks like it never appeared.
+        var activity = Microsoft.Maui.ApplicationModel.Platform.CurrentActivity;
+        var context = (Android.Content.Context?)activity ?? Android.App.Application.Context
             ?? throw new InvalidOperationException("Приложение недоступно для установки.");
 #pragma warning disable CA1416 // Guarded by the SdkInt check below.
         if (Android.OS.Build.VERSION.SdkInt >= Android.OS.BuildVersionCodes.O &&
             context.PackageManager?.CanRequestPackageInstalls() == false)
         {
-            var settings = new Android.Content.Intent(Android.Provider.Settings.ActionManageUnknownAppSources);
-            settings.SetData(Android.Net.Uri.Parse("package:" + context.PackageName));
-            settings.AddFlags(Android.Content.ActivityFlags.NewTask);
-            context.StartActivity(settings);
+            if (!TryStartInstallPermissionScreen(context))
+                throw new InvalidOperationException(
+                    "Не удалось открыть настройки. Откройте «Настройки → Приложения → TerminalV → Установка неизвестных приложений» и разрешите установку, затем повторите обновление.");
             throw new InvalidOperationException(
-                "Разрешите установку приложений из этого источника и повторите обновление.");
+                "Разрешите установку приложений из этого источника в открывшихся настройках и повторите обновление.");
         }
 #pragma warning restore CA1416
 
@@ -292,11 +298,51 @@ internal static class AppUpdater
         var intent = new Android.Content.Intent(Android.Content.Intent.ActionView);
         intent.SetDataAndType(uri, "application/vnd.android.package-archive");
         intent.AddFlags(Android.Content.ActivityFlags.NewTask | Android.Content.ActivityFlags.GrantReadUriPermission);
-        context.StartActivity(intent);
+        try
+        {
+            context.StartActivity(intent);
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException(
+                "Не удалось открыть установщик пакетов. Проверьте разрешение на установку приложений и повторите обновление.", ex);
+        }
 #else
         throw new PlatformNotSupportedException("Установка обновлений поддерживается только на Android.");
 #endif
     }
+
+#if ANDROID
+    private static bool TryStartInstallPermissionScreen(Android.Content.Context context)
+    {
+        // First choice: the per-app "install unknown apps" screen for our package.
+        try
+        {
+            var settings = new Android.Content.Intent(Android.Provider.Settings.ActionManageUnknownAppSources);
+            settings.SetData(Android.Net.Uri.Parse("package:" + context.PackageName));
+            settings.AddFlags(Android.Content.ActivityFlags.NewTask);
+            context.StartActivity(settings);
+            return true;
+        }
+        catch
+        {
+            // Fall through to the app-details page, which hosts the same toggle
+            // on builds that reject ActionManageUnknownAppSources.
+        }
+        try
+        {
+            var details = new Android.Content.Intent(Android.Provider.Settings.ActionApplicationDetailsSettings);
+            details.SetData(Android.Net.Uri.Parse("package:" + context.PackageName));
+            details.AddFlags(Android.Content.ActivityFlags.NewTask);
+            context.StartActivity(details);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+#endif
 
     /// <summary>
     /// Tags are "vX.Y.Z"; AppInfo.Version is "X.Y.Z". Anything that is not a numeric

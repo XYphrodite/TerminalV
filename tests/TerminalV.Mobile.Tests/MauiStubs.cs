@@ -45,6 +45,11 @@ namespace Microsoft.Maui.ApplicationModel
     public static class MainThread
     {
         public static void BeginInvokeOnMainThread(Action action) => action();
+        public static Task InvokeOnMainThreadAsync(Action action)
+        {
+            action();
+            return Task.CompletedTask;
+        }
     }
     public enum BrowserLaunchMode { SystemPreferred }
     public sealed class Browser
