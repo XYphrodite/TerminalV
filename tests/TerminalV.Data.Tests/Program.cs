@@ -34,6 +34,8 @@ try
         if (sourceFile is null)
             throw new Exception("LocalizationService.cs not found from " + Directory.GetCurrentDirectory());
         var source = File.ReadAllText(sourceFile);
+        if (!source.Contains("TerminalV.Localization.Resources.Strings", StringComparison.Ordinal))
+            throw new Exception("LocalizationService must bind the exact manifest name of Strings.resx");
         if (!source.Contains("ResourcesPath = \"Resources\"", StringComparison.Ordinal))
             throw new Exception("LocalizationService must set ResourcesPath to \"Resources\"");
         if (source.Contains("ResourcesPath = \"Localization/Resources\"", StringComparison.Ordinal))
