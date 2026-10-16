@@ -212,42 +212,41 @@ internal sealed class SessionClientBackend : IGatewaySessionBackend, IGatewayRep
 
     private void ResizeCore(string id, int cols, int rows, bool desktop)
     {
-        Ensure();
+        Action<string, int, int>? notify = null;
         lock (_gate)
         {
             var snapshot = GetSnapshot(id);
             // A connected phone drives the PTY size — that is the only readable
             // layout on a phone screen. Its resize wins over the desktop window
-            // until the phone detaches; then the desktop takes the grid back.
+            // until the desktop explicitly resizes (window resize) and takes
+            // the grid back; then the phone can claim it again on its next resize.
             if (!desktop)
             {
                 snapshot.PhoneOwnsGeometry = true;
                 snapshot.DesktopOwnsGeometry = false;
             }
-            else if (snapshot.PhoneOwnsGeometry)
-            {
-                // Desktop fit must not snap the grid back under a live phone.
-                return;
-            }
             else
             {
+                snapshot.PhoneOwnsGeometry = false;
                 snapshot.DesktopOwnsGeometry = true;
             }
-            SetGeometry(id, snapshot, Geometry(cols, rows));
+            notify = SetGeometry(id, snapshot, Geometry(cols, rows));
         }
+        notify?.Invoke(id, cols, rows);
     }
 
-    private void SetGeometry(string id, Snapshot snapshot, GatewayTerminalGeometry size)
+    private Action<string, int, int>? SetGeometry(string id, Snapshot snapshot, GatewayTerminalGeometry size)
     {
-        if (snapshot.Geometry == size) return;
+        if (snapshot.Geometry == size) return null;
         snapshot.Geometry = size;
         // Queue geometry before issuing the PTY resize. OnData uses this same
         // lock, so its resulting repaint cannot overtake this event.
-        GeometryChanged?.Invoke(id, size.Columns, size.Rows);
+        var handler = GeometryChanged;
         _pendingResizes.Enqueue((id, snapshot, size));
-        if (_resizeWorkerRunning) return;
+        if (_resizeWorkerRunning) return handler;
         _resizeWorkerRunning = true;
         _ = Task.Run(DrainResizes);
+        return handler;
     }
 
     private void DrainResizes()
