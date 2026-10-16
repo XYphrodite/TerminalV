@@ -127,12 +127,12 @@ internal static class SharedGatewayChecks
             expectedOutput += input;
             await Until(() => string.Concat(desktop) == expectedOutput
                 && string.Concat(firstOutput) == expectedOutput && string.Concat(secondOutput) == expectedOutput);
-            Require(!host.Requests.Any(packet => packet.GetProperty("type").GetString() == "resize"
+            Require(host.Requests.Any(packet => packet.GetProperty("type").GetString() == "resize"
                 && packet.GetProperty("id").GetString() == "desktop"
                 && packet.GetProperty("cols").GetInt32() == cols && packet.GetProperty("rows").GetInt32() == rows),
-                "phone viewport changes must not resize the desktop PTY");
-            Require(phone.TerminalColumns == 160 && phone.TerminalRows == 45,
-                "a rejected mobile resize returns the actual terminal dimensions");
+                "a connected phone drives the desktop PTY size");
+            Require(phone.TerminalColumns == cols && phone.TerminalRows == rows,
+                "the phone resize sticks and reports its own dimensions");
             Require(host.Requests.Count(packet => packet.GetProperty("type").GetString() == "write"
                 && packet.GetProperty("id").GetString() == "desktop" && packet.GetProperty("data").GetString() == input) == 1,
                 "each phone write must reach the shared desktop session exactly once");
