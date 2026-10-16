@@ -22,6 +22,9 @@ internal sealed class SessionClientBackend : IGatewaySessionBackend, IGatewayRep
         public Task? DesktopReplay { get; set; }
         public GatewayTerminalGeometry? Geometry { get; set; }
         public bool DesktopOwnsGeometry { get; set; }
+        // A connected phone drives the PTY size (fit mode). While this is set
+        // the desktop window must not snap the grid back to its own layout.
+        public bool PhoneOwnsGeometry { get; set; }
     }
 
     public SessionClientBackend(SessionClient client)
@@ -213,15 +216,23 @@ internal sealed class SessionClientBackend : IGatewaySessionBackend, IGatewayRep
         lock (_gate)
         {
             var snapshot = GetSnapshot(id);
-            // An old host cannot report a restored session's size. Even while
-            // it is unknown, a phone must not resize an attached desktop TUI.
-            if (!desktop && (snapshot.DesktopOwnsGeometry || snapshot.DesktopAttached))
+            // A connected phone drives the PTY size — that is the only readable
+            // layout on a phone screen. Its resize wins over the desktop window
+            // until the phone detaches; then the desktop takes the grid back.
+            if (!desktop)
             {
-                if (snapshot.Geometry is { } current)
-                    GeometryChanged?.Invoke(id, current.Columns, current.Rows);
+                snapshot.PhoneOwnsGeometry = true;
+                snapshot.DesktopOwnsGeometry = false;
+            }
+            else if (snapshot.PhoneOwnsGeometry)
+            {
+                // Desktop fit must not snap the grid back under a live phone.
                 return;
             }
-            if (desktop) snapshot.DesktopOwnsGeometry = true;
+            else
+            {
+                snapshot.DesktopOwnsGeometry = true;
+            }
             SetGeometry(id, snapshot, Geometry(cols, rows));
         }
     }
