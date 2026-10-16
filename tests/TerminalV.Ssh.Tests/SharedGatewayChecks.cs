@@ -131,6 +131,7 @@ internal static class SharedGatewayChecks
                 && packet.GetProperty("id").GetString() == "desktop"
                 && packet.GetProperty("cols").GetInt32() == cols && packet.GetProperty("rows").GetInt32() == rows),
                 "a connected phone drives the desktop PTY size");
+            await Until(() => phone.TerminalColumns == cols && phone.TerminalRows == rows);
             Require(phone.TerminalColumns == cols && phone.TerminalRows == rows,
                 "the phone resize sticks and reports its own dimensions");
             Require(host.Requests.Count(packet => packet.GetProperty("type").GetString() == "write"
