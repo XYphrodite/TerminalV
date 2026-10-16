@@ -173,8 +173,8 @@ internal static class SharedGatewayChecks
         Require(!desktopEvents.Any(e => e.id == "phone-born"), "phone-created sessions do not send output into unbound desktop terminals");
         await backend.AttachDesktopAsync("phone-born", 150, 40);
         backend.Resize("phone-born", 40, 20);
-        Require(backend.GetGeometry("phone-born") == new GatewayTerminalGeometry(150, 40),
-            "desktop attachment becomes authoritative for a formerly phone-only session");
+        Require(backend.GetGeometry("phone-born") == new GatewayTerminalGeometry(40, 20),
+            "a connected phone drives the PTY size even after desktop attachment");
         Require(desktopEvents.Count(e => e.id == "phone-born" && e.data == "new phone output") == 1,
             "a later desktop attachment to a phone-created session gets its cache once");
         Require(!host.Requests.Any(p => p.GetProperty("type").GetString() == "attach"
