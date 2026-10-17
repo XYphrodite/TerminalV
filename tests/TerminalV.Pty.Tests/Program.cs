@@ -80,7 +80,10 @@ Check("launch command enables profiles, integrates both PowerShell executables o
 Check("explicit shell selection ignores automatic override and validates command boundaries", () =>
 {
     Equal(ShellResolver.Resolve(shell: "powershell").DisplayName, "Windows PowerShell");
-    Equal(ShellResolver.Resolve(shell: "cmd").CommandLine.EndsWith(" /d"), true);
+    var cmdLine = ShellResolver.Resolve(shell: "cmd").CommandLine;
+    Equal(cmdLine.Contains(" /d "), true);
+    Equal(cmdLine.Contains("chcp 65001>nul"), true);
+    Equal(ShellResolver.Resolve(shell: "cmd", startupCommand: "echo hi").CommandLine.Contains("chcp 65001>nul & echo hi"), true);
     foreach (var action in new Action[] {
         () => ShellResolver.Resolve(shell: "unknown"),
         () => ShellResolver.Resolve(shell: "cmd", startupCommand: "echo a\necho b"),
