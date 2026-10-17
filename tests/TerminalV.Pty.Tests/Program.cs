@@ -510,7 +510,7 @@ try
             Equal(tracker.CurrentDirectory, target);
         });
 
-        Check($"{Path.GetFileName(shell)}: real ConPTY preserves Unicode cwd under CP437 without changing output encoding", () =>
+        Check($"{Path.GetFileName(shell)}: real ConPTY preserves Unicode cwd under CP437 and does not override a later encoding change", () =>
         {
             // Model the GUI host's absent standard handles. A redirected console test
             // runner would otherwise pass its own pipes to PowerShell outside ConPTY.
@@ -520,10 +520,11 @@ try
             var cursorQueryTail = "";
             var expected = target;
             var encodingMarker = Path.Combine(testRoot, Guid.NewGuid().ToString("N") + ".txt");
-            // Force a code page that cannot represent the cwd's Cyrillic characters,
-            // independently of the Windows runner's regional settings.
-            var script = "[Console]::OutputEncoding = [Text.Encoding]::GetEncoding(437)\n" +
-                PowerShellIntegration.Script(target);
+            // Startup forces UTF-8 (65001) to match the ConPTY pipe. The script then
+            // switches to a code page that cannot represent the cwd's Cyrillic characters
+            // to prove directory tracking does not depend on the console encoding.
+            var script = PowerShellIntegration.Script(target) + "\n" +
+                "[Console]::OutputEncoding = [Text.Encoding]::GetEncoding(437)\n";
             var command = $"\"{shell}\" -NoLogo -NoProfile -NoExit -EncodedCommand {Encode(script)}";
             using var pty = ConPtySession.Start("cwd-test", command,
                 initial, 100, 30, session =>
