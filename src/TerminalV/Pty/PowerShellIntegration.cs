@@ -28,6 +28,12 @@ internal static class PowerShellIntegration
             "Set-Location -LiteralPath '" + directory.Replace("'", "''") + "' -ErrorAction " +
             (string.IsNullOrWhiteSpace(startupCommand) ? "SilentlyContinue" : "Stop") + "\n";
         return location + """
+            # ConPTY pipe is UTF-8; 65001 avoids OEM/ANSI byte writes from native tools.
+            try { chcp 65001 | Out-Null } catch { }
+            try {
+                [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+                [Console]::InputEncoding = [System.Text.UTF8Encoding]::new($false)
+            } catch { }
             if (-not (Get-Variable -Name __TerminalVOriginalPrompt -Scope Global -ErrorAction SilentlyContinue)) {
                 $global:__TerminalVOriginalPrompt = $function:prompt
                 function global:prompt {

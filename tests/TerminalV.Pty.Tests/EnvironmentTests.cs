@@ -29,6 +29,17 @@ internal static class EnvironmentTests
             Require(Environment.GetEnvironmentVariable("PATH") == StalePath, "Host PATH was mutated");
         });
 
+        check("session environment forces UTF-8 for Python tools (PYTHONUTF8 / PYTHONIOENCODING)", () =>
+        {
+            using var stale = new ProcessVariable("PYTHONUTF8", "0");
+            using var staleIo = new ProcessVariable("PYTHONIOENCODING", "cp1251");
+            using var env = SessionEnvironment.Create();
+            Require(Read(env, "PYTHONUTF8") == "1", "PYTHONUTF8 not forced to UTF-8 mode");
+            Require(Read(env, "PYTHONIOENCODING") == "utf-8", "PYTHONIOENCODING not utf-8");
+            Require(Environment.GetEnvironmentVariable("PYTHONUTF8") == "0", "Host PYTHONUTF8 was mutated");
+            Require(Environment.GetEnvironmentVariable("PYTHONIOENCODING") == "cp1251", "Host PYTHONIOENCODING was mutated");
+        });
+
         check("environment capability distinguishes old and new hosts without restarting sessions", () =>
         {
             foreach (var supported in new[] { false, true })
@@ -82,6 +93,19 @@ internal static class EnvironmentTests
                 existing.ExpectSuccess();
             });
 
+            check($"{Path.GetFileName(shell)}: ConPTY session uses UTF-8 console code page (chcp 65001)", () =>
+            {
+                using var standardHandles = new GuiStandardHandles();
+                using var probe = new Probe(shell,
+                    "$cp = (chcp) -replace '\\D', '' ; " +
+                    "if ($cp -ne '65001') { throw \"chcp is $cp, expected 65001\" }; " +
+                    "if ($env:PYTHONUTF8 -ne '1') { throw 'PYTHONUTF8 missing' }; " +
+                    "if ($env:PYTHONIOENCODING -ne 'utf-8') { throw 'PYTHONIOENCODING missing' }; " +
+                    "[Console]::WriteLine('UTF8_SESSION_OK')");
+                probe.WaitFor("UTF8_SESSION_OK");
+                probe.ExpectSuccess();
+            });
+
             if (!string.IsNullOrWhiteSpace(codex))
             {
                 check($"{Path.GetFileName(shell)}: installed Codex resolves by name despite stale host PATH (no CLI execution)", () =>
@@ -108,6 +132,16 @@ internal static class EnvironmentTests
             var exe = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "cmd.exe");
             using var probe = new Probe($"\"{exe}\" /d /c where.exe where.exe >nul && echo CMD_FRESH_PATH_OK");
             probe.WaitFor("CMD_FRESH_PATH_OK");
+            probe.ExpectSuccess();
+        });
+
+        check("cmd ConPTY starts with UTF-8 code page 65001", () =>
+        {
+            using var standardHandles = new GuiStandardHandles();
+            var exe = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "cmd.exe");
+            // Probe launches cmd /d /s /k "chcp 65001>nul & ..." via ShellResolver-equivalent wrapper.
+            using var probe = new Probe($"\"{exe}\" /d /s /k \"chcp 65001>nul & chcp | findstr 65001 >nul && echo CMD_UTF8_OK\"");
+            probe.WaitFor("CMD_UTF8_OK");
             probe.ExpectSuccess();
         });
     }

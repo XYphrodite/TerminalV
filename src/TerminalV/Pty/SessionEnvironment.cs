@@ -44,6 +44,11 @@ internal sealed class SessionEnvironment : SafeHandleZeroOrMinusOneIsInvalid
                 if (!name.Equals("PATH", StringComparison.OrdinalIgnoreCase))
                     variables.TryAdd(name, (string)entry.Value!);
             }
+            // ConPTY output is always UTF-8. Without UTF-8 mode Python uses
+            // locale.getpreferredencoding() (cp1251 on Russian Windows) for
+            // open()/Path.read_text()/subprocess text=True and emits mojibake.
+            variables["PYTHONUTF8"] = "1";
+            variables["PYTHONIOENCODING"] = "utf-8";
             // StringToHGlobalUni adds the second terminating NUL.
             return new SessionEnvironment(string.Join('\0', variables.Select(pair => pair.Key + "=" + pair.Value)) + '\0');
         }

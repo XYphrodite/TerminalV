@@ -36,8 +36,10 @@ internal static class ShellResolver
             if (directory?.StartsWith(@"\\") == true)
                 throw new ArgumentException("cmd не поддерживает сетевую UNC-папку как текущую. Выберите PowerShell.");
             // /s strips only the added outer quotes; /d disables registry AutoRun.
-            var command = string.IsNullOrWhiteSpace(startupCommand) ? "" : $" /s /k \"{startupCommand}\"";
-            return new($"\"{executable}\" /d{command}", "Командная строка");
+            // chcp 65001 matches the UTF-8 ConPTY pipe; without it native tools write OEM bytes.
+            var setup = "chcp 65001>nul";
+            var body = string.IsNullOrWhiteSpace(startupCommand) ? setup : setup + " & " + startupCommand;
+            return new($"\"{executable}\" /d /s /k \"{body}\"", "Командная строка");
         }
         return new(PowerShellIntegration.CommandLine(executable, directory, startupCommand), PrettyName(executable));
     }
