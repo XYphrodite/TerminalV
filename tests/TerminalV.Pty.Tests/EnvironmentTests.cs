@@ -96,12 +96,16 @@ internal static class EnvironmentTests
             check($"{Path.GetFileName(shell)}: ConPTY session uses UTF-8 console code page (chcp 65001)", () =>
             {
                 using var standardHandles = new GuiStandardHandles();
-                using var probe = new Probe(shell,
+                // ShellResolver/PowerShellIntegration is what live sessions use (chcp 65001 + UTF-8 console).
+                var command = PowerShellIntegration.CommandLine(shell, null,
+                    "try { " +
                     "$cp = (chcp) -replace '\\D', '' ; " +
                     "if ($cp -ne '65001') { throw \"chcp is $cp, expected 65001\" }; " +
                     "if ($env:PYTHONUTF8 -ne '1') { throw 'PYTHONUTF8 missing' }; " +
                     "if ($env:PYTHONIOENCODING -ne 'utf-8') { throw 'PYTHONIOENCODING missing' }; " +
-                    "[Console]::WriteLine('UTF8_SESSION_OK')");
+                    "[Console]::WriteLine('UTF8_SESSION_OK'); exit 0 } " +
+                    "catch { [Console]::WriteLine('UTF8_SESSION_FAIL: ' + $_); exit 1 }");
+                using var probe = new Probe(command);
                 probe.WaitFor("UTF8_SESSION_OK");
                 probe.ExpectSuccess();
             });
@@ -138,9 +142,9 @@ internal static class EnvironmentTests
         check("cmd ConPTY starts with UTF-8 code page 65001", () =>
         {
             using var standardHandles = new GuiStandardHandles();
-            var exe = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "cmd.exe");
-            // Probe launches cmd /d /s /k "chcp 65001>nul & ..." via ShellResolver-equivalent wrapper.
-            using var probe = new Probe($"\"{exe}\" /d /s /k \"chcp 65001>nul & chcp | findstr 65001 >nul && echo CMD_UTF8_OK\"");
+            var shell = ShellResolver.Resolve(shell: "cmd",
+                startupCommand: "chcp | findstr 65001 >nul && echo CMD_UTF8_OK && exit 0 || (echo CMD_UTF8_FAIL & exit 1)");
+            using var probe = new Probe(shell.CommandLine);
             probe.WaitFor("CMD_UTF8_OK");
             probe.ExpectSuccess();
         });
@@ -224,8 +228,19 @@ internal static class EnvironmentTests
         {
             string transcript;
             lock (_output) transcript = _output.ToString();
-            var exited = Child.HasExited;
-            return $"child exited: {exited}; process exit code: {(exited ? Child.ExitCode.ToString() : "running")}; " +
+            bool exited;
+            string exitCode;
+            try
+            {
+                exited = Child.HasExited;
+                exitCode = exited ? Child.ExitCode.ToString() : "running";
+            }
+            catch (InvalidOperationException)
+            {
+                exited = true;
+                exitCode = "unavailable";
+            }
+            return $"child exited: {exited}; process exit code: {exitCode}; " +
                 $"ConPTY exit code: {Volatile.Read(ref _exitCode)}; Windows: {Environment.OSVersion.Version}; " +
                 $"output: {System.Text.Json.JsonSerializer.Serialize(transcript)}";
         }
