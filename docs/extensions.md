@@ -102,6 +102,8 @@ export async function activate(api) {
 
 `examples/extensions/terminalv.hello` содержит счётчик, панель, команду, сохранение состояния и фоновое событие C# каждые 30 секунд. Он не устанавливается автоматически.
 
+`examples/extensions/terminalv.ai-limits` показывает в сайдбаре лимиты и доступность Claude, Codex, Grok, agy, MiMo, Kimi и Muse. C#-хост читает только локальные файлы CLI (`~/.claude.json`, `~/.kimi-code/statusline-tokens.json`, `auth.json` и пути бинарей) — без сетевых запросов. Методы: `getState`, `refresh`, `setInterval`, `setOverride` (переопределение путей). Не устанавливается автоматически.
+
 Соберите пример в CI или на машине для сборок:
 
 ```powershell

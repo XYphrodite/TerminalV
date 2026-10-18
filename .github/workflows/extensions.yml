@@ -60,7 +60,7 @@ jobs:
         run: node --test --test-concurrency=1 ui/tests/extensions.test.js
       - name: Check extension interface in browser
         run: node --test --test-concurrency=1 --test-name-pattern='extension interface' ui/tests/selection.test.js
-      - name: Package example extension
+      - name: Package example extensions
         run: |
           $package = 'artifacts/extensions/terminalv.hello'
           New-Item -ItemType Directory -Force -Path "$package/host" | Out-Null
@@ -69,7 +69,19 @@ jobs:
           Copy-Item examples/extensions/terminalv.hello/extension.json $package
           Copy-Item examples/extensions/terminalv.hello/ui $package -Recurse
           Compress-Archive -Path $package -DestinationPath artifacts/terminalv.hello.zip
+
+          $limits = 'artifacts/extensions/terminalv.ai-limits'
+          New-Item -ItemType Directory -Force -Path "$limits/host" | Out-Null
+          dotnet build examples/extensions/terminalv.ai-limits/host/AiLimitsExtension.csproj -c Release -o "$limits/host"
+          if ($LASTEXITCODE -ne 0) { throw 'AI Limits build failed' }
+          Copy-Item examples/extensions/terminalv.ai-limits/extension.json $limits
+          Copy-Item examples/extensions/terminalv.ai-limits/ui $limits -Recurse
+          Compress-Archive -Path $limits -DestinationPath artifacts/terminalv.ai-limits.zip
       - uses: actions/upload-artifact@v4
         with:
           name: terminalv-hello-extension
           path: TerminalV/artifacts/terminalv.hello.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: terminalv-ai-limits-extension
+          path: TerminalV/artifacts/terminalv.ai-limits.zip
