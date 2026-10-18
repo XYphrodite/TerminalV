@@ -79,7 +79,8 @@ public partial class App : Application
     internal static int RunCli(string[] argv)
     {
         var command = argv[0];
-        if (IsHelp(command) || argv.Any(IsHelp) && !command.Equals("update", StringComparison.OrdinalIgnoreCase))
+        if (IsHelp(command)
+            || (argv.Any(IsHelp) && !command.Equals("update", StringComparison.OrdinalIgnoreCase) && !IsAddExtension(command)))
         {
             CliConsole.WriteLine(CliConsole.HelpText(AppVersion.Informational));
             return 0;
@@ -101,10 +102,19 @@ public partial class App : Application
             return UpdateCommand.Run(argv.Skip(1).ToArray());
         }
 
+        if (IsAddExtension(command))
+        {
+            return AddExtensionCommand.Run(argv.Skip(1).ToArray());
+        }
+
         CliConsole.WriteError($"Unknown command: {command}");
         CliConsole.WriteLine(CliConsole.HelpText(AppVersion.Informational));
         return 1;
     }
+
+    private static bool IsAddExtension(string command) =>
+        command.Equals("add-extension", StringComparison.OrdinalIgnoreCase)
+        || command.Equals("addExtension", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsHelp(string value) =>
         value is "-h" or "-?" or "/?" || value.Equals("--help", StringComparison.OrdinalIgnoreCase);

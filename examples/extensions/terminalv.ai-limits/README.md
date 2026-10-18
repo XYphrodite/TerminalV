@@ -23,6 +23,16 @@
 - `setInterval` `{seconds}` — период 30…3600 с (по умолчанию 300)
 - `setOverride` `{key, path}` — свой путь к бинарю/конфигу
 
+## Установка
+
+```powershell
+TerminalV add-extension https://github.com/XYphrodite/TerminalV/releases/download/<tag>/terminalv.ai-limits.zip
+# или локальный zip
+TerminalV add-extension .\terminalv.ai-limits.zip
+```
+
+Либо вручную: распаковать в `%LOCALAPPDATA%\TerminalV\extensions\terminalv.ai-limits\` и включить в настройках.
+
 ## Сборка
 
 ```powershell

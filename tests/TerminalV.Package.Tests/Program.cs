@@ -90,6 +90,12 @@ try
         {
             var result = await Run(Path.Combine(extracted, binary), "--help");
             Require(result.Code == 0 && result.Out.Contains("TerminalV " + args[1]) && result.Out.Contains("Usage:"), $"Bad help: {result}");
+            Require(result.Out.Contains("add-extension"), $"Help misses add-extension: {result}");
+        });
+        await Check($"{binary} add-extension --help (no network/install)", async () =>
+        {
+            var result = await Run(Path.Combine(extracted, binary), "add-extension", "--help");
+            Require(result.Code == 0 && result.Out.Contains("--replace") && result.Out.Contains("--sha256="), $"Bad add-extension help: {result}");
         });
         await Check($"{binary} update --help (no network/update)", async () =>
         {

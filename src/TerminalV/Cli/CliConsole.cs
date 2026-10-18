@@ -26,11 +26,12 @@ internal static class CliConsole
         TerminalV {version}
 
         Usage:
-          TerminalV                 Open the terminal window
-          TerminalV update          Install the latest GitHub release
-          TerminalV update --check  Show whether a newer release exists
-          TerminalV --version       Print the version
-          TerminalV --help          Print this text
-          TerminalV --smoke         ConPTY self-test
+          TerminalV                      Open the terminal window
+          TerminalV update               Install the latest GitHub release
+          TerminalV update --check       Show whether a newer release exists
+          TerminalV add-extension <link> Install an extension from a ZIP link or file
+          TerminalV --version            Print the version
+          TerminalV --help               Print this text
+          TerminalV --smoke              ConPTY self-test
         """;
 }

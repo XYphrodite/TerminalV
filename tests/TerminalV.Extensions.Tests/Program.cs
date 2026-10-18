@@ -61,6 +61,55 @@ try
         foreach (var path in new[] { "../outside.dll", "host/../../outside.dll", "C:/outside.dll", "ui/main.js:other", "ui\\main.js" })
             Throws(() => ExtensionManifest.ResolveFile(hello, path));
     });
+    Check("installer unpacks a zip, validates the manifest and enables the package", () =>
+    {
+        var zip = Path.Combine(root, "terminalv.hello.zip");
+        System.IO.Compression.ZipFile.CreateFromDirectory(hello, zip, System.IO.Compression.CompressionLevel.Fastest, includeBaseDirectory: true);
+        var fresh = Path.Combine(root, "install-root");
+        var installData = Path.Combine(root, "install-data");
+        Directory.CreateDirectory(fresh);
+        Directory.CreateDirectory(installData);
+        var result = ExtensionInstaller.Install(zip, fresh, enable: true, replace: false, dataRoot: installData);
+        Assert(result.Id == "terminalv.hello", "Wrong installed id");
+        Assert(result.Enabled && !result.Replaced, "Install flags incorrect");
+        Assert(File.Exists(Path.Combine(result.TargetDirectory, "extension.json")), "Package not on disk");
+        Assert(new ExtensionStorage(Path.Combine(installData, "extensions.db"), "$enabled").Get("terminalv.hello") == "true", "Enable flag not stored");
+        Throws(() => ExtensionInstaller.Install(zip, fresh, enable: true, replace: false, dataRoot: installData));
+        var replaced = ExtensionInstaller.Install(zip, fresh, enable: false, replace: true, dataRoot: installData);
+        Assert(replaced.Replaced && !replaced.Enabled, "Replace did not keep the package without re-enabling");
+    });
+    Check("installer rejects unsafe zip entries and a missing manifest", () =>
+    {
+        var fresh = Path.Combine(root, "install-bad");
+        var installData = Path.Combine(root, "install-bad-data");
+        Directory.CreateDirectory(fresh);
+        Directory.CreateDirectory(installData);
+        var evil = Path.Combine(root, "evil.zip");
+        using (var archive = System.IO.Compression.ZipFile.Open(evil, System.IO.Compression.ZipArchiveMode.Create))
+        {
+            var entry = archive.CreateEntry("../escape.json");
+            using var writer = new StreamWriter(entry.Open());
+            writer.Write("{}");
+        }
+        Throws(() => ExtensionInstaller.Install(evil, fresh, enable: false, dataRoot: installData));
+        var empty = Path.Combine(root, "empty.zip");
+        using (var archive = System.IO.Compression.ZipFile.Open(empty, System.IO.Compression.ZipArchiveMode.Create))
+        {
+            var entry = archive.CreateEntry("readme.txt");
+            using var writer = new StreamWriter(entry.Open());
+            writer.Write("no manifest");
+        }
+        Throws(() => ExtensionInstaller.Install(empty, fresh, enable: false, dataRoot: installData));
+    });
+    Check("installer refuses a checksum mismatch", () =>
+    {
+        var zip = Path.Combine(root, "terminalv.hello.zip");
+        var fresh = Path.Combine(root, "install-hash");
+        var installData = Path.Combine(root, "install-hash-data");
+        Directory.CreateDirectory(fresh);
+        Directory.CreateDirectory(installData);
+        Throws(() => ExtensionInstaller.Install(zip, fresh, enable: false, expectedSha256: new string('0', 64), dataRoot: installData));
+    });
     Check("storage separates extensions and secrets, persists and deletes", () =>
     {
         var a = new ExtensionStorage(database, "test.a");
