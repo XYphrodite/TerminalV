@@ -158,23 +158,28 @@ internal static class ExtensionInstaller
         if (uri.Scheme == Uri.UriSchemeHttp)
             log?.Invoke("Warning: plain http link; prefer https.");
 
-        using var response = Http.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead).GetAwaiter().GetResult();
-        response.EnsureSuccessStatusCode();
-        var declared = response.Content.Headers.ContentLength;
-        if (declared is > MaxDownloadBytes)
-            throw new InvalidDataException("Extension package exceeds 100 MB.");
-
-        using var body = response.Content.ReadAsStream();
-        using var file = File.Create(destination);
-        var buffer = new byte[81920];
-        long total = 0;
-        int read;
-        while ((read = body.Read(buffer, 0, buffer.Length)) > 0)
+        using (var response = Http.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead).GetAwaiter().GetResult())
         {
-            total += read;
-            if (total > MaxDownloadBytes)
+            response.EnsureSuccessStatusCode();
+            var declared = response.Content.Headers.ContentLength;
+            if (declared is > MaxDownloadBytes)
                 throw new InvalidDataException("Extension package exceeds 100 MB.");
-            file.Write(buffer, 0, read);
+
+            using var body = response.Content.ReadAsStream();
+            // Close the writer before checksum/extract so the ZIP is not locked.
+            using (var file = File.Create(destination))
+            {
+                var buffer = new byte[81920];
+                long total = 0;
+                int read;
+                while ((read = body.Read(buffer, 0, buffer.Length)) > 0)
+                {
+                    total += read;
+                    if (total > MaxDownloadBytes)
+                        throw new InvalidDataException("Extension package exceeds 100 MB.");
+                    file.Write(buffer, 0, read);
+                }
+            }
         }
 
         if (expectedSha256 is null && uri.AbsolutePath.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
