@@ -56,6 +56,29 @@ try
         Throws(() => ExtensionManifest.Read(hello));
         File.WriteAllText(Path.Combine(hello, "extension.json"), original);
     });
+    Check("null or missing apiVersion fails with a clear error instead of JsonException", () =>
+    {
+        var original = File.ReadAllText(Path.Combine(hello, "extension.json"));
+        foreach (var patched in new[]
+        {
+            original.Replace("\"apiVersion\":1", "\"apiVersion\":null"),
+            original.Replace("\"apiVersion\":1,", "")
+        })
+        {
+            File.WriteAllText(Path.Combine(hello, "extension.json"), patched);
+            var thrown = false;
+            try
+            {
+                ExtensionManifest.Read(hello);
+            }
+            catch (InvalidDataException)
+            {
+                thrown = true;
+            }
+            Assert(thrown, "Expected InvalidDataException for a bad apiVersion");
+        }
+        File.WriteAllText(Path.Combine(hello, "extension.json"), original);
+    });
     Check("paths cannot escape the package or use alternate streams", () =>
     {
         foreach (var path in new[] { "../outside.dll", "host/../../outside.dll", "C:/outside.dll", "ui/main.js:other", "ui\\main.js" })

@@ -42,14 +42,32 @@ internal static class Providers
         var now = DateTimeOffset.UtcNow;
         return
         [
-            Claude(overrides, now),
-            Codex(overrides, now),
-            Grok(overrides, now),
-            Agi(overrides, now),
-            Mimo(overrides, now),
-            Kimi(overrides, now),
-            Muse(overrides, now)
+            Guard("claude", "Claude", () => Claude(overrides, now), now),
+            Guard("codex", "Codex", () => Codex(overrides, now), now),
+            Guard("grok", "Grok", () => Grok(overrides, now), now),
+            Guard("agy", "agy", () => Agi(overrides, now), now),
+            Guard("mimo", "MiMo", () => Mimo(overrides, now), now),
+            Guard("kimi", "Kimi", () => Kimi(overrides, now), now),
+            Guard("muse", "Muse", () => Muse(overrides, now), now)
         ];
+    }
+
+    static ServiceStatus Guard(string id, string name, Func<ServiceStatus> probe, DateTimeOffset now)
+    {
+        try
+        {
+            return probe();
+        }
+        catch (Exception ex)
+        {
+            return new ServiceStatus
+            {
+                Id = id,
+                Name = name,
+                Detail = ex.Message,
+                CheckedAt = now
+            };
+        }
     }
 
     static string Home => Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
@@ -119,14 +137,17 @@ internal static class Providers
 
     static void AddPercentWindow(ServiceStatus status, JsonElement util, string key, string title)
     {
-        if (!util.TryGetProperty(key, out var window) || window.ValueKind is JsonValueKind.Null) return;
+        if (!util.TryGetProperty(key, out var window) || window.ValueKind is not JsonValueKind.Object) return;
         var limit = new LimitWindow { Id = key, Title = title };
-        if (window.TryGetProperty("utilization", out var used) && used.TryGetDouble(out var percent))
+        if (window.TryGetProperty("utilization", out var used) && used.ValueKind == JsonValueKind.Number
+            && used.TryGetDouble(out var percent))
             limit.UsedPercent = percent;
         limit.ResetsAt = ParseDate(StringProp(window, "resets_at"));
-        if (window.TryGetProperty("used_dollars", out var ud) && ud.TryGetDouble(out var usedDollars))
+        if (window.TryGetProperty("used_dollars", out var ud) && ud.ValueKind == JsonValueKind.Number
+            && ud.TryGetDouble(out var usedDollars))
             limit.Used = usedDollars;
-        if (window.TryGetProperty("limit_dollars", out var ld) && ld.TryGetDouble(out var limitDollars))
+        if (window.TryGetProperty("limit_dollars", out var ld) && ld.ValueKind == JsonValueKind.Number
+            && ld.TryGetDouble(out var limitDollars))
             limit.Limit = limitDollars;
         status.Limits.Add(limit);
     }
@@ -167,9 +188,11 @@ internal static class Providers
     static LimitWindow RatioWindow(JsonElement source, string usedKey, string limitKey, string resetKey, string title)
     {
         var window = new LimitWindow { Id = title, Title = title };
-        if (source.TryGetProperty(usedKey, out var used) && used.TryGetDouble(out var usedValue))
+        if (source.TryGetProperty(usedKey, out var used) && used.ValueKind == JsonValueKind.Number
+            && used.TryGetDouble(out var usedValue))
             window.Used = usedValue;
-        if (source.TryGetProperty(limitKey, out var limit) && limit.TryGetDouble(out var limitValue))
+        if (source.TryGetProperty(limitKey, out var limit) && limit.ValueKind == JsonValueKind.Number
+            && limit.TryGetDouble(out var limitValue))
         {
             window.Limit = limitValue;
             if (limitValue > 0 && window.Used is double usedValue2)

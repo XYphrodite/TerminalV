@@ -11,7 +11,8 @@ internal sealed class ExtensionManifest
     public string Name { get; set; } = "";
     public string Version { get; set; } = "";
     public string? Description { get; set; }
-    public int ApiVersion { get; set; }
+    // int? so a JSON null does not throw in System.Text.Json; validated below.
+    public int? ApiVersion { get; set; }
     // UI modules and their assets must live below the package's ui/ directory.
     public string? Ui { get; set; }
     public ExtensionHostEntry? Host { get; set; }
@@ -21,14 +22,22 @@ internal sealed class ExtensionManifest
         var path = ResolveFile(directory, "extension.json");
         if (new FileInfo(path).Length > 64 * 1024)
             throw new InvalidDataException("extension.json exceeds 64 KiB.");
-        var manifest = JsonSerializer.Deserialize<ExtensionManifest>(File.ReadAllText(path), Json)
-            ?? throw new InvalidDataException("Empty extension manifest.");
+        ExtensionManifest manifest;
+        try
+        {
+            manifest = JsonSerializer.Deserialize<ExtensionManifest>(File.ReadAllText(path), Json)
+                ?? throw new InvalidDataException("Empty extension manifest.");
+        }
+        catch (JsonException ex)
+        {
+            throw new InvalidDataException($"Invalid extension.json: {ex.Message}", ex);
+        }
         if (!Regex.IsMatch(manifest.Id ?? "", @"^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?\.[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$"))
             throw new InvalidDataException("Extension id must be publisher.name (lowercase letters, digits, hyphens).");
         if (!string.Equals(Path.GetFileName(directory), manifest.Id, StringComparison.Ordinal))
             throw new InvalidDataException("The package directory must match its extension id.");
         if (manifest.ApiVersion != 1)
-            throw new InvalidDataException($"Unsupported extension API version: {manifest.ApiVersion}.");
+            throw new InvalidDataException($"Unsupported extension API version: {manifest.ApiVersion?.ToString() ?? "null"}.");
         if (string.IsNullOrWhiteSpace(manifest.Name) || manifest.Name.Length > 100
             || !Regex.IsMatch(manifest.Version ?? "", @"^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$"))
             throw new InvalidDataException("A name (up to 100 characters) and version (x.y.z) are required.");

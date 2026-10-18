@@ -74,7 +74,8 @@ internal static class ExtensionInstaller
             ExtractZip(zipPath, extractDir);
             var packageDir = FindPackageDirectory(extractDir);
             using var manifestDoc = JsonDocument.Parse(File.ReadAllText(Path.Combine(packageDir, "extension.json")));
-            var id = manifestDoc.RootElement.TryGetProperty("id", out var idValue) ? idValue.GetString() : null;
+            var id = manifestDoc.RootElement.TryGetProperty("id", out var idValue) && idValue.ValueKind == JsonValueKind.String
+                ? idValue.GetString() : null;
             if (string.IsNullOrWhiteSpace(id))
                 throw new InvalidDataException("extension.json is missing id.");
 
