@@ -153,7 +153,7 @@ internal static class ExtensionInstaller
     private static bool Download(string source, string destination, string? expectedSha256, Action<string>? log)
     {
         if (!Uri.TryCreate(source, UriKind.Absolute, out var uri)
-            || uri.Scheme is not (Uri.UriSchemeHttps or Uri.UriSchemeHttp))
+            || (uri.Scheme != Uri.UriSchemeHttps && uri.Scheme != Uri.UriSchemeHttp))
             throw new ArgumentException("Only http(s) links are supported.");
         if (uri.Scheme == Uri.UriSchemeHttp)
             log?.Invoke("Warning: plain http link; prefer https.");

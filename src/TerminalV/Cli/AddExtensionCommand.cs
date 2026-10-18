@@ -1,5 +1,7 @@
+using System.IO;
 using TerminalV.Data;
 using TerminalV.Extensions;
+using TerminalV.Update;
 
 namespace TerminalV.Cli;
 
@@ -89,7 +91,7 @@ internal static class AddExtensionCommand
             }
             else
             {
-                CliConsole.WriteLine("Not enabled. Turn it on in Settings → Extensions, then restart TerminalV.");
+                CliConsole.WriteLine("Not enabled. Turn it on in Settings -> Extensions, then restart TerminalV.");
             }
 
             return 0;
