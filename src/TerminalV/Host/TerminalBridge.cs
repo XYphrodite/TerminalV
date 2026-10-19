@@ -26,11 +26,18 @@ namespace TerminalV.Host;
 
 internal sealed class TerminalBridge : IDisposable
 {
-    private static readonly JsonSerializerOptions JsonOptions = new()
+    private static readonly JsonSerializerOptions JsonOptions = CreateJsonOptions();
+
+    private static JsonSerializerOptions CreateJsonOptions()
     {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        PropertyNameCaseInsensitive = true
-    };
+        var options = new JsonSerializerOptions
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+            PropertyNameCaseInsensitive = true
+        };
+        JsonDefaults.AddNullToDefault(options);
+        return options;
+    }
 
     private readonly Dispatcher _dispatcher;
     private readonly CoreWebView2 _webView;
@@ -221,7 +228,7 @@ internal sealed class TerminalBridge : IDisposable
                 if (message.Id is { } attachingId && !_attachBacklog.ContainsKey(attachingId))
                 {
                     _attachBacklog[attachingId] = new Queue<string>();
-                    _ = AttachDesktopAsync(attachingId, message.Cols, message.Rows);
+                    _ = AttachDesktopAsync(attachingId, message.Cols ?? 80, message.Rows ?? 24);
                 }
                 break;
             case "write":
@@ -270,13 +277,15 @@ internal sealed class TerminalBridge : IDisposable
             case "resize":
                 if (message.Id is not null)
                 {
+                    var cols = message.Cols ?? 80;
+                    var rows = message.Rows ?? 24;
                     if (_host.Ensure())
                     {
-                        GatewayBackend.ResizeDesktop(message.Id, message.Cols, message.Rows);
+                        GatewayBackend.ResizeDesktop(message.Id, cols, rows);
                     }
                     else if (_sessions.TryGetValue(message.Id, out var resizing))
                     {
-                        resizing.Resize(message.Cols, message.Rows);
+                        resizing.Resize(cols, rows);
                     }
                 }
                 break;
@@ -618,8 +627,10 @@ internal sealed class TerminalBridge : IDisposable
             if (!isWsl) Post(new { type = "cwd", id = message.Id, cwd = cwd.Path, notice = cwd.Notice });
             if (_host.Ensure())
             {
-                GatewayBackend.SessionCreated(message.Id, desktopAttached: true, cols: message.Cols, rows: message.Rows);
-                _host.Create(message.Id, Math.Max(message.Cols, 1), Math.Max(message.Rows, 1),
+                var cols = message.Cols ?? 80;
+                var rows = message.Rows ?? 24;
+                GatewayBackend.SessionCreated(message.Id, desktopAttached: true, cols: cols, rows: rows);
+                _host.Create(message.Id, Math.Max(cols, 1), Math.Max(rows, 1),
                     isWsl || message.Cwd is null ? null : cwd.Path, message.Shell, message.StartupCommand, message.WslDistribution);
                 return;
             }
@@ -633,8 +644,8 @@ internal sealed class TerminalBridge : IDisposable
                 message.Id,
                 shell.CommandLine,
                 cwd.Path,
-                Math.Max(message.Cols, 1),
-                Math.Max(message.Rows, 1), session =>
+                Math.Max(message.Cols ?? 80, 1),
+                Math.Max(message.Rows ?? 24, 1), session =>
                 {
                     session.Output += data => Post(new { type = "data", id = session.Id, data });
                     session.DirectoryChanged += path => { if (!isWsl) Post(new { type = "cwd", id = session.Id, cwd = path }); };

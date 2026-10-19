@@ -7,11 +7,18 @@ namespace TerminalV.Data;
 
 internal sealed class AppDatabase : IDisposable
 {
-    private static readonly JsonSerializerOptions Json = new()
+    private static readonly JsonSerializerOptions Json = CreateJsonOptions();
+
+    private static JsonSerializerOptions CreateJsonOptions()
     {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        PropertyNameCaseInsensitive = true
-    };
+        var options = new JsonSerializerOptions
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+            PropertyNameCaseInsensitive = true
+        };
+        JsonDefaults.AddNullToDefault(options);
+        return options;
+    }
 
     private readonly SqliteConnection _connection;
 

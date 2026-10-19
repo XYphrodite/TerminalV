@@ -275,7 +275,8 @@ public sealed class GatewaySshSession : SshSessionBase
             var type = t.GetString();
             if (type == "data" && root.TryGetProperty("data", out var d)) data = d.GetString();
             else if (type == "error" && root.TryGetProperty("message", out var m)) error = m.GetString();
-            else if (type == "exit" && root.TryGetProperty("code", out var c)) exitCode = c.GetInt32();
+            else if (type == "exit" && root.TryGetProperty("code", out var c)
+                && c.ValueKind == JsonValueKind.Number && c.TryGetInt32(out var parsedCode)) exitCode = parsedCode;
             else if (type == "binary") return false;
             return data is not null || error is not null || exitCode.HasValue;
         } catch { return false; }

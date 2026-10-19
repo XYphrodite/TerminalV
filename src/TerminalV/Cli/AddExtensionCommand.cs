@@ -98,7 +98,7 @@ internal static class AddExtensionCommand
         }
         catch (Exception ex)
         {
-            CliConsole.WriteError(ex.Message);
+            CliConsole.WriteError(ex.ToString());
             return 1;
         }
     }

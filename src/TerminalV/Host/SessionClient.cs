@@ -247,7 +247,8 @@ internal sealed class SessionClient : IDisposable
                     }
                     else if (type == "exit" && id is not null)
                     {
-                        var code = root.TryGetProperty("code", out var codeEl) ? codeEl.GetUInt32() : 0;
+                        var code = root.TryGetProperty("code", out var codeEl) && codeEl.ValueKind == JsonValueKind.Number
+                            && codeEl.TryGetUInt32(out var exitCode) ? exitCode : 0;
                         Exited?.Invoke(id, code);
                     }
                     else if (type == "cwd" && id is not null && root.TryGetProperty("cwd", out var cwdEl))

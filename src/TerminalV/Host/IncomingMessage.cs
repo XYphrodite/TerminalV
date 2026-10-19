@@ -15,8 +15,9 @@ internal sealed class IncomingMessage
     public bool Enabled { get; set; }
     public bool StartMenu { get; set; }
     public bool Desktop { get; set; }
-    public int Cols { get; set; }
-    public int Rows { get; set; }
+    // Nullable so a JSON null from the WebView does not throw in System.Text.Json.
+    public int? Cols { get; set; }
+    public int? Rows { get; set; }
     public List<SessionRecord>? Sessions { get; set; }
     public List<PaneLayout>? Layouts { get; set; }
     public string? Cwd { get; set; }

@@ -6,6 +6,7 @@ namespace TerminalV.Extensions;
 
 internal sealed class ExtensionManifest
 {
+    // Used when serializing manifest-shaped payloads; reading uses manual JsonDocument.
     internal static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     public string Id { get; set; } = "";
     public string Name { get; set; } = "";
@@ -25,8 +26,30 @@ internal sealed class ExtensionManifest
         ExtensionManifest manifest;
         try
         {
-            manifest = JsonSerializer.Deserialize<ExtensionManifest>(File.ReadAllText(path), Json)
-                ?? throw new InvalidDataException("Empty extension manifest.");
+            // Manual parse: JSON null for numbers must not crash System.Text.Json.
+            using var doc = JsonDocument.Parse(File.ReadAllText(path));
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object)
+                throw new InvalidDataException("Empty extension manifest.");
+            manifest = new ExtensionManifest
+            {
+                Id = StringProp(root, "id") ?? "",
+                Name = StringProp(root, "name") ?? "",
+                Version = StringProp(root, "version") ?? "",
+                Description = StringProp(root, "description"),
+                Ui = StringProp(root, "ui")
+            };
+            if (root.TryGetProperty("apiVersion", out var api) && api.ValueKind == JsonValueKind.Number
+                && api.TryGetInt32(out var apiVersion))
+                manifest.ApiVersion = apiVersion;
+            if (root.TryGetProperty("host", out var host) && host.ValueKind == JsonValueKind.Object)
+            {
+                manifest.Host = new ExtensionHostEntry
+                {
+                    Assembly = StringProp(host, "assembly") ?? "",
+                    Type = StringProp(host, "type") ?? ""
+                };
+            }
         }
         catch (JsonException ex)
         {
@@ -85,6 +108,10 @@ internal sealed class ExtensionManifest
         if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
             throw new InvalidDataException("Extension entry paths cannot contain links or junctions.");
     }
+
+    private static string? StringProp(JsonElement element, string name)
+        => element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
+            ? value.GetString() : null;
 }
 
 internal sealed class ExtensionHostEntry

@@ -79,6 +79,36 @@ try
         }
         File.WriteAllText(Path.Combine(hello, "extension.json"), original);
     });
+    Check("installer survives a manifest whose numeric fields are JSON null", () =>
+    {
+        var zip = Path.Combine(root, "null-api.zip");
+        var staging = Path.Combine(root, "null-api-pkg");
+        Directory.CreateDirectory(staging);
+        File.WriteAllText(Path.Combine(staging, "extension.json"), """
+            {"id":"test.null-api","name":"n","version":"1.0.0","apiVersion":null,"ui":"ui/main.js"}
+            """);
+        Directory.CreateDirectory(Path.Combine(staging, "ui"));
+        File.WriteAllText(Path.Combine(staging, "ui", "main.js"), "export function activate() {}");
+        System.IO.Compression.ZipFile.CreateFromDirectory(staging, zip);
+        var fresh = Path.Combine(root, "install-null-api");
+        var installData = Path.Combine(root, "install-null-api-data");
+        Directory.CreateDirectory(fresh);
+        Directory.CreateDirectory(installData);
+        var leaked = false;
+        try
+        {
+            ExtensionInstaller.Install(zip, fresh, enable: false, dataRoot: installData);
+        }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("Number", StringComparison.Ordinal))
+        {
+            leaked = true;
+        }
+        catch (InvalidDataException)
+        {
+            // expected: clear validation error
+        }
+        Assert(!leaked, "STJ null leak: InvalidOperationException Number/Null");
+    });
     Check("paths cannot escape the package or use alternate streams", () =>
     {
         foreach (var path in new[] { "../outside.dll", "host/../../outside.dll", "C:/outside.dll", "ui/main.js:other", "ui\\main.js" })
