@@ -27,6 +27,10 @@ internal sealed class ServiceStatus
     public string Name { get; set; } = "";
     public bool Installed { get; set; }
     public bool Authenticated { get; set; }
+    // AuthOk = credentials look usable right now (not just present on disk).
+    public bool AuthOk { get; set; }
+    // LimitsStale = the limit snapshot is too old to trust.
+    public bool LimitsStale { get; set; }
     public string? Path { get; set; }
     public string? Account { get; set; }
     public string? Detail { get; set; }
@@ -100,6 +104,7 @@ internal static class Providers
     {
         var binary = Resolve(overrides, "claude.bin", Path.Combine(Home, ".local", "bin", "claude.exe"));
         var config = Resolve(overrides, "claude.config", Path.Combine(Home, ".claude.json"));
+        var credentials = Resolve(overrides, "claude.credentials", Path.Combine(Home, ".claude", ".credentials.json"));
         var status = new ServiceStatus
         {
             Id = "claude",
@@ -108,10 +113,21 @@ internal static class Providers
             Path = Exists(binary) ? binary : null,
             CheckedAt = now
         };
+
+        // OAuth freshness from Claude Code's credential store.
+        var expiresAt = ReadOAuthExpiry(credentials);
+        if (expiresAt is not null)
+        {
+            status.Authenticated = true;
+            status.AuthOk = expiresAt > now;
+            if (!status.AuthOk)
+                status.Detail = $"OAuth истёк {expiresAt.Value.ToLocalTime():g} — нужен `claude login`.";
+        }
+
         var root = ReadJson(config);
         if (root is null)
         {
-            status.Detail = "Конфиг ~/.claude.json не найден.";
+            if (status.Detail is null) status.Detail = "Конфиг ~/.claude.json не найден.";
             return status;
         }
         var json = root.Value;
@@ -119,20 +135,69 @@ internal static class Providers
         {
             status.Authenticated = true;
             status.Account = StringProp(account, "emailAddress");
+            if (status.AuthOk != false && expiresAt is null) status.AuthOk = true;
         }
         if (json.TryGetProperty("cachedUsageUtilization", out var cache)
             && cache.TryGetProperty("utilization", out var util))
         {
             AddPercentWindow(status, util, "five_hour", "5 часов");
             AddPercentWindow(status, util, "seven_day", "7 дней");
-            if (cache.TryGetProperty("fetchedAtMs", out var fetched) && fetched.TryGetInt64(out var ms))
-                status.Detail = $"Кэш лимитов от {DateTimeOffset.FromUnixTimeMilliseconds(ms).ToLocalTime():g}";
+            DateTimeOffset? fetchedAt = null;
+            if (cache.TryGetProperty("fetchedAtMs", out var fetched) && fetched.ValueKind == JsonValueKind.Number
+                && fetched.TryGetInt64(out var ms) && ms > 0)
+                fetchedAt = DateTimeOffset.FromUnixTimeMilliseconds(ms);
+            if (fetchedAt is not null)
+            {
+                var age = now - fetchedAt.Value;
+                status.LimitsStale = age > TimeSpan.FromHours(12);
+                var ageLabel = age.TotalHours >= 1
+                    ? $"{(int)age.TotalHours}ч {age.Minutes}м"
+                    : $"{Math.Max(1, (int)age.TotalMinutes)}м";
+                status.Detail = status.AuthOk == false
+                    ? status.Detail
+                    : status.LimitsStale
+                        ? $"Кэш лимитов устарел: {ageLabel} назад ({fetchedAt.Value.ToLocalTime():g})."
+                        : $"Кэш лимитов от {fetchedAt.Value.ToLocalTime():g} ({ageLabel} назад).";
+            }
+            else
+            {
+                status.LimitsStale = true;
+                status.Detail = "Кэш лимитов без времени — данные ненадёжны.";
+            }
+            // Token expiry unknown (0/missing) + old cache => do not look "ok".
+            if (expiresAt is null && status.LimitsStale && status.Detail is not null
+                && !status.Detail.Contains("login", StringComparison.OrdinalIgnoreCase))
+            {
+                status.AuthOk = false;
+                status.Detail += " Авторизация не подтверждена — нужен `claude login`.";
+            }
         }
-        else
+        else if (status.Detail is null)
         {
             status.Detail = "Данные лимитов ещё не закэшированы.";
         }
         return status;
+    }
+
+    static DateTimeOffset? ReadOAuthExpiry(string? credentialsPath)
+    {
+        var root = ReadJson(credentialsPath);
+        if (root is not { } json) return null;
+        if (!json.TryGetProperty("claudeAiOauth", out var oauth) || oauth.ValueKind is not JsonValueKind.Object)
+            return null;
+        var access = Expiry(oauth, "expiresAt");
+        var refresh = Expiry(oauth, "refreshTokenExpiresAt");
+        if (access is null) return refresh;
+        if (refresh is null) return access;
+        return access > refresh ? access : refresh;
+    }
+
+    static DateTimeOffset? Expiry(JsonElement oauth, string name)
+    {
+        if (!oauth.TryGetProperty(name, out var exp) || exp.ValueKind != JsonValueKind.Number
+            || !exp.TryGetInt64(out var ms) || ms <= 0)
+            return null;
+        return DateTimeOffset.FromUnixTimeMilliseconds(ms);
     }
 
     static void AddPercentWindow(ServiceStatus status, JsonElement util, string key, string title)
@@ -174,9 +239,19 @@ internal static class Providers
         if (json.TryGetProperty("official", out var official) && official.ValueKind is not JsonValueKind.Null)
         {
             status.Authenticated = true;
+            status.AuthOk = true;
             status.Limits.Add(RatioWindow(official, "h5_used", "h5_limit", "h5_reset", "5 часов"));
             status.Limits.Add(RatioWindow(official, "wk_used", "wk_limit", "wk_reset", "7 дней"));
             status.Detail = "Лимиты из statusline-tokens.json";
+            if (json.TryGetProperty("ts", out var ts) && ts.ValueKind == JsonValueKind.Number
+                && ts.TryGetDouble(out var unix) && unix > 0)
+            {
+                var fetchedAt = DateTimeOffset.FromUnixTimeSeconds((long)unix);
+                var age = now - fetchedAt;
+                status.LimitsStale = age > TimeSpan.FromHours(12);
+                if (status.LimitsStale)
+                    status.Detail = $"Кэш лимитов устарел: {(int)age.TotalHours}ч {age.Minutes}м назад.";
+            }
         }
         else
         {
@@ -222,6 +297,7 @@ internal static class Providers
             return status;
         }
         status.Authenticated = true;
+        status.AuthOk = true;
         var json = root.Value;
         var mode = StringProp(json, "auth_mode");
         status.Account = mode;
@@ -252,6 +328,7 @@ internal static class Providers
         if (root is not null)
         {
             status.Authenticated = true;
+            status.AuthOk = true;
             status.Account = "xAI OAuth";
         }
         else
@@ -266,14 +343,16 @@ internal static class Providers
     static ServiceStatus Agi(IReadOnlyDictionary<string, string> overrides, DateTimeOffset now)
     {
         var binary = Resolve(overrides, "agy.bin", Path.Combine(LocalApp, "agy", "bin", "agy.exe"));
+        var installed = Exists(binary);
         return new ServiceStatus
         {
             Id = "agy",
             Name = "agy",
-            Installed = Exists(binary),
-            Authenticated = Exists(binary),
-            Path = Exists(binary) ? binary : null,
-            Detail = Exists(binary) ? "CLI установлен." : "agy.exe не найден.",
+            Installed = installed,
+            Authenticated = installed,
+            AuthOk = installed,
+            Path = installed ? binary : null,
+            Detail = installed ? "CLI установлен." : "agy.exe не найден.",
             CheckedAt = now
         };
     }
@@ -281,14 +360,16 @@ internal static class Providers
     static ServiceStatus Mimo(IReadOnlyDictionary<string, string> overrides, DateTimeOffset now)
     {
         var binary = Resolve(overrides, "mimo.bin", Path.Combine(Home, ".mimocode", "bin", "mimo.exe"));
+        var installed = Exists(binary);
         return new ServiceStatus
         {
             Id = "mimo",
             Name = "MiMo",
-            Installed = Exists(binary),
-            Authenticated = Exists(binary),
-            Path = Exists(binary) ? binary : null,
-            Detail = Exists(binary) ? "CLI установлен. Статистика — через `mimo stats`." : "mimo.exe не найден.",
+            Installed = installed,
+            Authenticated = installed,
+            AuthOk = installed,
+            Path = installed ? binary : null,
+            Detail = installed ? "CLI установлен. Статистика — через `mimo stats`." : "mimo.exe не найден.",
             CheckedAt = now
         };
     }
@@ -296,14 +377,16 @@ internal static class Providers
     static ServiceStatus Muse(IReadOnlyDictionary<string, string> overrides, DateTimeOffset now)
     {
         var binary = Resolve(overrides, "muse.bin", Path.Combine(Home, "bin", "muse.bat"));
+        var installed = Exists(binary);
         return new ServiceStatus
         {
             Id = "muse",
             Name = "Muse",
-            Installed = Exists(binary),
-            Authenticated = Exists(binary),
-            Path = Exists(binary) ? binary : null,
-            Detail = Exists(binary) ? "WSL-обёртка установлена." : "muse.bat не найден.",
+            Installed = installed,
+            Authenticated = installed,
+            AuthOk = installed,
+            Path = installed ? binary : null,
+            Detail = installed ? "WSL-обёртка установлена." : "muse.bat не найден.",
             CheckedAt = now
         };
     }

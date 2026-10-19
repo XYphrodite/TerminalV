@@ -19,7 +19,9 @@ function percentClass(value) {
 
 function serviceTone(service) {
   if (!service.installed) return "missing";
+  if (service.authenticated && service.authOk === false) return "warn";
   if (service.limits?.some(l => (l.usedPercent ?? 0) >= 85)) return "limited";
+  if (service.limitsStale) return "warn";
   if (service.authenticated) return "ok";
   return "warn";
 }
@@ -51,6 +53,7 @@ export async function activate(api) {
     .ai-dot.limited { background: #e26d3b; opacity: 1; }
     .ai-dot.missing { background: var(--danger, #e25555); opacity: 1; }
     .ai-meta { opacity: 0.75; overflow-wrap: anywhere; }
+    .ai-meta.ai-stale { color: #e2b93b; opacity: 1; }
     .ai-limit-row { display: grid; gap: 2px; }
     .ai-limit-label { display: flex; justify-content: space-between; gap: 8px; opacity: 0.85; }
     .ai-bar {
@@ -103,10 +106,12 @@ export async function activate(api) {
     meta.className = "ai-meta";
     const parts = [];
     if (!service.installed) parts.push("не установлен");
+    else if (service.authenticated && service.authOk === false) parts.push("авторизация истекла");
     else if (!service.authenticated) parts.push("нет авторизации");
     else if (service.account) parts.push(service.account);
     if (service.detail) parts.push(service.detail);
     meta.textContent = parts.join(" · ");
+    if (service.authOk === false || service.limitsStale) meta.classList.add("ai-stale");
 
     card.append(head, meta);
 

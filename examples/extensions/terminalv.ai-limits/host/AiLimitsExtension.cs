@@ -130,6 +130,8 @@ public sealed class AiLimitsExtension : ITerminalVExtension
         name = status.Name,
         installed = status.Installed,
         authenticated = status.Authenticated,
+        authOk = status.AuthOk,
+        limitsStale = status.LimitsStale,
         path = status.Path,
         account = status.Account,
         detail = status.Detail,
