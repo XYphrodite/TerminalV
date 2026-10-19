@@ -35,14 +35,33 @@ export function createExtensionsUi({ post, document: doc = document }) {
     const panel = element("section", "extension-panel");
     panel.dataset.extensionId = extensionId;
     const heading = element("div", "extension-panel-heading");
+    const toggle = element("button", "extension-panel-toggle");
+    toggle.type = "button";
+    toggle.setAttribute("aria-expanded", "true");
+    const chevron = element("span", "extension-panel-chevron");
+    chevron.setAttribute("aria-hidden", "true");
     const label = element("h3", "extension-panel-title", title);
     const badge = element("span", "count-badge");
     badge.hidden = true;
+    toggle.append(chevron, label);
+    heading.append(toggle, badge);
     const body = element("div", "extension-panel-body");
-    heading.append(label, badge);
     panel.append(heading, body);
     container.append(panel);
     container.hidden = false;
+    const storageKey = `tv-ext-panel:${key}`;
+    try {
+      if (globalThis.localStorage?.getItem(storageKey) === "1") {
+        panel.classList.add("collapsed");
+        toggle.setAttribute("aria-expanded", "false");
+      }
+    } catch { /* storage may be unavailable */ }
+    toggle.addEventListener("click", () => {
+      const collapsed = panel.classList.toggle("collapsed");
+      toggle.setAttribute("aria-expanded", String(!collapsed));
+      try { globalThis.localStorage?.setItem(storageKey, collapsed ? "1" : "0"); }
+      catch { /* ignore */ }
+    });
     surfaces.set(key, panel);
     return {
       element: body,

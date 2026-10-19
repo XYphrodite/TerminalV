@@ -8,7 +8,36 @@
 #app.collapsed .extension-sidebar { display: none; }
 .extension-panel { padding: 10px 12px; border-bottom: 1px solid var(--sidebar-edge); }
 .extension-panel-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
-.extension-panel-title { font-size: 12px; margin: 0; overflow-wrap: anywhere; }
+.extension-panel-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.extension-panel-chevron {
+  width: 0;
+  height: 0;
+  border-left: 4px solid currentColor;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  opacity: 0.7;
+  transform: rotate(90deg);
+  transition: transform 0.12s ease;
+  flex-shrink: 0;
+}
+.extension-panel.collapsed .extension-panel-chevron { transform: rotate(0deg); }
+.extension-panel.collapsed .extension-panel-heading { margin-bottom: 0; }
+.extension-panel.collapsed .extension-panel-body { display: none; }
+.extension-panel-title { font-size: 12px; margin: 0; overflow-wrap: anywhere; font-weight: 600; }
 .extension-panel [hidden] { display: none; }
 .extension-panel-body { font-size: 12px; overflow-wrap: anywhere; user-select: text; }
 .extension-panel-body button { cursor: pointer; }
