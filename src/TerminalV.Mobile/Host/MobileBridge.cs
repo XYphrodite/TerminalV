@@ -17,11 +17,18 @@ namespace TerminalV.Mobile.Host;
 /// </summary>
 internal sealed class MobileBridge : IDisposable
 {
-    private static readonly JsonSerializerOptions JsonOptions = new()
+    private static readonly JsonSerializerOptions JsonOptions = CreateJsonOptions();
+
+    private static JsonSerializerOptions CreateJsonOptions()
     {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        PropertyNameCaseInsensitive = true
-    };
+        var options = new JsonSerializerOptions
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+            PropertyNameCaseInsensitive = true
+        };
+        JsonDefaults.AddNullToDefault(options);
+        return options;
+    }
 
     private readonly SshService _ssh;
     private readonly MobileDataStore _store;
@@ -215,7 +222,7 @@ internal sealed class MobileBridge : IDisposable
                 HandleCreate(message);
                 break;
             case "attach":
-                if (message.Id is not null) TryAttach(message.Id, message.Cols, message.Rows);
+                if (message.Id is not null) TryAttach(message.Id, message.Cols ?? 80, message.Rows ?? 24);
                 break;
             case "write":
                 // Return before the network send so the next keystroke is not
@@ -224,7 +231,7 @@ internal sealed class MobileBridge : IDisposable
                     _writes.Writer.TryWrite((message.Id, message.Data));
                 break;
             case "resize":
-                if (message.Id is not null) await HandleResize(message.Id, message.Cols, message.Rows);
+                if (message.Id is not null) await HandleResize(message.Id, message.Cols ?? 80, message.Rows ?? 24);
                 break;
             case "kill":
                 if (message.Id is not null) HandleKill(message.Id);
@@ -374,7 +381,7 @@ internal sealed class MobileBridge : IDisposable
     private void HandleCreate(IncomingMessage message)
     {
         if (string.IsNullOrWhiteSpace(message.Id)) return;
-        StartSession(message.Id, message.Cols, message.Rows, mirror: _remoteIds.Contains(message.Id));
+        StartSession(message.Id, message.Cols ?? 80, message.Rows ?? 24, mirror: _remoteIds.Contains(message.Id));
     }
 
     private void StartSession(string id, int cols, int rows, bool mirror)
