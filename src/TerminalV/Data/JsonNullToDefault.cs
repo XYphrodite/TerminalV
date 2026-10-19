@@ -12,15 +12,43 @@ internal sealed class NullToDefaultConverter<T> : JsonConverter<T> where T : str
     public override T Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
     {
         if (reader.TokenType == JsonTokenType.Null) return default;
-        if (typeof(T) == typeof(int)) return (T)(object)reader.GetInt32();
-        if (typeof(T) == typeof(long)) return (T)(object)reader.GetInt64();
-        if (typeof(T) == typeof(double)) return (T)(object)reader.GetDouble();
-        if (typeof(T) == typeof(bool)) return (T)(object)reader.GetBoolean();
-        return JsonSerializer.Deserialize<T>(ref reader, options);
+        if (typeof(T) == typeof(int)) return (T)(object)ReadInt(ref reader);
+        if (typeof(T) == typeof(long)) return (T)(object)ReadLong(ref reader);
+        if (typeof(T) == typeof(double)) return (T)(object)ReadDouble(ref reader);
+        if (typeof(T) == typeof(bool)) return (T)(object)ReadBool(ref reader);
+        throw new JsonException($"Unsupported NullToDefault type: {typeof(T).Name}.");
     }
 
     public override void Write(Utf8JsonWriter writer, T value, JsonSerializerOptions options)
-        => JsonSerializer.Serialize(writer, value, options);
+    {
+        // Write the primitive directly; JsonSerializer.Serialize would re-enter this converter.
+        if (typeof(T) == typeof(int)) writer.WriteNumberValue((int)(object)value);
+        else if (typeof(T) == typeof(long)) writer.WriteNumberValue((long)(object)value);
+        else if (typeof(T) == typeof(double)) writer.WriteNumberValue((double)(object)value);
+        else if (typeof(T) == typeof(bool)) writer.WriteBooleanValue((bool)(object)value);
+        else throw new JsonException($"Unsupported NullToDefault type: {typeof(T).Name}.");
+    }
+
+    private static int ReadInt(ref Utf8JsonReader reader)
+        => reader.TokenType == JsonTokenType.Number ? reader.GetInt32()
+            : reader.TokenType == JsonTokenType.String && int.TryParse(reader.GetString(), out var s) ? s : 0;
+
+    private static long ReadLong(ref Utf8JsonReader reader)
+        => reader.TokenType == JsonTokenType.Number ? reader.GetInt64()
+            : reader.TokenType == JsonTokenType.String && long.TryParse(reader.GetString(), out var s) ? s : 0;
+
+    private static double ReadDouble(ref Utf8JsonReader reader)
+        => reader.TokenType == JsonTokenType.Number ? reader.GetDouble()
+            : reader.TokenType == JsonTokenType.String && double.TryParse(reader.GetString(), out var s) ? s : 0;
+
+    private static bool ReadBool(ref Utf8JsonReader reader)
+        => reader.TokenType switch
+        {
+            JsonTokenType.True => true,
+            JsonTokenType.False => false,
+            JsonTokenType.String => bool.TryParse(reader.GetString(), out var b) && b,
+            _ => false
+        };
 }
 
 internal static class JsonDefaults
