@@ -74,6 +74,7 @@
     <Compile Include="..\TerminalV\Ssh\GatewayTransport.cs" Link="Ssh\GatewayTransport.cs" />
     <Compile Include="..\TerminalV\Ssh\SshService.cs" Link="Ssh\SshService.cs" />
     <Compile Include="..\TerminalV\Data\AppSettings.cs" Link="Data\AppSettings.cs" />
+    <Compile Include="..\TerminalV\Data\JsonNullToDefault.cs" Link="Data\JsonNullToDefault.cs" />
     <Compile Include="..\TerminalV\Data\SessionRecord.cs" Link="Data\SessionRecord.cs" />
     <Compile Include="..\TerminalV\Data\PaneLayout.cs" Link="Data\PaneLayout.cs" />
     <Compile Include="..\TerminalV\Data\LaunchProfile.cs" Link="Data\LaunchProfile.cs" />
