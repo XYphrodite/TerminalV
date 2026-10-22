@@ -411,7 +411,20 @@ try
         Assert(afterRestart.GetProperty("version").GetString() == "1.1.0", "Update was not applied on restart");
         Assert(afterRestart.GetProperty("stagedVersion").ValueKind == JsonValueKind.Null, "Still marked as staged");
     });
-    listener.Stop();
+    var leftover = Path.Combine(treeB, "test.upd.old-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(Path.Combine(leftover, "host"));
+    File.WriteAllText(Path.Combine(leftover, "host", "stale.dll"), "x");
+    var cleaned = new ExtensionManager(treeB, Path.Combine(updateRoot, "b", "data"),
+        payload => messages.Enqueue(JsonSerializer.SerializeToElement(payload)), (_, _) => { },
+        updateBaseUrl: updateBase, autoCheckUpdates: false);
+    managers.Add(cleaned);
+    var cleanedCatalog = JsonSerializer.SerializeToElement(await cleaned.CatalogAsync());
+    Check("leftover backups of replaced packages are cleaned and never listed as extensions", () =>
+    {
+        Assert(cleanedCatalog.GetArrayLength() == 1, "A backup folder was listed as an extension");
+        Assert(!Directory.Exists(leftover), "Backup folder was not removed");
+        Assert(ExtensionUpdater.IsBackupDirectory(leftover) && !ExtensionUpdater.IsBackupDirectory(treeB), "Backup name detection");
+    });    listener.Stop();
     Console.WriteLine($"Passed {checks} extension checks.");
 
     ExtensionManager NewManager()

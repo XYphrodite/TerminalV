@@ -40,8 +40,10 @@ internal sealed class ExtensionManager
         // Staged updates are applied before any package is scanned or loaded.
         try { ExtensionUpdater.ApplyPending(directory, message => _log("updates", message)); }
         catch (Exception ex) { _log("updates", ex.ToString()); }
+        ExtensionUpdater.CleanupBackups(directory);
         _registry = new ExtensionStorage(_database, "$enabled");
-        foreach (var package in Directory.EnumerateDirectories(directory).Order(StringComparer.OrdinalIgnoreCase))
+        foreach (var package in Directory.EnumerateDirectories(directory).Where(d => !ExtensionUpdater.IsBackupDirectory(d))
+            .Order(StringComparer.OrdinalIgnoreCase))
         {
             var entry = new Entry(package);
             _entries.Add(entry);

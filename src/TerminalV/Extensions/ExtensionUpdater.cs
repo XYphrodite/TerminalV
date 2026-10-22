@@ -76,6 +76,22 @@ internal static class ExtensionUpdater
         return Path.Combine(Path.GetDirectoryName(full) ?? full, "extensions-pending");
     }
 
+    private static readonly Regex BackupName = new(@"\.old-[0-9a-f]{32}$", RegexOptions.CultureInvariant);
+
+    /// <summary>Replaced packages are renamed to "&lt;id&gt;.old-&lt;guid&gt;" before deletion; these are not extensions.</summary>
+    public static bool IsBackupDirectory(string path) => BackupName.IsMatch(Path.GetFileName(path));
+
+    /// <summary>Deletes leftover backups of replaced packages (a locked DLL can make the first delete fail).</summary>
+    public static void CleanupBackups(string extensionsRoot)
+    {
+        if (!Directory.Exists(extensionsRoot)) return;
+        foreach (var directory in Directory.EnumerateDirectories(extensionsRoot).Where(IsBackupDirectory).ToArray())
+        {
+            try { Directory.Delete(directory, recursive: true); }
+            catch { /* still locked by a running window; retried on the next launch */ }
+        }
+    }
+
     public static string? PendingVersion(string extensionsRoot, string id)
     {
         var directory = Path.Combine(PendingRoot(extensionsRoot), id);
@@ -212,7 +228,8 @@ internal static class ExtensionUpdater
     {
         var list = new List<ExtensionManifest>();
         if (!Directory.Exists(extensionsRoot)) return list;
-        foreach (var directory in Directory.EnumerateDirectories(extensionsRoot).Order(StringComparer.OrdinalIgnoreCase))
+        foreach (var directory in Directory.EnumerateDirectories(extensionsRoot).Where(d => !IsBackupDirectory(d))
+            .Order(StringComparer.OrdinalIgnoreCase))
         {
             try { list.Add(ExtensionManifest.Read(directory)); }
             catch { /* broken packages are reported by the manager, not updated */ }
