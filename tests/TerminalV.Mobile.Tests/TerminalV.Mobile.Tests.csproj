@@ -13,6 +13,7 @@
     <Compile Include="../../src/TerminalV/Gateway/TailnetAccess.cs" />
     <Compile Include="../../src/TerminalV/Gateway/IGatewaySessionBackend.cs" />
     <Compile Include="../../src/TerminalV/Data/AppSettings.cs" />
+    <Compile Include="../../src/TerminalV/Data/JsonNullToDefault.cs" />
     <Compile Include="../../src/TerminalV/Data/SessionRecord.cs" />
     <Compile Include="../../src/TerminalV/Data/PaneLayout.cs" />
     <Compile Include="../../src/TerminalV/Data/LaunchProfile.cs" />
