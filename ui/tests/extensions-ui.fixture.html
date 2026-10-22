@@ -54,6 +54,38 @@
     await delay();
     equal(app.hostMessages.some(message => message.type === "extensions:open-folder"), true);
   });
+  await check("a pushed update announces once and the notification button stages it", async () => {
+    app.extensionsTestUpdate(true, false);
+    app.sendHost({ type: "extensions:updates", result: app.extensionsTestCatalog() });
+    await delay();
+    equal(doc.querySelector(".extension-notification div").textContent.includes("1.1.0"), true);
+    equal(doc.querySelector("#extension-list").textContent.includes("1.1.0"), true);
+    app.sendHost({ type: "extensions:updates", result: app.extensionsTestCatalog() });
+    await delay();
+    equal(doc.querySelectorAll(".extension-notification").length, 1);
+    const update = [...doc.querySelectorAll(".extension-notification button")].find(button => button.textContent === "Обновить");
+    update.click();
+    await delay();
+    const request = app.hostMessages.filter(message => message.type === "extensions:update").at(-1);
+    equal(request.extensionId, "test.hello");
+    equal(doc.querySelector(".extension-notification"), null);
+    equal(doc.querySelector("#extension-list .extension-update").textContent.includes("1.1.0"), true);
+  });
+  await check("manual check reports updates and Update all stages them", async () => {
+    app.extensionsTestUpdate(false, false);
+    doc.getElementById("extensions-check-updates").click();
+    await delay();
+    equal(app.hostMessages.some(message => message.type === "extensions:check-updates"), true);
+    equal(doc.getElementById("extension-update-status").textContent, "Найдено обновлений: 1.");
+    const all = doc.getElementById("extensions-update-all");
+    equal(all.hidden, false);
+    all.click();
+    await delay();
+    const request = app.hostMessages.filter(message => message.type === "extensions:update").at(-1);
+    equal(request.extensionId, null);
+    equal(all.hidden, true);
+    equal(doc.getElementById("extension-update-status").textContent.includes("Перезапустите"), true);
+  });
   await check("unsupported hosts hide extension settings", () => {
     app.sendHost({ type: "init", ...init, extensionsSupported: false });
     equal(doc.getElementById("extension-settings").hidden, true);

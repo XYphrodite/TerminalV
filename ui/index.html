@@ -211,6 +211,11 @@
           <h3 id="extensions-title" class="settings-section-label">Расширения</h3>
           <p class="shortcut-hint">Добавьте папку расширения и перезапустите TerminalV. Включайте только доверенные расширения: они получают доступ к приложению и файлам пользователя.</p>
           <button id="extensions-open-folder" type="button" class="ghost">Открыть папку расширений</button>
+          <div class="extension-update-toolbar">
+            <button id="extensions-check-updates" type="button" class="ghost">Проверить обновления</button>
+            <button id="extensions-update-all" type="button" class="ghost" hidden>Обновить все</button>
+          </div>
+          <p id="extension-update-status" class="shortcut-hint" role="status" aria-live="polite"></p>
           <div id="extension-list"></div>
           <p id="extension-status" class="extension-error" role="status" aria-live="polite"></p>
           <div id="extension-settings-panels" hidden></div>

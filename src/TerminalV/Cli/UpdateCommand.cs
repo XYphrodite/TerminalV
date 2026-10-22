@@ -2,6 +2,8 @@ using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using SelfUpdateKit;
+using TerminalV.Data;
+using TerminalV.Extensions;
 using TerminalV.Update;
 
 namespace TerminalV.Cli;
@@ -13,11 +15,25 @@ internal static class UpdateCommand
         CliConsole.Attach();
 
         var checkOnly = false;
+        var extensionsOnly = false;
+        var skipExtensions = false;
         foreach (var arg in args)
         {
             if (arg.Equals("--check", StringComparison.OrdinalIgnoreCase))
             {
                 checkOnly = true;
+                continue;
+            }
+
+            if (arg.Equals("--extensions", StringComparison.OrdinalIgnoreCase))
+            {
+                extensionsOnly = true;
+                continue;
+            }
+
+            if (arg.Equals("--no-extensions", StringComparison.OrdinalIgnoreCase))
+            {
+                skipExtensions = true;
                 continue;
             }
 
@@ -28,8 +44,19 @@ internal static class UpdateCommand
             }
 
             CliConsole.WriteError($"Unknown option: {arg}");
-            CliConsole.WriteError("Usage: TerminalV update [--check]");
+            CliConsole.WriteError("Usage: TerminalV update [--check] [--extensions | --no-extensions]");
             return 1;
+        }
+
+        if (extensionsOnly && skipExtensions)
+        {
+            CliConsole.WriteError("--extensions and --no-extensions cannot be combined.");
+            return 1;
+        }
+
+        if (extensionsOnly)
+        {
+            return checkOnly ? CheckExtensions() : StageExtensions(applyNow: !OtherWindowsOpen());
         }
 
         if (!AppVersion.CanSelfUpdate(Environment.ProcessPath))
@@ -57,7 +84,7 @@ internal static class UpdateCommand
                     CliConsole.WriteLine("Run 'TerminalV update' to install it.");
                 }
 
-                return 0;
+                return skipExtensions ? 0 : CheckExtensions();
             }
 
             CliConsole.WriteLine($"TerminalV {AppVersion.Informational}. Checking GitHub Releases...");
@@ -95,7 +122,7 @@ internal static class UpdateCommand
             if (applied.Status == SelfUpdateStatus.AlreadyCurrent)
             {
                 CliConsole.WriteLine($"TerminalV {applied.Installed} is up to date.");
-                return 0;
+                return skipExtensions ? 0 : StageExtensions(applyNow: !OtherWindowsOpen());
             }
 
             var exe = Environment.ProcessPath!;
@@ -103,6 +130,8 @@ internal static class UpdateCommand
             // window to restart, and newly launched windows must never be closed.
             var guiPids = VisibleTerminalVPids();
             guiPids.Remove(Environment.ProcessId);
+            // Extensions are staged first: a restarted window applies them before loading any package.
+            var extensionStatus = skipExtensions ? 0 : StageExtensions(applyNow: guiPids.Count == 0);
             if (guiPids.Count == 0)
             {
                 PendingUpdateApplier.Apply(exe, options);
@@ -113,11 +142,100 @@ internal static class UpdateCommand
             }
 
             CliConsole.WriteLine($"Installed {applied.Tag}.");
-            return 0;
+            return extensionStatus;
         }
         catch (Exception ex)
         {
             CliConsole.WriteError(ex.Message);
+            return 1;
+        }
+    }
+
+    private static bool OtherWindowsOpen()
+    {
+        var pids = VisibleTerminalVPids();
+        pids.Remove(Environment.ProcessId);
+        return pids.Count > 0;
+    }
+
+    private static int CheckExtensions()
+    {
+        try
+        {
+            var updates = ExtensionUpdater.Check(Path.Combine(AppPaths.Root, "extensions"));
+            if (updates.Count == 0)
+            {
+                CliConsole.WriteLine("Extensions are up to date.");
+                return 0;
+            }
+
+            foreach (var update in updates)
+            {
+                CliConsole.WriteLine(
+                    $"Extension update available: {update.Id} {update.InstalledVersion} -> {update.AvailableVersion}.");
+            }
+
+            CliConsole.WriteLine("Run 'TerminalV update' (or 'TerminalV update --extensions') to install.");
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            CliConsole.WriteError($"Extension update check failed: {ex.Message}");
+            return 1;
+        }
+    }
+
+    // Downloads newer extension packages into the pending folder. They are moved into place
+    // right away when no window is running, otherwise on the next TerminalV launch.
+    private static int StageExtensions(bool applyNow)
+    {
+        try
+        {
+            var root = Path.Combine(AppPaths.Root, "extensions");
+            CliConsole.WriteLine("Checking extension updates...");
+            var updates = ExtensionUpdater.Check(root);
+            if (updates.Count == 0)
+            {
+                CliConsole.WriteLine("Extensions are up to date.");
+                // A previous run may have left staged packages behind.
+                if (applyNow)
+                {
+                    ExtensionUpdater.ApplyPending(root, CliConsole.WriteLine);
+                }
+
+                return 0;
+            }
+
+            var failed = 0;
+            foreach (var update in updates)
+            {
+                try
+                {
+                    ExtensionUpdater.Stage(update, root);
+                    CliConsole.WriteLine(
+                        $"Downloaded {update.Id} {update.InstalledVersion} -> {update.AvailableVersion}.");
+                }
+                catch (Exception ex)
+                {
+                    CliConsole.WriteError($"{update.Id}: {ex.Message}");
+                    failed++;
+                }
+            }
+
+            if (applyNow)
+            {
+                ExtensionUpdater.ApplyPending(root, CliConsole.WriteLine);
+            }
+            else
+            {
+                CliConsole.WriteLine("Extension updates will be applied the next time TerminalV starts.");
+            }
+
+            return failed == 0 ? 0 : 1;
+        }
+        catch (Exception ex)
+        {
+            CliConsole.WriteError($"Extension update failed: {ex.Message}");
             return 1;
         }
     }

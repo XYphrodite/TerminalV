@@ -17,20 +17,29 @@ internal sealed class ExtensionManager
     private readonly object _gate = new();
     private Task? _stopTask;
     private volatile bool _stopping;
+    private readonly string? _updateBaseUrl;
+    private readonly CancellationTokenSource _stopCts = new();
+    private readonly SemaphoreSlim _updateGate = new(1, 1);
+    private Dictionary<string, ExtensionUpdateInfo> _updates = new(StringComparer.Ordinal);
 
     public string DirectoryPath { get; }
     public IEnumerable<(string Host, string Directory)> UiMappings => _entries
         .Where(e => e.Manifest?.Ui is not null)
         .Select(e => (UiHost(e.Manifest!.Id), Path.Combine(e.Directory, "ui")));
 
-    public ExtensionManager(string directory, string dataRoot, Action<object> post, Action<string, string> log)
+    public ExtensionManager(string directory, string dataRoot, Action<object> post, Action<string, string> log,
+        string? updateBaseUrl = null, bool autoCheckUpdates = true)
     {
         DirectoryPath = directory;
         _dataRoot = dataRoot;
         _database = Path.Combine(dataRoot, "extensions.db");
         _post = post;
         _log = log;
+        _updateBaseUrl = updateBaseUrl;
         Directory.CreateDirectory(directory);
+        // Staged updates are applied before any package is scanned or loaded.
+        try { ExtensionUpdater.ApplyPending(directory, message => _log("updates", message)); }
+        catch (Exception ex) { _log("updates", ex.ToString()); }
         _registry = new ExtensionStorage(_database, "$enabled");
         foreach (var package in Directory.EnumerateDirectories(directory).Order(StringComparer.OrdinalIgnoreCase))
         {
@@ -48,6 +57,7 @@ internal sealed class ExtensionManager
             }
         }
         _started = Task.Run(StartAsync);
+        if (autoCheckUpdates) _ = Task.Run(AutoCheckUpdatesAsync);
     }
 
     public async Task<object[]> CatalogAsync()
@@ -60,6 +70,10 @@ internal sealed class ExtensionManager
                 description = e.Manifest?.Description, enabled = e.Enabled, active = e.Active,
                 valid = e.Manifest is not null, error = e.Error,
                 restartRequired = e.Enabled != e.StartupEnabled,
+                // updateVersion: newer package found in the latest release; stagedVersion: already
+                // downloaded and waiting for a restart.
+                updateVersion = _updates.TryGetValue(e.Id, out var update) ? update.AvailableVersion : null,
+                stagedVersion = StagedVersion(e),
                 uiUrl = e.Active && e.Manifest?.Ui is { } ui
                     ? $"https://{UiHost(e.Id)}/{string.Join("/", ui[3..].Split('/').Select(Uri.EscapeDataString))}" : null
             }).ToArray();
@@ -88,6 +102,14 @@ internal sealed class ExtensionManager
                         _registry.Set(configured.Id, enabled ? "true" : null);
                         configured.Enabled = enabled;
                     }
+                    result = await CatalogAsync().ConfigureAwait(false);
+                    break;
+                case "extensions:check-updates":
+                    await CheckUpdatesAsync().ConfigureAwait(false);
+                    result = await CatalogAsync().ConfigureAwait(false);
+                    break;
+                case "extensions:update":
+                    await UpdateAsync(id).ConfigureAwait(false);
                     result = await CatalogAsync().ConfigureAwait(false);
                     break;
                 case "extensions:open-folder":
@@ -139,6 +161,78 @@ internal sealed class ExtensionManager
             _post(new { type = "extensions:result", extensionId = id, requestId,
                 error = ex is OperationCanceledException ? "Extension request cancelled or timed out." : ex.Message });
         }
+    }
+
+    private string? StagedVersion(Entry entry)
+    {
+        var staged = ExtensionUpdater.PendingVersion(DirectoryPath, entry.Id);
+        return staged is not null && ExtensionVersion.Compare(staged, entry.Manifest?.Version) > 0 ? staged : null;
+    }
+
+    private async Task CheckUpdatesAsync()
+    {
+        await _updateGate.WaitAsync(_stopCts.Token).ConfigureAwait(false);
+        try
+        {
+            var found = await Task.Run(() => ExtensionUpdater.Check(DirectoryPath, _updateBaseUrl,
+                message => _log("updates", message)), _stopCts.Token).ConfigureAwait(false);
+            lock (_gate) _updates = found.ToDictionary(update => update.Id, StringComparer.Ordinal);
+        }
+        finally { _updateGate.Release(); }
+    }
+
+    // id == null updates every extension with a known newer version.
+    private async Task UpdateAsync(string? id)
+    {
+        await _updateGate.WaitAsync(_stopCts.Token).ConfigureAwait(false);
+        try
+        {
+            List<ExtensionUpdateInfo> targets;
+            lock (_gate) targets = _updates.Values.Where(update => id is null || update.Id == id).ToList();
+            if (id is not null && targets.Count == 0)
+                throw new InvalidOperationException("No update is available for this extension.");
+            var errors = new List<string>();
+            foreach (var update in targets)
+            {
+                try
+                {
+                    await Task.Run(() => ExtensionUpdater.Stage(update, DirectoryPath,
+                        message => _log(update.Id, message)), _stopCts.Token).ConfigureAwait(false);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _log(update.Id, ex.ToString());
+                    errors.Add($"{update.Id}: {ex.Message}");
+                }
+            }
+            if (errors.Count > 0) throw new InvalidOperationException(string.Join("; ", errors));
+        }
+        finally { _updateGate.Release(); }
+    }
+
+    // Checks shortly after launch and then every few hours; the UI is told only about new findings.
+    private async Task AutoCheckUpdatesAsync()
+    {
+        try
+        {
+            await _started.ConfigureAwait(false);
+            await Task.Delay(TimeSpan.FromSeconds(20), _stopCts.Token).ConfigureAwait(false);
+            while (!_stopCts.IsCancellationRequested)
+            {
+                try
+                {
+                    await CheckUpdatesAsync().ConfigureAwait(false);
+                    bool any;
+                    lock (_gate) any = _updates.Count > 0;
+                    if (any && !_stopping)
+                        _post(new { type = "extensions:updates", result = await CatalogAsync().ConfigureAwait(false) });
+                }
+                catch (OperationCanceledException) when (_stopCts.IsCancellationRequested) { return; }
+                catch (Exception ex) { _log("updates", ex.Message); }
+                await Task.Delay(TimeSpan.FromHours(6), _stopCts.Token).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException) { }
     }
 
     private async Task StartAsync()
@@ -200,6 +294,7 @@ internal sealed class ExtensionManager
         lock (_gate)
         {
             _stopping = true;
+            _stopCts.Cancel();
             return _stopTask ??= Task.Run(StopCoreAsync);
         }
     }

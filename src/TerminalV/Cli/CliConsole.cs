@@ -28,7 +28,8 @@ internal static class CliConsole
         Usage:
           TerminalV                      Open the terminal window
           TerminalV update               Install the latest GitHub release
-          TerminalV update --check       Show whether a newer release exists
+          TerminalV update --check       Show whether a newer release or extension update exists
+          TerminalV update --extensions  Update only installed extensions (--no-extensions skips them)
           TerminalV add-extension <link> Install an extension from a ZIP link or file
           TerminalV --version            Print the version
           TerminalV --help               Print this text

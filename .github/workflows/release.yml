@@ -145,6 +145,15 @@ jobs:
           $limitsHash = (Get-FileHash -LiteralPath $limitsZip -Algorithm SHA256).Hash.ToLowerInvariant()
           Set-Content -LiteralPath "$limitsZip.sha256" -Value "$limitsHash  terminalv.ai-limits.zip" -Encoding ascii
 
+          # Version index read by "TerminalV update" and the in-app extension update check.
+          $entries = foreach ($id in @('terminalv.hello', 'terminalv.ai-limits')) {
+            $manifest = Get-Content -LiteralPath "$releaseDirectory/extensions/$id/extension.json" -Raw | ConvertFrom-Json
+            $hash = (Get-FileHash -LiteralPath "$releaseDirectory/$id.zip" -Algorithm SHA256).Hash.ToLowerInvariant()
+            [ordered]@{ id = $manifest.id; version = $manifest.version; asset = "$id.zip"; sha256 = $hash }
+          }
+          [ordered]@{ extensions = @($entries) } | ConvertTo-Json -Depth 5 |
+            Set-Content -LiteralPath "$releaseDirectory/extensions.json" -Encoding utf8
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -231,6 +240,7 @@ jobs:
             "artifacts/release-$env:TAG/terminalv.hello.zip.sha256" `
             "artifacts/release-$env:TAG/terminalv.ai-limits.zip" `
             "artifacts/release-$env:TAG/terminalv.ai-limits.zip.sha256" `
+            "artifacts/release-$env:TAG/extensions.json" `
             "artifacts/release-$env:TAG/TerminalV-Mobile.apk" `
             "artifacts/release-$env:TAG/TerminalV-Mobile.apk.sha256"
           if ($LASTEXITCODE -ne 0) { throw 'GitHub Release publication failed' }

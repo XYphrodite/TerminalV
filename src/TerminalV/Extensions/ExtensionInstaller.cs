@@ -261,7 +261,7 @@ internal static class ExtensionInstaller
         throw new InvalidDataException("extension.json not found in the package.");
     }
 
-    private static void MoveDirectory(string source, string destination)
+    internal static void MoveDirectory(string source, string destination)
     {
         try
         {

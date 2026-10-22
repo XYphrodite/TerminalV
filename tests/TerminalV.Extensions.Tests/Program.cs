@@ -256,6 +256,162 @@ try
     manager = NewManager();
     catalog = JsonSerializer.SerializeToElement(await manager.CatalogAsync());
     Assert(!Item(catalog, "terminalv.hello").GetProperty("active").GetBoolean(), "Disabled extension started");
+    // ---- extension updates: version rules, release lookup, staging and apply-on-restart ----
+    Check("extension versions compare numerically and rank releases above pre-releases", () =>
+    {
+        Assert(ExtensionVersion.Compare("1.10.0", "1.9.9") > 0, "1.10.0 must beat 1.9.9");
+        Assert(ExtensionVersion.Compare("1.2.0", "1.2.0+build") == 0, "Build metadata must be ignored");
+        Assert(ExtensionVersion.Compare("2.0.0", "2.0.0-beta.1") > 0, "Release must beat pre-release");
+        Assert(ExtensionVersion.Compare("1.0.0", "1.0.1") < 0, "1.0.0 is older than 1.0.1");
+        Assert(ExtensionVersion.Compare("garbage", "1.0.0") < 0, "Unparseable versions never win");
+    });
+
+    var updateRoot = Path.Combine(root, "upd");
+    string UpdPackage(string parent, string id, string version)
+    {
+        var directory = Path.Combine(parent, id);
+        Directory.CreateDirectory(Path.Combine(directory, "ui"));
+        File.WriteAllText(Path.Combine(directory, "ui", "main.js"), "export function activate() {}");
+        File.WriteAllText(Path.Combine(directory, "extension.json"), JsonSerializer.Serialize(new
+        {
+            id, name = id, version, apiVersion = 1, ui = "ui/main.js"
+        }));
+        return directory;
+    }
+    var served = Path.Combine(updateRoot, "served");
+    var remoteZip = Path.Combine(updateRoot, "test.upd.zip");
+    Directory.CreateDirectory(updateRoot);
+    System.IO.Compression.ZipFile.CreateFromDirectory(UpdPackage(served, "test.upd", "1.1.0"), remoteZip,
+        System.IO.Compression.CompressionLevel.Fastest, includeBaseDirectory: true);
+    var remoteHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(remoteZip))).ToLowerInvariant();
+    var serveIndex = true;
+    var updatePort = Random.Shared.Next(20000, 60000);
+    using var listener = new System.Net.HttpListener();
+    listener.Prefixes.Add($"http://127.0.0.1:{updatePort}/");
+    listener.Start();
+    var updateBase = $"http://127.0.0.1:{updatePort}";
+    _ = Task.Run(async () =>
+    {
+        while (listener.IsListening)
+        {
+            System.Net.HttpListenerContext context;
+            try { context = await listener.GetContextAsync(); }
+            catch { return; }
+            var path = context.Request.Url!.AbsolutePath;
+            byte[]? body = null;
+            if (path == "/extensions.json" && serveIndex)
+                body = System.Text.Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new
+                {
+                    extensions = new[] { new { id = "test.upd", version = "1.1.0", asset = "test.upd.zip", sha256 = remoteHash } }
+                }));
+            else if (path == "/test.upd.zip") body = File.ReadAllBytes(remoteZip);
+            context.Response.StatusCode = body is null ? 404 : 200;
+            if (body is not null) await context.Response.OutputStream.WriteAsync(body);
+            context.Response.Close();
+        }
+    });
+
+    string NewTree(string name, params (string Id, string Version)[] installed)
+    {
+        var tree = Path.Combine(updateRoot, name);
+        var extensions = Path.Combine(tree, "extensions");
+        Directory.CreateDirectory(extensions);
+        foreach (var (id, version) in installed) UpdPackage(extensions, id, version);
+        return extensions;
+    }
+
+    var treeA = NewTree("a", ("test.upd", "1.0.0"), ("test.other", "1.0.0"));
+    Check("release index reports only newer, published extensions", () =>
+    {
+        var found = ExtensionUpdater.Check(treeA, updateBase);
+        Assert(found.Count == 1 && found[0].Id == "test.upd", "Expected one update for test.upd");
+        Assert(found[0].InstalledVersion == "1.0.0" && found[0].AvailableVersion == "1.1.0", "Wrong versions");
+        Assert(found[0].Sha256 == remoteHash, "Index checksum was not carried over");
+        UpdPackage(treeA, "test.same", "1.1.0");
+        Assert(ExtensionUpdater.Check(treeA, updateBase).Count == 1, "An extension that is not in the release must be skipped");
+        Directory.Delete(Path.Combine(treeA, "test.same"), recursive: true);
+    });
+    Check("without an index the package manifest is probed instead", () =>
+    {
+        serveIndex = false;
+        try
+        {
+            var found = ExtensionUpdater.Check(treeA, updateBase);
+            Assert(found.Count == 1 && found[0].Id == "test.upd" && found[0].AvailableVersion == "1.1.0",
+                "Fallback probe did not find the update");
+        }
+        finally { serveIndex = true; }
+    });
+    Check("up to date and unreachable releases", () =>
+    {
+        var current = NewTree("current", ("test.upd", "1.1.0"));
+        Assert(ExtensionUpdater.Check(current, updateBase).Count == 0, "No update expected at the same version");
+        Throws(() => ExtensionUpdater.Check(treeA, "http://127.0.0.1:1"));
+    });
+    Check("staging verifies the checksum and leaves the installed copy untouched", () =>
+    {
+        var update = ExtensionUpdater.Check(treeA, updateBase).Single();
+        Throws(() => ExtensionUpdater.Stage(update with { Sha256 = new string('0', 64) }, treeA));
+        Assert(ExtensionUpdater.PendingVersion(treeA, "test.upd") is null, "A bad package must not be staged");
+        Throws(() => ExtensionUpdater.Stage(update with { Id = "test.other" }, treeA));
+        Assert(ExtensionUpdater.PendingVersion(treeA, "test.other") is null, "A mismatched id must not stay staged");
+        ExtensionUpdater.Stage(update, treeA);
+        Assert(ExtensionUpdater.PendingVersion(treeA, "test.upd") == "1.1.0", "Update was not staged");
+        Assert(ExtensionManifest.Read(Path.Combine(treeA, "test.upd")).Version == "1.0.0", "Installed copy changed before restart");
+    });
+    Check("staged packages apply once, never downgrade, and the pending folder is cleaned", () =>
+    {
+        var applied = ExtensionUpdater.ApplyPending(treeA);
+        Assert(applied.Count == 1 && applied[0] == "test.upd", "Staged update was not applied");
+        Assert(ExtensionManifest.Read(Path.Combine(treeA, "test.upd")).Version == "1.1.0", "Version did not change");
+        Assert(!Directory.Exists(ExtensionUpdater.PendingRoot(treeA)), "Pending folder left behind");
+        Assert(!Directory.EnumerateDirectories(treeA).Any(d => d.Contains(".old-")), "Backup left behind");
+        var pending = ExtensionUpdater.PendingRoot(treeA);
+        UpdPackage(pending, "test.upd", "1.0.5");
+        Assert(ExtensionUpdater.ApplyPending(treeA).Count == 0, "An older staged package must not be applied");
+        Assert(ExtensionManifest.Read(Path.Combine(treeA, "test.upd")).Version == "1.1.0", "Downgraded");
+        Assert(!Directory.Exists(pending), "Rejected package left behind");
+        UpdPackage(pending, "test.upd", "1.2.0");
+        File.WriteAllText(Path.Combine(pending, "test.upd", "extension.json"), "{bad");
+        Assert(ExtensionUpdater.ApplyPending(treeA).Count == 0, "A corrupt package must not be applied");
+        Assert(!Directory.Exists(pending), "Corrupt package left behind");
+    });
+
+    var treeB = NewTree("b", ("test.upd", "1.0.0"));
+    var managerB = new ExtensionManager(treeB, Path.Combine(updateRoot, "b", "data"),
+        payload => messages.Enqueue(JsonSerializer.SerializeToElement(payload)), (_, _) => { },
+        updateBaseUrl: updateBase, autoCheckUpdates: false);
+    managers.Add(managerB);
+    var checked1 = (await Request(managerB, "extensions:check-updates", null!)).GetProperty("result");
+    var itemB = Item(checked1, "test.upd");
+    Check("manager reports an available update in the catalog", () =>
+    {
+        Assert(itemB.GetProperty("updateVersion").GetString() == "1.1.0", "updateVersion missing");
+        Assert(itemB.GetProperty("stagedVersion").ValueKind == JsonValueKind.Null, "Nothing is staged yet");
+        Assert(itemB.GetProperty("version").GetString() == "1.0.0", "Installed version must not change yet");
+    });
+    var staged1 = (await Request(managerB, "extensions:update", "test.upd")).GetProperty("result");
+    Check("manager stages the update and reports it as waiting for a restart", () =>
+    {
+        var item = Item(staged1, "test.upd");
+        Assert(item.GetProperty("stagedVersion").GetString() == "1.1.0", "stagedVersion missing");
+        Assert(item.GetProperty("version").GetString() == "1.0.0", "Running version changed");
+    });
+    var unknown = await Request(managerB, "extensions:update", "test.nothing");
+    Check("updating an extension without a known update reports an error", () =>
+        Assert(unknown.TryGetProperty("error", out _), "Expected an error"));
+    await managerB.StopAsync();
+    var restartedB = new ExtensionManager(treeB, Path.Combine(updateRoot, "b", "data"),
+        payload => messages.Enqueue(JsonSerializer.SerializeToElement(payload)), (_, _) => { },
+        updateBaseUrl: updateBase, autoCheckUpdates: false);
+    managers.Add(restartedB);
+    var afterRestart = Item(JsonSerializer.SerializeToElement(await restartedB.CatalogAsync()), "test.upd");
+    Check("the staged update is applied on the next manager start", () =>
+    {
+        Assert(afterRestart.GetProperty("version").GetString() == "1.1.0", "Update was not applied on restart");
+        Assert(afterRestart.GetProperty("stagedVersion").ValueKind == JsonValueKind.Null, "Still marked as staged");
+    });
+    listener.Stop();
     Console.WriteLine($"Passed {checks} extension checks.");
 
     ExtensionManager NewManager()

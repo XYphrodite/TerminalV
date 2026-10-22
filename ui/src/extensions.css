@@ -43,6 +43,8 @@
 .extension-panel-body button { cursor: pointer; }
 .extension-item { border-bottom: 1px solid var(--sidebar-edge); padding: 8px 0; }
 .extension-commands { display: flex; flex-wrap: wrap; gap: 6px; }
+.extension-update-toolbar { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.extension-update { color: var(--accent, #6aa9ff); }
 .extension-error { color: var(--danger); font-size: 12px; overflow-wrap: anywhere; user-select: text; }
 .extension-notifications { position: fixed; right: 16px; bottom: 16px; z-index: 1000; display: grid; gap: 8px; max-width: min(360px, calc(100vw - 32px)); }
 .extension-notification { padding: 12px; border: 1px solid var(--sidebar-edge); border-radius: 6px; background: var(--sidebar); color: var(--text); font-size: 13px; overflow-wrap: anywhere; }

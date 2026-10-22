@@ -1,19 +1,19 @@
 // Trusted modules execute in the application's WebView. This API is not a sandbox.
 export function createExtensionRuntime({ post, createSurface, notify = () => {}, changed = () => {},
-  log = console.error, loadModule = (url) => import(/* @vite-ignore */ url), timeoutMs = 35000,
-  activationTimeoutMs = 15000 }) {
+  log = console.error, updates = () => {}, loadModule = (url) => import(/* @vite-ignore */ url), timeoutMs = 35000,
+  activationTimeoutMs = 15000, updateTimeoutMs = 130000 }) {
   const pending = new Map(), scopes = new Map();
   let catalog = [], sequence = 0, closed = false;
   const session = globalThis.crypto.randomUUID();
 
-  function request(type, extensionId = null, fields = {}) {
+  function request(type, extensionId = null, fields = {}, requestTimeoutMs = timeoutMs) {
     if (closed) return Promise.reject(new Error("Extension runtime is closed."));
     const requestId = `${session}:${++sequence}`;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         pending.delete(requestId);
         reject(new Error("Extension request timed out."));
-      }, timeoutMs);
+      }, requestTimeoutMs);
       pending.set(requestId, { extensionId, resolve, reject, timer });
       try { post({ ...fields, type, requestId, extensionId }); }
       catch (error) { settle(requestId, error); }
@@ -166,6 +166,11 @@ export function createExtensionRuntime({ post, createSurface, notify = () => {},
     async setEnabled(extensionId, enabled) {
       await sync(await request("extensions:set-enabled", extensionId, { enabled }));
     },
+    // Both calls resolve with the refreshed catalog; downloads can take far longer than RPC calls.
+    async checkUpdates() { await sync(await request("extensions:check-updates", null, {}, updateTimeoutMs)); },
+    async update(extensionId = null) {
+      await sync(await request("extensions:update", extensionId, {}, updateTimeoutMs));
+    },
     openFolder: () => request("extensions:open-folder"),
     receive(message) {
       if (closed) return false;
@@ -173,6 +178,14 @@ export function createExtensionRuntime({ post, createSurface, notify = () => {},
         const waiter = pending.get(message.requestId);
         if (waiter && waiter.extensionId === (message.extensionId ?? null))
           settle(message.requestId, message.error, message.result);
+        return true;
+      }
+      if (message?.type === "extensions:updates") {
+        // The host found newer packages on its own schedule.
+        if (Array.isArray(message.result)) {
+          sync(message.result).then(() => updates(catalog.map(item => ({ ...item }))),
+            error => log("[extensions] update catalog", error));
+        }
         return true;
       }
       if (message?.type === "extensions:event") {

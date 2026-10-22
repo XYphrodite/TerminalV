@@ -189,3 +189,44 @@ test("cleanup failures do not prevent remaining panels and listeners from dispos
   assert.equal(s.surfaces[0].disposed, true);
   assert.equal(s.errors.length, 2);
 });
+
+test("update calls request the refreshed catalog with a long timeout and resync", async () => {
+  const s = setup({}, { updateTimeoutMs: 5000 });
+  await s.start([s.catalog("a", { uiUrl: null })]);
+  const check = s.runtime.checkUpdates();
+  const checkMessage = s.messages.at(-1);
+  assert.equal(checkMessage.type, "extensions:check-updates");
+  s.reply(checkMessage, [s.catalog("a", { uiUrl: null, updateVersion: "1.2.0" })]);
+  await check;
+  assert.equal(s.runtime.catalog[0].updateVersion, "1.2.0");
+
+  const update = s.runtime.update("a");
+  const updateMessage = s.messages.at(-1);
+  assert.equal(updateMessage.type, "extensions:update");
+  assert.equal(updateMessage.extensionId, "a");
+  s.reply(updateMessage, [s.catalog("a", { uiUrl: null, updateVersion: "1.2.0", stagedVersion: "1.2.0" })]);
+  await update;
+  assert.equal(s.runtime.catalog[0].stagedVersion, "1.2.0");
+
+  const all = s.runtime.update();
+  assert.equal(s.messages.at(-1).extensionId, null);
+  s.reply(s.messages.at(-1), null, "a: download failed");
+  await assert.rejects(all, /download failed/);
+  await s.runtime.dispose();
+});
+
+test("host pushed update catalogs resync and notify the UI once per delivery", async () => {
+  const seen = [];
+  const s = setup({}, { updates: catalog => seen.push(catalog) });
+  await s.start([s.catalog("a", { uiUrl: null })]);
+  const handled = s.runtime.receive({ type: "extensions:updates",
+    result: [s.catalog("a", { uiUrl: null, updateVersion: "2.0.0" })] });
+  assert.equal(handled, true);
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(s.runtime.catalog[0].updateVersion, "2.0.0");
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0][0].updateVersion, "2.0.0");
+  assert.equal(s.runtime.receive({ type: "extensions:updates", result: "garbage" }), true);
+  assert.equal(seen.length, 1);
+  await s.runtime.dispose();
+});
