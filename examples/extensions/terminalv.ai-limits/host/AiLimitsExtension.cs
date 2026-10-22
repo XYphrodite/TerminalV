@@ -21,6 +21,7 @@ public sealed class AiLimitsExtension : ITerminalVExtension
         if (int.TryParse(context.Storage.Get("intervalSeconds"), out var interval) && interval >= 30)
             _intervalSeconds = interval;
         _snapshot = Providers.Collect(_overrides);
+        Providers.AgyUpdated += OnAgyUpdated;
         _loop = RunLoopAsync(_stop.Token);
         context.Log($"AI Limits activated with {_snapshot.Length} providers.");
         return Task.CompletedTask;
@@ -77,6 +78,15 @@ public sealed class AiLimitsExtension : ITerminalVExtension
             default:
                 throw new ArgumentException($"Unknown method: {method}");
         }
+    }
+
+    private void OnAgyUpdated()
+    {
+        if (_stop is null || _stop.IsCancellationRequested) return;
+        ServiceStatus[] next;
+        lock (_gate) next = Providers.Collect(_overrides);
+        lock (_gate) _snapshot = next;
+        _context.Publish("changed", StateObject());
     }
 
     private async Task RunLoopAsync(CancellationToken cancellationToken)
@@ -153,6 +163,7 @@ public sealed class AiLimitsExtension : ITerminalVExtension
     public async ValueTask DisposeAsync()
     {
         if (_stop is null) return;
+        Providers.AgyUpdated -= OnAgyUpdated;
         await _stop.CancelAsync();
         try { await _loop; } catch { /* loop logs its own errors */ }
         _stop.Dispose();

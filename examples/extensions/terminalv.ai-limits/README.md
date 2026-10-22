@@ -10,7 +10,7 @@
 | kimi | `~/.kimi-code/statusline-tokens.json` → `official` | 5 часов / 7 дней |
 | codex | `~/.codex/auth.json` | установлен / авторизован |
 | grok | `~/.grok/bin`, `auth.json`, `version.json` | установлен / авторизован / версия |
-| agy | `%LOCALAPPDATA%\agy\bin\agy.exe` | установлен |
+| agy | `agy -p /usage --output-format json` (фоновый вызов) | 5 часов / 7 дней по группам моделей |
 | mimo | `~/.mimocode\bin\mimo.exe` | установлен |
 | muse | `~/bin/muse.bat` | установлен |
 
