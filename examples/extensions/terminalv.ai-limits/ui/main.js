@@ -1,13 +1,19 @@
+function isActiveLimit(limit) {
+  if (!limit?.resetsAt) return true;
+  const date = new Date(limit.resetsAt);
+  return Number.isNaN(date.getTime()) || date.getTime() > Date.now();
+}
+
 function formatReset(iso) {
   if (!iso) return "";
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return "";
   const diff = date.getTime() - Date.now();
-  const abs = Math.abs(diff);
-  const h = Math.floor(abs / 3600000);
-  const m = Math.floor((abs % 3600000) / 60000);
+  if (diff <= 0) return "";
+  const h = Math.floor(diff / 3600000);
+  const m = Math.floor((diff % 3600000) / 60000);
   const label = h > 0 ? `${h}ч ${m}м` : `${m}м`;
-  return diff >= 0 ? `через ${label}` : `просрочено ${label}`;
+  return `через ${label}`;
 }
 
 function percentClass(value) {
@@ -17,11 +23,16 @@ function percentClass(value) {
   return "ai-limit";
 }
 
+function activeLimits(service) {
+  if (!service?.authenticated || service.authOk === false || service.limitsStale) return [];
+  return (service.limits ?? []).filter(isActiveLimit);
+}
+
 function serviceTone(service) {
   if (!service.installed) return "missing";
   if (service.authenticated && service.authOk === false) return "expired";
   if (!service.authenticated) return "unauth";
-  const maxPct = Math.max(0, ...(service.limits ?? []).map(l => l.usedPercent ?? 0));
+  const maxPct = Math.max(0, ...activeLimits(service).map(l => l.usedPercent ?? 0));
   if (maxPct >= 100) return "exhausted";
   if (maxPct >= 85) return "limited";
   if (maxPct >= 60 || service.limitsStale) return "warn";
@@ -126,7 +137,7 @@ export async function activate(api) {
 
     card.append(head, meta);
 
-    for (const limit of service.limits ?? []) {
+    for (const limit of activeLimits(service)) {
       const row = document.createElement("div");
       row.className = percentClass(limit.usedPercent);
       const label = document.createElement("div");

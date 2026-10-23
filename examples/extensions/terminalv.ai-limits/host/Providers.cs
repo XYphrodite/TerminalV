@@ -171,6 +171,10 @@ internal static class Providers
                 status.AuthOk = false;
                 status.Detail += " Авторизация не подтверждена — нужен `claude login`.";
             }
+            if (!status.AuthOk || status.LimitsStale)
+                status.Limits.Clear();
+            else
+                status.Limits.RemoveAll(l => l.ResetsAt is { } r && r <= now);
         }
         else if (status.Detail is null)
         {
@@ -252,6 +256,10 @@ internal static class Providers
                 if (status.LimitsStale)
                     status.Detail = $"Кэш лимитов устарел: {(int)age.TotalHours}ч {age.Minutes}м назад.";
             }
+            if (status.LimitsStale)
+                status.Limits.Clear();
+            else
+                status.Limits.RemoveAll(l => l.ResetsAt is { } r && r <= now);
         }
         else
         {
