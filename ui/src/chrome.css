@@ -40,7 +40,6 @@ kbd { font: 10px var(--font-ui); letter-spacing: .02em; white-space: nowrap; }
 #hidden-sessions:hover, #hidden-sessions[aria-pressed="true"] { color: var(--text); background: var(--tab-hover); }
 #hidden-sessions.has-attention { color: var(--accent); background: var(--accent-wash); border-color: var(--accent-dim); }
 .tabs { padding: 0 10px 12px; gap: 4px; scrollbar-gutter: stable; }
-.tabs::-webkit-scrollbar { width: 4px; }
 .session-group { display: flex; align-items: center; min-height: 32px; padding: 9px 10px 5px; color: var(--label); font-size: 10px; font-weight: 500; letter-spacing: .05em; }
 .tab { grid-template-columns: 28px minmax(0, 1fr) 22px 22px; gap: 5px; min-height: 58px; padding: 10px 7px 10px 9px; border: 1px solid transparent; border-radius: var(--radius); }
 .tab.active { background: var(--accent-wash); border-color: color-mix(in srgb, var(--accent) 26%, var(--sidebar)); }

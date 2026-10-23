@@ -104,28 +104,22 @@ body,
   gap: 4px;
 }
 
-.tabs::-webkit-scrollbar,
-.xterm-viewport::-webkit-scrollbar,
-.settings-panel::-webkit-scrollbar {
+::-webkit-scrollbar {
   width: 8px;
+  height: 8px;
 }
 
-.tabs::-webkit-scrollbar-track,
-.xterm-viewport::-webkit-scrollbar-track,
-.settings-panel::-webkit-scrollbar-track {
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
   background: transparent;
 }
 
-.tabs::-webkit-scrollbar-thumb,
-.xterm-viewport::-webkit-scrollbar-thumb,
-.settings-panel::-webkit-scrollbar-thumb {
+::-webkit-scrollbar-thumb {
   background: var(--scrollbar);
   border-radius: 8px;
 }
 
-.tabs::-webkit-scrollbar-thumb:hover,
-.xterm-viewport::-webkit-scrollbar-thumb:hover,
-.settings-panel::-webkit-scrollbar-thumb:hover {
+::-webkit-scrollbar-thumb:hover {
   background: var(--scrollbar-hover);
 }
 
