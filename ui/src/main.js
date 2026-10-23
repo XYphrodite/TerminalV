@@ -667,6 +667,7 @@ function scheduleFit(tab, immediate = false) {
 function applyToTerminals() {
   const theme = termTheme();
   const size = effectiveFontSize();
+  const primaryFont = settings.fontFamily.split(",")[0].trim().replaceAll('"', "");
   for (const tab of tabs) {
     tab.term.options.theme = theme;
     tab.term.options.fontFamily = settings.fontFamily;
@@ -679,6 +680,19 @@ function applyToTerminals() {
     }
   }
   zoomValue.textContent = `${Math.round((size / settings.fontSize) * 100)}%`;
+  if (primaryFont && document.fonts?.load) {
+    Promise.all([
+      document.fonts.load(`${size}px "${primaryFont}"`),
+      document.fonts.load(`bold ${size}px "${primaryFont}"`)
+    ]).then(() => {
+      for (const tab of tabs) {
+        tab.term.clearTextureAtlas?.();
+        if (isPaneVisible(tab)) {
+          applyFit(tab);
+        }
+      }
+    }).catch(() => {});
+  }
 }
 
 function persistSettings(requestId) {
@@ -1698,6 +1712,7 @@ function fillFonts(list) {
   const preferred = [
     "Cascadia Code",
     "Cascadia Mono",
+    "Nordwand Mono",
     "Roboto Mono",
     "Droid Sans Mono",
     "Noto Sans Mono",
