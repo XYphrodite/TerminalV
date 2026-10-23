@@ -560,8 +560,17 @@ internal static class Providers
 
             var usedDollars = ReadCentDollars(config, "used");
             var limitDollars = ReadCentDollars(config, "monthlyLimit");
+            if (limitDollars is > 0 && usedDollars is null)
+                usedDollars = 0;
             if (usedPercent is null && usedDollars is double u && limitDollars is double l && l > 0)
                 usedPercent = Math.Round(u / l * 100.0, 1);
+
+            // Proto3 JSON omits creditUsagePercent when it equals 0.0.
+            var hasPeriod = resetsAt is not null
+                || config.TryGetProperty("currentPeriod", out _)
+                || !string.IsNullOrWhiteSpace(tier);
+            if (usedPercent is null && hasPeriod)
+                usedPercent = 0;
 
             if (usedPercent is not null || limitDollars > 0)
             {
