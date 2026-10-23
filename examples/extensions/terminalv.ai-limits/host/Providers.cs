@@ -308,10 +308,66 @@ internal static class Providers
         status.AuthOk = true;
         var json = root.Value;
         var mode = StringProp(json, "auth_mode");
-        status.Account = mode;
+
+        DateTimeOffset? expiresAt = null;
+        string? email = null;
+        if (json.TryGetProperty("tokens", out var tokens) && tokens.ValueKind == JsonValueKind.Object)
+        {
+            var accessToken = StringProp(tokens, "access_token");
+            var idToken = StringProp(tokens, "id_token");
+            expiresAt = ReadJwtExpiry(accessToken) ?? ReadJwtExpiry(idToken);
+            email = ReadJwtString(idToken, "email") ?? ReadJwtString(accessToken, "email");
+        }
+
+        status.Account = email ?? mode;
+        if (expiresAt is not null)
+        {
+            status.AuthOk = expiresAt > now;
+            if (!status.AuthOk)
+            {
+                status.Detail = $"Токен истёк {expiresAt.Value.ToLocalTime():g} — нужен вход в `codex`.";
+                return status;
+            }
+        }
+
         status.Detail = mode is null ? "Авторизация сохранена." : $"Режим авторизации: {mode}";
         return status;
     }
+
+    static JsonElement? ParseJwtPayload(string? token)
+    {
+        if (string.IsNullOrWhiteSpace(token)) return null;
+        var first = token.IndexOf('.');
+        if (first < 0) return null;
+        var second = token.IndexOf('.', first + 1);
+        if (second <= first + 1) return null;
+        var segment = token[(first + 1)..second].Replace('-', '+').Replace('_', '/');
+        segment = (segment.Length % 4) switch
+        {
+            2 => segment + "==",
+            3 => segment + "=",
+            _ => segment
+        };
+        try
+        {
+            var bytes = Convert.FromBase64String(segment);
+            using var doc = JsonDocument.Parse(bytes);
+            return doc.RootElement.Clone();
+        }
+        catch { return null; }
+    }
+
+    static DateTimeOffset? ReadJwtExpiry(string? token)
+    {
+        if (ParseJwtPayload(token) is not { } payload) return null;
+        if (payload.TryGetProperty("exp", out var exp) && exp.ValueKind == JsonValueKind.Number
+            && exp.TryGetInt64(out var seconds) && seconds > 0)
+            return DateTimeOffset.FromUnixTimeSeconds(seconds);
+        return null;
+    }
+
+    static string? ReadJwtString(string? token, string name)
+        => ParseJwtPayload(token) is { } payload ? StringProp(payload, name) : null;
 
     static readonly object GrokGate = new();
     static GrokQuota? _grokQuota;
