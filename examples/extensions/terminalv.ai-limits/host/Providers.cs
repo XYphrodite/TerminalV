@@ -1137,20 +1137,130 @@ internal static class Providers
         };
     }
 
+    static readonly string[] WslDistros = ["Ubuntu", "Ubuntu-24.04", "Ubuntu-22.04", "Debian"];
+
     static ServiceStatus Muse(IReadOnlyDictionary<string, string> overrides, DateTimeOffset now)
     {
         var binary = Resolve(overrides, "muse.bin", Path.Combine(Home, "bin", "muse.bat"));
         var installed = Exists(binary);
-        return new ServiceStatus
+        var status = new ServiceStatus
         {
             Id = "muse",
             Name = "Muse",
             Installed = installed,
-            Authenticated = installed,
-            AuthOk = installed,
             Path = installed ? binary : null,
-            Detail = installed ? "WSL-обёртка установлена." : "muse.bat не найден.",
             CheckedAt = now
         };
+        if (!installed)
+        {
+            status.Detail = "muse.bat не найден.";
+            return status;
+        }
+
+        var linuxUser = Environment.UserName.ToLowerInvariant();
+        try
+        {
+            var batText = File.ReadAllText(binary);
+            var idx = batText.IndexOf("/home/", StringComparison.OrdinalIgnoreCase);
+            if (idx >= 0)
+            {
+                var rest = batText[(idx + "/home/".Length)..];
+                var slash = rest.IndexOfAny(['/', '\\', ' ', '\r', '\n', '\t']);
+                if (slash > 0) linuxUser = rest[..slash];
+            }
+        }
+        catch { }
+
+        string? configDir = null;
+        if (overrides.TryGetValue("muse.configDir", out var customCfg) && !string.IsNullOrWhiteSpace(customCfg))
+        {
+            configDir = customCfg;
+        }
+        else
+        {
+            foreach (var distro in WslDistros)
+            {
+                var candidate = $@"\\wsl.localhost\{distro}\home\{linuxUser}\.config\muse";
+                if (Directory.Exists(candidate))
+                {
+                    configDir = candidate;
+                    break;
+                }
+            }
+        }
+
+        if (configDir is null)
+        {
+            status.Detail = "Конфиг ~/.config/muse в WSL не найден.";
+            return status;
+        }
+
+        var authFile = Resolve(overrides, "muse.auth", Path.Combine(configDir, "auth.json"));
+        var settingsFile = Path.Combine(configDir, "settings.json");
+
+        string? model = null;
+        if (ReadJson(settingsFile) is { ValueKind: JsonValueKind.Object } settings)
+            model = StringProp(settings, "model");
+
+        var authRoot = ReadJson(authFile);
+        if (authRoot is not { ValueKind: JsonValueKind.Object } authObj
+            || !authObj.TryGetProperty("providers", out var providers)
+            || providers.ValueKind != JsonValueKind.Object)
+        {
+            status.Account = model;
+            status.Detail = "Не авторизован в WSL — нужен `muse login`.";
+            return status;
+        }
+
+        foreach (var prop in providers.EnumerateObject())
+        {
+            if (prop.Value.ValueKind != JsonValueKind.Object) continue;
+            var cred = prop.Value;
+            var accessToken = StringProp(cred, "access_token");
+            var apiKey = StringProp(cred, "api_key");
+            if (string.IsNullOrWhiteSpace(accessToken) && string.IsNullOrWhiteSpace(apiKey))
+                continue;
+
+            status.Authenticated = true;
+            var email = StringProp(cred, "user_email") ?? StringProp(cred, "user_full_name");
+            status.Account = !string.IsNullOrWhiteSpace(email) && !string.IsNullOrWhiteSpace(model)
+                ? $"{email} · {model}"
+                : email ?? model ?? prop.Name;
+
+            DateTimeOffset? expiresAt = null;
+            foreach (var expKey in new[] { "expires_at", "expires_at_unix_s", "expires_at_ms" })
+            {
+                if (!cred.TryGetProperty(expKey, out var expProp)) continue;
+                if (expProp.ValueKind == JsonValueKind.Number && expProp.TryGetInt64(out var n) && n > 0)
+                {
+                    expiresAt = n > 10_000_000_000L
+                        ? DateTimeOffset.FromUnixTimeMilliseconds(n)
+                        : DateTimeOffset.FromUnixTimeSeconds(n);
+                    break;
+                }
+                if (expProp.ValueKind == JsonValueKind.String)
+                {
+                    expiresAt = ParseDate(expProp.GetString());
+                    if (expiresAt is not null) break;
+                }
+            }
+
+            if (expiresAt is not null && expiresAt <= now && string.IsNullOrWhiteSpace(apiKey))
+            {
+                status.AuthOk = false;
+                status.Detail = $"Токен в WSL истёк {expiresAt.Value.ToLocalTime():g} — нужен `muse login`.";
+                return status;
+            }
+
+            status.AuthOk = true;
+            status.Detail = "Авторизован в WSL (Meta не отдаёт квоты).";
+            return status;
+        }
+
+        status.Authenticated = false;
+        status.AuthOk = false;
+        status.Account = model;
+        status.Detail = "Вышли из аккаунта в WSL — нужен `muse login`.";
+        return status;
     }
 }
