@@ -1,7 +1,7 @@
 {
   "id": "terminalv.ai-limits",
   "name": "AI Limits",
-  "version": "1.3.4",
+  "version": "1.3.5",
   "apiVersion": 1,
   "description": "Лимиты и доступность AI-сервисов: Claude, Codex, Grok, agy, MiMo, Kimi, Muse. Показывает истёкший OAuth и устаревший кэш.",
   "ui": "ui/main.js",

@@ -874,20 +874,266 @@ internal static class Providers
         return name.Replace(" and ", "/", StringComparison.OrdinalIgnoreCase);
     }
 
+    static readonly object MimoGate = new();
+    static MimoQuota? _mimoQuota;
+    static bool _mimoFetching;
+    static readonly TimeSpan MimoMinInterval = TimeSpan.FromSeconds(60);
+    static readonly TimeSpan MimoStaleAfter = TimeSpan.FromMinutes(30);
+
+    sealed class MimoQuota
+    {
+        public DateTimeOffset FetchedAt { get; init; }
+        public string? PlanName { get; init; }
+        public List<LimitWindow> Limits { get; init; } = [];
+        public bool CookieExpired { get; init; }
+        public string? Error { get; init; }
+    }
+
+    static string? NormalizeCookieHeader(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+        var s = raw.Replace("\r", " ").Replace("\n", " ").Trim();
+        if (s.StartsWith("cookie:", StringComparison.OrdinalIgnoreCase))
+            s = s["cookie:".Length..].Trim();
+        return string.IsNullOrWhiteSpace(s) ? null : s;
+    }
+
     static ServiceStatus Mimo(IReadOnlyDictionary<string, string> overrides, DateTimeOffset now)
     {
         var binary = Resolve(overrides, "mimo.bin", Path.Combine(Home, ".mimocode", "bin", "mimo.exe"));
+        var dataDir = Path.Combine(Home, ".local", "share", "mimocode");
+        var authFile = Resolve(overrides, "mimo.auth", Path.Combine(dataDir, "auth.json"));
+        var credStateFile = Path.Combine(dataDir, "credential-state.json");
+        var cookieFile = Resolve(overrides, "mimo.cookieFile", Path.Combine(dataDir, "platform-cookie.txt"));
+        var rawCookie = overrides.TryGetValue("mimo.cookie", out var c) && !string.IsNullOrWhiteSpace(c)
+            ? c
+            : Exists(cookieFile) ? File.ReadAllText(cookieFile) : null;
+        var cookie = NormalizeCookieHeader(rawCookie);
+
         var installed = Exists(binary);
-        return new ServiceStatus
+        var status = new ServiceStatus
         {
             Id = "mimo",
             Name = "MiMo",
             Installed = installed,
-            Authenticated = installed,
-            AuthOk = installed,
             Path = installed ? binary : null,
-            Detail = installed ? "CLI установлен. Статистика — через `mimo stats`." : "mimo.exe не найден.",
             CheckedAt = now
+        };
+        if (!installed)
+        {
+            status.Detail = "mimo.exe не найден.";
+            return status;
+        }
+
+        // Check CLI credentials in ~/.local/share/mimocode/auth.json & credential-state.json
+        var authJson = ReadJson(authFile);
+        string? account = null;
+        bool hasCliKey = false;
+        if (authJson is { ValueKind: JsonValueKind.Object } root)
+        {
+            foreach (var prop in root.EnumerateObject())
+            {
+                if (prop.Value.ValueKind == JsonValueKind.Object
+                    && StringProp(prop.Value, "key") is { Length: > 0 })
+                {
+                    hasCliKey = true;
+                    if (prop.Value.TryGetProperty("metadata", out var meta) && meta.ValueKind == JsonValueKind.Object)
+                    {
+                        var baseUrl = StringProp(meta, "base_url");
+                        var uid = StringProp(meta, "uid") ?? StringProp(meta, "user_id");
+                        var tier = baseUrl?.Contains("token-plan", StringComparison.OrdinalIgnoreCase) == true
+                            ? "Token Plan"
+                            : prop.Name;
+                        account = !string.IsNullOrWhiteSpace(uid) ? $"{uid} · {tier}" : tier;
+                    }
+                    else
+                    {
+                        account = prop.Name;
+                    }
+                    break;
+                }
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(cookie))
+        {
+            status.Authenticated = true;
+            status.AuthOk = true;
+            MimoQuota? cached;
+            bool start = false;
+            lock (MimoGate)
+            {
+                cached = _mimoQuota;
+                if (!_mimoFetching && (cached is null || now - cached.FetchedAt >= MimoMinInterval))
+                    start = _mimoFetching = true;
+            }
+            if (start) _ = Task.Run(() => FetchMimoQuota(cookie));
+
+            status.Account = cached?.PlanName ?? account ?? "Token Plan";
+            if (cached is null)
+            {
+                status.Detail = "Загрузка лимитов Token Plan…";
+                return status;
+            }
+            if (cached.CookieExpired)
+            {
+                status.AuthOk = hasCliKey;
+                status.Detail = "Cookie platform.xiaomimimo.com истёк — обновите platform-cookie.txt.";
+                return status;
+            }
+            if (cached.Limits.Count == 0)
+            {
+                status.Detail = cached.Error ?? "Лимиты Token Plan недоступны.";
+                return status;
+            }
+            status.Limits.AddRange(cached.Limits.Where(l => l.ResetsAt is null || l.ResetsAt > now));
+            var age = now - cached.FetchedAt;
+            status.LimitsStale = age > MimoStaleAfter;
+            if (status.LimitsStale) status.Limits.Clear();
+            status.Detail = status.LimitsStale
+                ? $"Кэш лимитов устарел: {(int)age.TotalMinutes}м назад."
+                : "Лимиты из platform.xiaomimimo.com";
+            return status;
+        }
+
+        if (hasCliKey)
+        {
+            status.Authenticated = true;
+            status.AuthOk = true;
+            status.Account = account;
+            status.Detail = "Ключ активен. Для полоски квот нужен cookie platform.xiaomimimo.com.";
+            return status;
+        }
+
+        if (ReadJson(credStateFile) is { ValueKind: JsonValueKind.Object } cs
+            && cs.TryGetProperty("loggedOut", out var lo) && lo.ValueKind == JsonValueKind.Array
+            && lo.GetArrayLength() > 0)
+        {
+            status.Authenticated = true;
+            status.AuthOk = false;
+            var last = lo[lo.GetArrayLength() - 1];
+            if (last.ValueKind == JsonValueKind.Object && last.TryGetProperty("at", out var atProp)
+                && atProp.ValueKind == JsonValueKind.Number && atProp.TryGetInt64(out var ms) && ms > 0)
+            {
+                var at = DateTimeOffset.FromUnixTimeMilliseconds(ms).ToLocalTime();
+                status.Detail = $"Вышли из аккаунта {at:g} — нужен `mimo auth login`.";
+            }
+            else
+            {
+                status.Detail = "Сессия завершена — нужен `mimo auth login`.";
+            }
+            return status;
+        }
+
+        status.Authenticated = false;
+        status.AuthOk = false;
+        status.Detail = "Нет активных учётных данных (`mimo auth login`).";
+        return status;
+    }
+
+    static void FetchMimoQuota(string cookie)
+    {
+        MimoQuota result;
+        try
+        {
+            result = RunMimoQuota(cookie).GetAwaiter().GetResult();
+        }
+        catch (Exception ex)
+        {
+            result = new MimoQuota { FetchedAt = DateTimeOffset.UtcNow, Error = ex.Message };
+        }
+        lock (MimoGate)
+        {
+            _mimoQuota = result;
+            _mimoFetching = false;
+        }
+        try { AgyUpdated?.Invoke(); } catch { }
+    }
+
+    static async Task<MimoQuota> RunMimoQuota(string cookie)
+    {
+        var now = DateTimeOffset.UtcNow;
+        using var handler = new System.Net.Http.HttpClientHandler { AllowAutoRedirect = false };
+        using var http = new System.Net.Http.HttpClient(handler) { Timeout = TimeSpan.FromSeconds(15) };
+        http.DefaultRequestHeaders.TryAddWithoutValidation("Cookie", cookie);
+        http.DefaultRequestHeaders.TryAddWithoutValidation("Accept-Language", "en");
+        http.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", "TerminalV-AI-Limits/1.0");
+
+        using var detailMsg = await http.GetAsync("https://platform.xiaomimimo.com/api/v1/tokenPlan/detail");
+        if ((int)detailMsg.StatusCode is 401 or 403 or 301 or 302 or 307 or 308)
+            return new MimoQuota { FetchedAt = now, CookieExpired = true };
+        detailMsg.EnsureSuccessStatusCode();
+        var detailResp = await detailMsg.Content.ReadAsStringAsync();
+
+        using var usageMsg = await http.GetAsync("https://platform.xiaomimimo.com/api/v1/tokenPlan/usage");
+        if ((int)usageMsg.StatusCode is 401 or 403 or 301 or 302 or 307 or 308)
+            return new MimoQuota { FetchedAt = now, CookieExpired = true };
+        usageMsg.EnsureSuccessStatusCode();
+        var usageResp = await usageMsg.Content.ReadAsStringAsync();
+
+        string? planName = null;
+        DateTimeOffset? resetsAt = null;
+        using (var detailDoc = JsonDocument.Parse(detailResp))
+        {
+            if (detailDoc.RootElement.TryGetProperty("code", out var codeProp)
+                && codeProp.ValueKind == JsonValueKind.Number && codeProp.TryGetInt32(out var code) && code == 401)
+                return new MimoQuota { FetchedAt = now, CookieExpired = true };
+
+            if (detailDoc.RootElement.TryGetProperty("data", out var d) && d.ValueKind == JsonValueKind.Object)
+            {
+                planName = StringProp(d, "planName") ?? StringProp(d, "planCode");
+                var periodEnd = StringProp(d, "currentPeriodEnd");
+                if (!string.IsNullOrWhiteSpace(periodEnd)
+                    && DateTimeOffset.TryParse(periodEnd, System.Globalization.CultureInfo.InvariantCulture,
+                        System.Globalization.DateTimeStyles.AssumeUniversal | System.Globalization.DateTimeStyles.AdjustToUniversal,
+                        out var parsedEnd))
+                {
+                    resetsAt = parsedEnd;
+                }
+            }
+        }
+
+        var limits = new List<LimitWindow>();
+        using (var usageDoc = JsonDocument.Parse(usageResp))
+        {
+            if (usageDoc.RootElement.TryGetProperty("data", out var d) && d.ValueKind == JsonValueKind.Object
+                && d.TryGetProperty("usage", out var usage) && usage.ValueKind == JsonValueKind.Object
+                && usage.TryGetProperty("items", out var items) && items.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var item in items.EnumerateArray())
+                {
+                    var name = StringProp(item, "name") ?? "total_token";
+                    double? used = item.TryGetProperty("used", out var u) && u.ValueKind == JsonValueKind.Number && u.TryGetDouble(out var uv) ? uv : null;
+                    double? limit = item.TryGetProperty("limit", out var l) && l.ValueKind == JsonValueKind.Number && l.TryGetDouble(out var lv) ? lv : null;
+                    if (name == "compensation_total_token" && (limit is null or <= 0)) continue;
+                    double? pct = item.TryGetProperty("percent", out var p) && p.ValueKind == JsonValueKind.Number && p.TryGetDouble(out var pv)
+                        ? Math.Round(Math.Clamp(pv * 100.0, 0, 100), 1)
+                        : (used is double u2 && limit is double l2 && l2 > 0 ? Math.Round(Math.Clamp(u2 / l2 * 100.0, 0, 100), 1) : null);
+
+                    var title = name == "compensation_total_token"
+                        ? "Доп. кредиты"
+                        : used is double uBil && limit is double lBil && lBil >= 1_000_000_000
+                            ? $"Месяц ({uBil / 1_000_000_000.0:0.#}B / {lBil / 1_000_000_000.0:0.#}B)"
+                            : "Месяц";
+                    limits.Add(new LimitWindow
+                    {
+                        Id = name,
+                        Title = title,
+                        Used = used,
+                        Limit = limit,
+                        UsedPercent = pct,
+                        ResetsAt = resetsAt
+                    });
+                }
+            }
+        }
+
+        return new MimoQuota
+        {
+            FetchedAt = now,
+            PlanName = planName,
+            Limits = limits,
+            Error = limits.Count == 0 ? "Нет активного Token Plan." : null
         };
     }
 
