@@ -9,7 +9,7 @@
 | claude | `~/.claude.json` → `cachedUsageUtilization` | 5 часов / 7 дней, `resets_at` |
 | kimi | `~/.kimi-code/statusline-tokens.json` → `official` | 5 часов / 7 дней |
 | codex | `~/.codex/auth.json` | установлен / авторизован |
-| grok | `~/.grok/bin`, `auth.json`, `version.json` | установлен / авторизован / версия |
+| grok | `grok agent stdio` (`_x.ai/billing`, `_x.ai/auth/info`), `auth.json`, `version.json` | 7 дней / месяц, подписка, аккаунт, версия |
 | agy | `agy -p /usage --output-format json` (фоновый вызов) | 5 часов / 7 дней по группам моделей |
 | mimo | `~/.mimocode\bin\mimo.exe` | установлен |
 | muse | `~/bin/muse.bat` | установлен |

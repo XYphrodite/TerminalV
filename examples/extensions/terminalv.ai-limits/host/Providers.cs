@@ -305,39 +305,318 @@ internal static class Providers
         return status;
     }
 
+    static readonly object GrokGate = new();
+    static GrokQuota? _grokQuota;
+    static bool _grokFetching;
+    static readonly TimeSpan GrokMinInterval = TimeSpan.FromSeconds(60);
+    static readonly TimeSpan GrokStaleAfter = TimeSpan.FromMinutes(30);
+
+    sealed class GrokQuota
+    {
+        public DateTimeOffset FetchedAt { get; init; }
+        public string? Email { get; init; }
+        public string? SubscriptionTier { get; init; }
+        public List<LimitWindow> Limits { get; init; } = [];
+        public string? Error { get; init; }
+    }
+
     static ServiceStatus Grok(IReadOnlyDictionary<string, string> overrides, DateTimeOffset now)
     {
         var binary = Resolve(overrides, "grok.bin", Path.Combine(Home, ".grok", "bin", "grok.exe"));
         var auth = Resolve(overrides, "grok.auth", Path.Combine(Home, ".grok", "auth.json"));
         var versionFile = Resolve(overrides, "grok.version", Path.Combine(Home, ".grok", "version.json"));
+        var settingsCache = Path.Combine(Home, ".grok", "settings_cache.json");
+        var installed = Exists(binary);
         var status = new ServiceStatus
         {
             Id = "grok",
             Name = "Grok",
-            Installed = Exists(binary),
-            Path = Exists(binary) ? binary : null,
+            Installed = installed,
+            Path = installed ? binary : null,
             CheckedAt = now
         };
-        var version = ReadJson(versionFile);
-        if (version is { } v)
+        string? verLabel = null;
+        if (ReadJson(versionFile) is { } v && StringProp(v, "version") is { } ver)
+            verLabel = $"v{ver}";
+
+        if (!installed)
         {
-            var ver = StringProp(v, "version");
-            if (ver is not null) status.Detail = $"v{ver}";
+            status.Detail = "grok.exe не найден.";
+            return status;
         }
+
         var root = ReadJson(auth);
-        if (root is not null)
+        if (root is null)
         {
-            status.Authenticated = true;
-            status.AuthOk = true;
-            status.Account = "xAI OAuth";
-        }
-        else
-        {
-            status.Detail = string.IsNullOrWhiteSpace(status.Detail)
+            status.Detail = verLabel is null
                 ? "~/.grok/auth.json не найден."
-                : status.Detail + " · нет авторизации";
+                : $"{verLabel} · нет авторизации";
+            return status;
         }
+
+        status.Authenticated = true;
+        status.AuthOk = true;
+
+        var cachedTier = ReadGrokCachedTier(settingsCache);
+
+        GrokQuota? cached;
+        bool start = false;
+        lock (GrokGate)
+        {
+            cached = _grokQuota;
+            if (!_grokFetching && (cached is null || now - cached.FetchedAt >= GrokMinInterval))
+                start = _grokFetching = true;
+        }
+        if (start) _ = Task.Run(() => FetchGrokQuota(binary));
+
+        var tier = cached?.SubscriptionTier ?? cachedTier;
+        var email = cached?.Email;
+        status.Account = (email, tier) switch
+        {
+            ({ Length: > 0 } e, { Length: > 0 } t) => $"{e} · {t}",
+            ({ Length: > 0 } e, _) => e,
+            (_, { Length: > 0 } t) => $"xAI OAuth · {t}",
+            _ => "xAI OAuth"
+        };
+
+        if (cached is null)
+        {
+            status.Detail = verLabel is null ? "Загрузка лимитов…" : $"{verLabel} · Загрузка лимитов…";
+            return status;
+        }
+        if (cached.Limits.Count == 0)
+        {
+            var err = cached.Error ?? "Лимиты недоступны.";
+            status.Detail = verLabel is null ? err : $"{verLabel} · {err}";
+            return status;
+        }
+
+        status.Limits.AddRange(cached.Limits);
+        var age = now - cached.FetchedAt;
+        status.LimitsStale = age > GrokStaleAfter;
+        var detail = status.LimitsStale
+            ? $"Кэш лимитов устарел: {(int)age.TotalMinutes}м назад."
+            : cached.Error is null
+                ? "Лимиты из `grok agent`"
+                : $"Лимиты из `grok agent` (ошибка обновления: {cached.Error})";
+        status.Detail = verLabel is null ? detail : $"{verLabel} · {detail}";
         return status;
+    }
+
+    static string? ReadGrokCachedTier(string path)
+    {
+        if (ReadJson(path) is not { } root) return null;
+        var payload = StringProp(root, "payload");
+        if (string.IsNullOrWhiteSpace(payload)) return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(payload);
+            return StringProp(doc.RootElement, "subscription_tier_display");
+        }
+        catch { return null; }
+    }
+
+    static void FetchGrokQuota(string binary)
+    {
+        GrokQuota result;
+        try
+        {
+            result = RunGrokQuota(binary).GetAwaiter().GetResult();
+        }
+        catch (Exception ex)
+        {
+            result = new GrokQuota { FetchedAt = DateTimeOffset.UtcNow, Error = ex.Message };
+        }
+        lock (GrokGate)
+        {
+            if (result.Limits.Count == 0 && _grokQuota is { Limits.Count: > 0 } previous)
+            {
+                _grokQuota = new GrokQuota
+                {
+                    FetchedAt = previous.FetchedAt,
+                    Email = result.Email ?? previous.Email,
+                    SubscriptionTier = result.SubscriptionTier ?? previous.SubscriptionTier,
+                    Limits = previous.Limits,
+                    Error = result.Error
+                };
+            }
+            else
+            {
+                _grokQuota = result;
+            }
+            _grokFetching = false;
+        }
+        try { AgyUpdated?.Invoke(); } catch { }
+    }
+
+    static async Task<GrokQuota> RunGrokQuota(string binary)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var info = new System.Diagnostics.ProcessStartInfo(binary)
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            RedirectStandardInput = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            StandardOutputEncoding = System.Text.Encoding.UTF8,
+            StandardInputEncoding = new System.Text.UTF8Encoding(false)
+        };
+        info.ArgumentList.Add("agent");
+        info.ArgumentList.Add("stdio");
+
+        using var process = System.Diagnostics.Process.Start(info)
+            ?? throw new InvalidOperationException("Не удалось запустить grok.");
+        try
+        {
+            _ = process.StandardError.ReadToEndAsync();
+            await process.StandardInput.WriteLineAsync("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":1,\"clientCapabilities\":{}}}");
+            await process.StandardInput.WriteLineAsync("{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"_x.ai/billing\",\"params\":{}}");
+            await process.StandardInput.WriteLineAsync("{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"_x.ai/auth/info\",\"params\":{}}");
+            await process.StandardInput.FlushAsync();
+
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+            JsonElement? billingResult = null;
+            JsonElement? authResult = null;
+            string? rpcError = null;
+
+            while (!cts.IsCancellationRequested && (billingResult is null || authResult is null))
+            {
+                var line = await process.StandardOutput.ReadLineAsync(cts.Token);
+                if (line is null) break;
+                if (string.IsNullOrWhiteSpace(line) || !line.TrimStart().StartsWith('{')) continue;
+                try
+                {
+                    using var doc = JsonDocument.Parse(line);
+                    var root = doc.RootElement;
+                    if (!root.TryGetProperty("id", out var idProp) || idProp.ValueKind != JsonValueKind.Number
+                        || !idProp.TryGetInt32(out var id))
+                        continue;
+
+                    if (id == 2)
+                    {
+                        if (root.TryGetProperty("result", out var res))
+                            billingResult = res.Clone();
+                        else if (root.TryGetProperty("error", out var err))
+                            rpcError = StringProp(err, "message") ?? "Ошибка получения биллинга Grok.";
+                    }
+                    else if (id == 3 && root.TryGetProperty("result", out var res))
+                    {
+                        authResult = res.Clone();
+                    }
+                }
+                catch { }
+            }
+
+            return ParseGrokQuota(billingResult, authResult, rpcError, now);
+        }
+        finally
+        {
+            try { process.Kill(entireProcessTree: true); } catch { }
+        }
+    }
+
+    static GrokQuota ParseGrokQuota(JsonElement? billingResult, JsonElement? authResult, string? rpcError, DateTimeOffset now)
+    {
+        string? email = authResult is { ValueKind: JsonValueKind.Object } auth
+            ? StringProp(auth, "email")
+            : null;
+
+        if (billingResult is not { ValueKind: JsonValueKind.Object } billing)
+        {
+            return new GrokQuota
+            {
+                FetchedAt = now,
+                Email = email,
+                Error = rpcError ?? "grok agent не вернул данные биллинга."
+            };
+        }
+
+        var tier = StringProp(billing, "subscription_tier") ?? StringProp(billing, "subscriptionTier");
+        var limits = new List<LimitWindow>();
+
+        if (billing.TryGetProperty("config", out var config) && config.ValueKind == JsonValueKind.Object)
+        {
+            var periodTitle = "7 дней";
+            DateTimeOffset? resetsAt = ParseDate(StringProp(config, "billingPeriodEnd"));
+            if (config.TryGetProperty("currentPeriod", out var currentPeriod) && currentPeriod.ValueKind == JsonValueKind.Object)
+            {
+                var periodType = StringProp(currentPeriod, "type");
+                periodTitle = periodType switch
+                {
+                    "USAGE_PERIOD_TYPE_WEEKLY" => "7 дней",
+                    "USAGE_PERIOD_TYPE_MONTHLY" => "Месяц",
+                    _ => "7 дней"
+                };
+                resetsAt = ParseDate(StringProp(currentPeriod, "end")) ?? resetsAt;
+            }
+
+            double? usedPercent = null;
+            if (config.TryGetProperty("creditUsagePercent", out var cup) && cup.ValueKind == JsonValueKind.Number
+                && cup.TryGetDouble(out var pct))
+            {
+                usedPercent = Math.Round(pct, 1);
+            }
+
+            var usedDollars = ReadCentDollars(config, "used");
+            var limitDollars = ReadCentDollars(config, "monthlyLimit");
+            if (usedPercent is null && usedDollars is double u && limitDollars is double l && l > 0)
+                usedPercent = Math.Round(u / l * 100.0, 1);
+
+            if (usedPercent is not null || limitDollars > 0)
+            {
+                limits.Add(new LimitWindow
+                {
+                    Id = "primary",
+                    Title = periodTitle,
+                    UsedPercent = usedPercent,
+                    Used = usedDollars,
+                    Limit = limitDollars,
+                    ResetsAt = resetsAt
+                });
+            }
+
+            var onDemandCap = ReadCentDollars(config, "onDemandCap");
+            var onDemandUsed = ReadCentDollars(config, "onDemandUsed") ?? 0;
+            if (onDemandCap is double cap && cap > 0)
+            {
+                limits.Add(new LimitWindow
+                {
+                    Id = "on_demand",
+                    Title = $"Доп. лимит (${onDemandUsed:0.##}/${cap:0.##})",
+                    Used = onDemandUsed,
+                    Limit = cap,
+                    UsedPercent = Math.Round(onDemandUsed / cap * 100.0, 1),
+                    ResetsAt = resetsAt
+                });
+            }
+        }
+
+        return limits.Count == 0
+            ? new GrokQuota
+            {
+                FetchedAt = now,
+                Email = email,
+                SubscriptionTier = tier,
+                Error = rpcError ?? "Биллинг Grok не вернул активных лимитов."
+            }
+            : new GrokQuota
+            {
+                FetchedAt = now,
+                Email = email,
+                SubscriptionTier = tier,
+                Limits = limits
+            };
+    }
+
+    static double? ReadCentDollars(JsonElement parent, string name)
+    {
+        if (!parent.TryGetProperty(name, out var prop) || prop.ValueKind != JsonValueKind.Object)
+            return null;
+        if (prop.TryGetProperty("val", out var val) && val.ValueKind == JsonValueKind.Number
+            && val.TryGetDouble(out var cents))
+            return Math.Round(cents / 100.0, 2);
+        return null;
     }
 
     /// <summary>Raised when a background agy quota fetch finishes, so the host can republish state.</summary>
