@@ -19,11 +19,13 @@ function percentClass(value) {
 
 function serviceTone(service) {
   if (!service.installed) return "missing";
-  if (service.authenticated && service.authOk === false) return "warn";
-  if (service.limits?.some(l => (l.usedPercent ?? 0) >= 85)) return "limited";
-  if (service.limitsStale) return "warn";
-  if (service.authenticated) return "ok";
-  return "warn";
+  if (service.authenticated && service.authOk === false) return "expired";
+  if (!service.authenticated) return "unauth";
+  const maxPct = Math.max(0, ...(service.limits ?? []).map(l => l.usedPercent ?? 0));
+  if (maxPct >= 100) return "exhausted";
+  if (maxPct >= 85) return "limited";
+  if (maxPct >= 60 || service.limitsStale) return "warn";
+  return "ok";
 }
 
 export async function activate(api) {
@@ -47,11 +49,17 @@ export async function activate(api) {
     }
     .ai-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
     .ai-card-title { display: flex; align-items: center; gap: 6px; font-weight: 600; }
-    .ai-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text); opacity: 0.35; }
+    .ai-dot {
+      width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+      box-sizing: border-box; background: var(--text); opacity: 0.35;
+    }
     .ai-dot.ok { background: #3ecf8e; opacity: 1; }
     .ai-dot.warn { background: #e2b93b; opacity: 1; }
     .ai-dot.limited { background: #e26d3b; opacity: 1; }
-    .ai-dot.missing { background: var(--danger, #e25555); opacity: 1; }
+    .ai-dot.exhausted { background: var(--danger, #e25555); opacity: 1; }
+    .ai-dot.expired { background: transparent; border: 1.75px solid #e2b93b; opacity: 1; }
+    .ai-dot.unauth { background: transparent; border: 1.75px solid var(--muted, #8b98a8); opacity: 0.9; }
+    .ai-dot.missing { background: transparent; border: 1.5px dashed var(--muted, #8b98a8); opacity: 0.4; }
     .ai-meta { opacity: 0.75; overflow-wrap: anywhere; }
     .ai-meta.ai-stale { color: #e2b93b; opacity: 1; }
     .ai-limit-row { display: grid; gap: 2px; }
@@ -85,7 +93,10 @@ export async function activate(api) {
       ? `Проверено: ${new Date(state.checkedAt).toLocaleTimeString()}`
       : "";
     list.replaceChildren(...services.map(renderCard));
-    const limited = services.filter(s => serviceTone(s) === "limited" || serviceTone(s) === "missing").length;
+    const limited = services.filter(s => {
+      const tone = serviceTone(s);
+      return tone === "exhausted" || tone === "limited" || tone === "missing";
+    }).length;
     panel.setBadge(limited > 0 ? String(limited) : "");
   }
 
