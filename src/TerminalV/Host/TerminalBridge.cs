@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Media;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Media;
@@ -56,6 +57,7 @@ internal sealed class TerminalBridge : IDisposable
     private int _updateBusy;
     private int _catalogBusy;
     private int _shortcutsBusy;
+    private int _backgroundBusy;
     private readonly ShortcutService _shortcuts = new(Environment.ProcessPath);
     private readonly Stopwatch _bellClock = Stopwatch.StartNew();
     private long _lastBellMs = -2000;
@@ -773,26 +775,95 @@ internal sealed class TerminalBridge : IDisposable
 
     private void PickBackground()
     {
-        _dispatcher.BeginInvoke(() =>
+        if (Interlocked.Exchange(ref _backgroundBusy, 1) == 1)
         {
-            var dialog = new OpenFileDialog
-            {
-                Title = _localizer["Dialog_BackgroundTitle"],
-                Filter = _localizer["Dialog_ImageFilter"]
-            };
-            if (dialog.ShowDialog() != true)
-            {
-                return;
-            }
+            return;
+        }
 
+        _ = Task.Run(async () =>
+        {
+            var tempFile = Path.Combine(Path.GetTempPath(), $"terminalv-bg-{Guid.NewGuid():N}.txt");
             try
             {
-                var url = _db.ImportBackground(dialog.FileName);
-                Post(new { type = "background-picked", path = url });
+                string? selectedPath = null;
+                var exe = Environment.ProcessPath;
+                if (!string.IsNullOrWhiteSpace(exe) && File.Exists(exe))
+                {
+                    var psi = new ProcessStartInfo(exe)
+                    {
+                        UseShellExecute = false,
+                        CreateNoWindow = true
+                    };
+                    psi.ArgumentList.Add("--pick-background");
+                    psi.ArgumentList.Add(tempFile);
+                    try { AllowSetForegroundWindow(-1); } catch { }
+                    using var proc = Process.Start(psi);
+                    if (proc is not null)
+                    {
+                        try { AllowSetForegroundWindow(proc.Id); } catch { }
+                        await proc.WaitForExitAsync(_updateCts.Token).ConfigureAwait(false);
+                        if (File.Exists(tempFile))
+                        {
+                            var content = (await File.ReadAllTextAsync(tempFile, _updateCts.Token).ConfigureAwait(false)).Trim();
+                            if (!string.IsNullOrWhiteSpace(content) && File.Exists(content))
+                            {
+                                selectedPath = content;
+                            }
+                        }
+                    }
+                }
+                else
+                {
+                    await _dispatcher.InvokeAsync(() =>
+                    {
+                        var dialog = new OpenFileDialog
+                        {
+                            Title = _localizer["Dialog_BackgroundTitle"],
+                            Filter = _localizer["Dialog_ImageFilter"],
+                            CheckFileExists = true,
+                            DereferenceLinks = true,
+                            Multiselect = false
+                        };
+                        var owner = Application.Current?.MainWindow;
+                        if ((owner is { IsLoaded: true } ? dialog.ShowDialog(owner) : dialog.ShowDialog()) == true)
+                        {
+                            selectedPath = dialog.FileName;
+                        }
+                    }, DispatcherPriority.Background);
+                }
+
+                if (string.IsNullOrWhiteSpace(selectedPath) || _disposed)
+                {
+                    return;
+                }
+
+                await _dispatcher.InvokeAsync(() =>
+                {
+                    if (_disposed) return;
+                    try
+                    {
+                        var url = _db.ImportBackground(selectedPath);
+                        Post(new { type = "background-picked", path = url });
+                    }
+                    catch (Exception ex)
+                    {
+                        Diag.Log("bridge", "PickBackground import failed", ex.ToString());
+                        Post(new { type = "update", status = "error", message = ex.Message });
+                    }
+                });
+            }
+            catch (OperationCanceledException)
+            {
             }
             catch (Exception ex)
             {
+                Diag.Log("bridge", "PickBackground failed", ex.ToString());
                 Post(new { type = "update", status = "error", message = ex.Message });
+            }
+            finally
+            {
+                try { if (File.Exists(tempFile)) File.Delete(tempFile); } catch { }
+                Interlocked.Exchange(ref _backgroundBusy, 0);
             }
         });
     }
@@ -928,4 +999,7 @@ internal sealed class TerminalBridge : IDisposable
             }
         });
     }
+
+    [DllImport("user32.dll")]
+    private static extern bool AllowSetForegroundWindow(int dwProcessId);
 }

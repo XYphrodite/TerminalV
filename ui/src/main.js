@@ -669,14 +669,15 @@ function applyToTerminals() {
   const size = effectiveFontSize();
   const primaryFont = settings.fontFamily.split(",")[0].trim().replaceAll('"', "");
   for (const tab of tabs) {
+    tab.term.options.allowTransparency = Boolean(settings.backgroundPath);
     tab.term.options.theme = theme;
     tab.term.options.fontFamily = settings.fontFamily;
     tab.term.options.fontSize = size;
     tab.term.options.letterSpacing = 0;
-    tab.term.options.allowTransparency = Boolean(settings.backgroundPath);
     applyBackground(tab.pane);
     if (isPaneVisible(tab)) {
       applyFit(tab);
+      tab.term.refresh(0, Math.max(0, tab.term.rows - 1));
     }
   }
   zoomValue.textContent = `${Math.round((size / settings.fontSize) * 100)}%`;
