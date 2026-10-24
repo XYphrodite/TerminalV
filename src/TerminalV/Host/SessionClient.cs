@@ -1,9 +1,11 @@
 using System.Diagnostics;
 using System.IO;
 using System.IO.Pipes;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
+using Microsoft.Win32.SafeHandles;
 using TerminalV.Diagnostics;
 
 namespace TerminalV.Host;
@@ -320,6 +322,7 @@ internal sealed class SessionClient : IDisposable
 
     private static void StartHost()
     {
+        StopNonElevatedHostIfAdmin();
         try
         {
             if (Mutex.TryOpenExisting(SessionHost.MutexName, out var existing))
@@ -345,4 +348,84 @@ internal sealed class SessionClient : IDisposable
             CreateNoWindow = true
         });
     }
+
+    private static void StopNonElevatedHostIfAdmin()
+    {
+        if (!Program.IsAdministrator())
+        {
+            return;
+        }
+
+        try
+        {
+            var currentPid = Environment.ProcessId;
+            foreach (var proc in Process.GetProcessesByName("TerminalV"))
+            {
+                using (proc)
+                {
+                    if (proc.Id == currentPid)
+                    {
+                        continue;
+                    }
+
+                    if (IsProcessConfirmedNonElevated(proc))
+                    {
+                        try
+                        {
+                            proc.Kill();
+                            proc.WaitForExit(1000);
+                        }
+                        catch
+                        {
+                        }
+                    }
+                }
+            }
+        }
+        catch
+        {
+        }
+    }
+
+    private static bool IsProcessConfirmedNonElevated(Process process)
+    {
+        IntPtr token = IntPtr.Zero;
+        try
+        {
+            if (!OpenProcessToken(process.SafeHandle, TokenQuery, out token))
+            {
+                return false;
+            }
+
+            if (!GetTokenInformation(token, TokenElevationClass, out var elevation, sizeof(int), out _))
+            {
+                return false;
+            }
+
+            return elevation == 0;
+        }
+        catch
+        {
+            return false;
+        }
+        finally
+        {
+            if (token != IntPtr.Zero)
+            {
+                CloseHandle(token);
+            }
+        }
+    }
+
+    private const uint TokenQuery = 0x0008;
+    private const int TokenElevationClass = 20;
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    private static extern bool OpenProcessToken(SafeProcessHandle processHandle, uint desiredAccess, out IntPtr tokenHandle);
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    private static extern bool GetTokenInformation(IntPtr tokenHandle, int tokenInformationClass, out int tokenInformation, int tokenInformationLength, out int returnLength);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool CloseHandle(IntPtr hObject);
 }

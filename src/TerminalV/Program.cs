@@ -1,7 +1,10 @@
+using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Security.Principal;
 using System.Text;
 using System.Windows;
+using Microsoft.Win32;
 using TerminalV.Cli;
 using TerminalV.Data;
 using TerminalV.Localization;
@@ -28,7 +31,8 @@ internal static class Program
             return PickBackgroundProcess(args[1]);
         }
 
-        if (args.Length > 0)
+        var isElevatedLaunch = args.Length == 1 && args[0].Equals("--elevated", StringComparison.OrdinalIgnoreCase);
+        if (args.Length > 0 && !isElevatedLaunch)
         {
             Console.OutputEncoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
             Console.InputEncoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
@@ -44,6 +48,15 @@ internal static class Program
         }
 
         HideConsole();
+        RegisterRunAsAdminLayer();
+        if (!isElevatedLaunch && !IsAdministrator() &&
+            !string.Equals(Environment.GetEnvironmentVariable("TERMINALV_NO_ELEVATE"), "1", StringComparison.Ordinal))
+        {
+            if (TryElevate())
+            {
+                return 0;
+            }
+        }
         DesktopInstanceLease? lease;
         try
         {
@@ -72,6 +85,67 @@ internal static class Program
         app.InitializeComponent();
         app.Run();
         return 0;
+    }
+
+    internal static bool IsAdministrator()
+    {
+        try
+        {
+            using var identity = WindowsIdentity.GetCurrent();
+            return new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static void RegisterRunAsAdminLayer()
+    {
+        try
+        {
+            var exe = Environment.ProcessPath;
+            if (string.IsNullOrWhiteSpace(exe) ||
+                !string.Equals(Path.GetFileName(exe), "TerminalV.exe", StringComparison.OrdinalIgnoreCase) ||
+                !File.Exists(exe))
+            {
+                return;
+            }
+
+            using var key = Registry.CurrentUser.CreateSubKey(
+                @"Software\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\Layers",
+                writable: true);
+            key?.SetValue(exe, "~ RUNASADMIN", RegistryValueKind.String);
+        }
+        catch
+        {
+        }
+    }
+
+    private static bool TryElevate()
+    {
+        try
+        {
+            var exe = Environment.ProcessPath;
+            if (string.IsNullOrWhiteSpace(exe) ||
+                !string.Equals(Path.GetFileName(exe), "TerminalV.exe", StringComparison.OrdinalIgnoreCase) ||
+                !File.Exists(exe))
+            {
+                return false;
+            }
+
+            using var proc = Process.Start(new ProcessStartInfo(exe, "--elevated")
+            {
+                UseShellExecute = true,
+                Verb = "runas",
+                WorkingDirectory = Path.GetDirectoryName(exe) ?? AppContext.BaseDirectory
+            });
+            return proc is not null;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private static int PickBackgroundProcess(string outputPath)

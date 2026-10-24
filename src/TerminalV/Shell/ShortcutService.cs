@@ -81,6 +81,12 @@ internal sealed class ShortcutService(
             if (!File.Exists(temporary)) throw new IOException("Windows не сохранила ярлык.");
             Marshal.FinalReleaseComObject(link);
             link = null;
+            var linkBytes = File.ReadAllBytes(temporary);
+            if (linkBytes.Length > 0x15)
+            {
+                linkBytes[0x15] |= 0x20; // SLDF_RUNAS_USER (Run as Administrator)
+                File.WriteAllBytes(temporary, linkBytes);
+            }
             if (existed) File.Replace(temporary, path, null);
             else File.Move(temporary, path); // Do not overwrite a shortcut created concurrently.
             temporary = null;
