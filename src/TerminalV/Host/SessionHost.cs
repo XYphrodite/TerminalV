@@ -2,6 +2,8 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Pipes;
+using System.Security.AccessControl;
+using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
@@ -27,7 +29,7 @@ internal static class SessionHost
 
     public static void Run()
     {
-        using var mutex = new Mutex(true, MutexName, out var created);
+        using var mutex = CreateHostMutex(out var created);
         if (!created)
         {
             return;
@@ -35,12 +37,7 @@ internal static class SessionHost
 
         while (true)
         {
-            using var pipe = new NamedPipeServerStream(
-                PipeName,
-                PipeDirection.InOut,
-                1,
-                PipeTransmissionMode.Byte,
-                PipeOptions.Asynchronous);
+            using var pipe = CreatePipeServer();
             pipe.WaitForConnection();
             using var reader = new StreamReader(pipe, Encoding.UTF8, false, 4096, leaveOpen: true);
             using var writer = new StreamWriter(pipe, new UTF8Encoding(false), 4096, leaveOpen: true)
@@ -73,6 +70,70 @@ internal static class SessionHost
                 }
             }
         }
+    }
+
+    private static Mutex? CreateHostMutex(out bool created)
+    {
+        try
+        {
+            using var identity = WindowsIdentity.GetCurrent();
+            if (identity.User is { } sid)
+            {
+                var security = new MutexSecurity();
+                security.AddAccessRule(new MutexAccessRule(sid, MutexRights.FullControl, AccessControlType.Allow));
+                return MutexAcl.Create(true, MutexName, out created, security);
+            }
+        }
+        catch (UnauthorizedAccessException)
+        {
+            created = false;
+            return null;
+        }
+        catch
+        {
+        }
+
+        try
+        {
+            return new Mutex(true, MutexName, out created);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            created = false;
+            return null;
+        }
+    }
+
+    private static NamedPipeServerStream CreatePipeServer()
+    {
+        try
+        {
+            using var identity = WindowsIdentity.GetCurrent();
+            if (identity.User is { } sid)
+            {
+                var security = new PipeSecurity();
+                security.AddAccessRule(new PipeAccessRule(sid, PipeAccessRights.FullControl, AccessControlType.Allow));
+                return NamedPipeServerStreamAcl.Create(
+                    PipeName,
+                    PipeDirection.InOut,
+                    1,
+                    PipeTransmissionMode.Byte,
+                    PipeOptions.Asynchronous,
+                    inBufferSize: 0,
+                    outBufferSize: 0,
+                    security);
+            }
+        }
+        catch
+        {
+        }
+
+        return new NamedPipeServerStream(
+            PipeName,
+            PipeDirection.InOut,
+            1,
+            PipeTransmissionMode.Byte,
+            PipeOptions.Asynchronous);
     }
 
     private static void Serve(StreamReader reader)

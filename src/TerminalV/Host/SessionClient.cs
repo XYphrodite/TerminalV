@@ -53,7 +53,14 @@ internal sealed class SessionClient : IDisposable
             return true;
         }
 
-        _startHost();
+        try
+        {
+            _startHost();
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
+
         var pipe = new NamedPipeClientStream(".", _pipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
         var connected = false;
         for (var attempt = 0; attempt < 40; attempt++)
@@ -62,6 +69,10 @@ internal sealed class SessionClient : IDisposable
             {
                 pipe.Connect(100);
                 connected = true;
+                break;
+            }
+            catch (UnauthorizedAccessException)
+            {
                 break;
             }
             catch (TimeoutException)
@@ -309,9 +320,16 @@ internal sealed class SessionClient : IDisposable
 
     private static void StartHost()
     {
-        if (Mutex.TryOpenExisting(SessionHost.MutexName, out var existing))
+        try
         {
-            existing.Dispose();
+            if (Mutex.TryOpenExisting(SessionHost.MutexName, out var existing))
+            {
+                existing.Dispose();
+                return;
+            }
+        }
+        catch (UnauthorizedAccessException)
+        {
             return;
         }
 
