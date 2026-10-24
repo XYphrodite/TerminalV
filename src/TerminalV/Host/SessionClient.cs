@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.IO;
 using System.IO.Pipes;
 using System.Runtime.InteropServices;
+using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
@@ -351,7 +352,15 @@ internal sealed class SessionClient : IDisposable
 
     private static void StopNonElevatedHostIfAdmin()
     {
-        if (!Program.IsAdministrator())
+        try
+        {
+            using var identity = WindowsIdentity.GetCurrent();
+            if (!new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator))
+            {
+                return;
+            }
+        }
+        catch
         {
             return;
         }
