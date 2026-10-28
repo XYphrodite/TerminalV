@@ -36,11 +36,13 @@ window.chrome.webview = {
     }
     const defaultReplay = message.type === "attach" && !window.testInit?.sessions &&
       ["first", "second"].includes(message.id);
-    if (message.type === "create" || defaultReplay) {
+    if (message.type === "create" || message.type === "restart" || defaultReplay) {
       const sample = message.id === "first"
         ? "PS C:\\Project> demo\r\nОшибка подключения к серверу\r\nПроверка конфигурации завершена\r\nПовторная ошибка подключения\r\nPS C:\\Project> "
         : "Другая вкладка\r\nunique second\r\nPS C:\\Project> ";
-      const data = message.type === "create" ? window.testCreateOutput ?? sample : sample;
+      const data = message.type === "restart"
+        ? window.testRestartOutput ?? window.testCreateOutput ?? sample
+        : message.type === "create" ? window.testCreateOutput ?? sample : sample;
       queueMicrotask(() => window.sendHost({ type: "data", id: message.id, data, replay: defaultReplay }));
     }
   }

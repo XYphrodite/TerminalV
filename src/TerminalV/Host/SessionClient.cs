@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Pipes;
@@ -23,6 +24,7 @@ internal sealed class SessionClient : IDisposable
     private readonly string _pipeName;
     private readonly Action _startHost;
     private readonly OutputReplayGuard _replay = new();
+    private readonly ConcurrentDictionary<string, byte> _suppressingIds = new();
     private NamedPipeClientStream? _pipe;
     private StreamWriter? _writer;
     private CancellationTokenSource? _readCts;
@@ -36,6 +38,7 @@ internal sealed class SessionClient : IDisposable
     public bool? LaunchProfilesSupported { get; private set; }
     public bool? WslLaunchSupported { get; private set; }
     public bool? EnvironmentRefreshSupported { get; private set; }
+    public bool? SessionRestartSupported { get; private set; }
 
     // Tests use a private pipe and a no-op starter, never the user's live host.
     public SessionClient(string pipeName = SessionHost.PipeName, Action? startHost = null)
@@ -98,6 +101,7 @@ internal sealed class SessionClient : IDisposable
         LaunchProfilesSupported = null;
         WslLaunchSupported = null;
         EnvironmentRefreshSupported = null;
+        SessionRestartSupported = null;
         _writer = new StreamWriter(pipe, new UTF8Encoding(false), 4096, leaveOpen: true) { AutoFlush = true };
         _readCts = new CancellationTokenSource();
         _ = Task.Factory.StartNew(() => ReadLoop(_readCts.Token), TaskCreationOptions.LongRunning);
@@ -132,6 +136,8 @@ internal sealed class SessionClient : IDisposable
             WslLaunchSupported = root.TryGetProperty("wslLaunchSupported", out var wsl) && wsl.ValueKind == JsonValueKind.True;
             EnvironmentRefreshSupported = root.TryGetProperty("environmentRefreshSupported", out var environment) &&
                 environment.ValueKind == JsonValueKind.True;
+            SessionRestartSupported = root.TryGetProperty("sessionRestartSupported", out var restart) &&
+                restart.ValueKind == JsonValueKind.True;
 
             ready.Set();
         }
@@ -167,6 +173,58 @@ internal sealed class SessionClient : IDisposable
             if (LaunchProfilesSupported != true)
                 throw new InvalidOperationException("Фоновый процесс не поддерживает профили запуска. Сохраните работу и перезагрузите Windows для его обновления. Работающие сессии не прерывались.");
         }
+        Send(new { type = shell is null ? "create" : "create-profile", id, cols, rows, cwd, shell, startupCommand, wslDistribution });
+    }
+
+    public void Restart(string id, int cols, int rows, string? cwd, string? shell = null, string? startupCommand = null, string? wslDistribution = null)
+    {
+        string[]? liveIds = null;
+        if (shell is not null || SessionRestartSupported is null)
+        {
+            if (shell is not null)
+            {
+                LaunchProfilesSupported = null;
+                WslLaunchSupported = null;
+            }
+            liveIds = List();
+            if (shell == "wsl" && WslLaunchSupported != true)
+                throw new InvalidOperationException("Фоновый процесс не поддерживает запуск WSL. Сохраните работу и перезагрузите Windows для его обновления. Работающие сессии не прерывались.");
+            if (shell is not null && LaunchProfilesSupported != true)
+                throw new InvalidOperationException("Фоновый процесс не поддерживает профили запуска. Сохраните работу и перезагрузите Windows для его обновления. Работающие сессии не прерывались.");
+        }
+
+        if (SessionRestartSupported == true)
+        {
+            Send(new { type = "restart", id, cols, rows, cwd, shell, startupCommand, wslDistribution });
+            return;
+        }
+
+        // Fallback for an already-running pre-v0.8.22 host: cleanly stop the old shell first
+        // and swallow its exit packet before starting the fresh-environment replacement.
+        liveIds ??= List();
+        if (liveIds.Contains(id))
+        {
+            using var exited = new ManualResetEventSlim(false);
+            void ExitHandler(string type, JsonElement root)
+            {
+                if (type == "exit" && root.TryGetProperty("id", out var idEl) && idEl.GetString() == id)
+                    exited.Set();
+            }
+
+            _suppressingIds[id] = 0;
+            _onPacket += ExitHandler;
+            try
+            {
+                Send(new { type = "kill", id });
+                exited.Wait(TimeSpan.FromMilliseconds(500));
+            }
+            finally
+            {
+                _onPacket -= ExitHandler;
+                _suppressingIds.TryRemove(id, out _);
+            }
+        }
+
         Send(new { type = shell is null ? "create" : "create-profile", id, cols, rows, cwd, shell, startupCommand, wslDistribution });
     }
 
@@ -255,6 +313,10 @@ internal sealed class SessionClient : IDisposable
                     if (ordinaryPacket)
                         _onPacket?.Invoke(type, root.Clone());
                     var id = root.TryGetProperty("id", out var idEl) ? idEl.GetString() : null;
+                    if (id is not null && _suppressingIds.ContainsKey(id) && type is "data" or "exit" or "cwd")
+                    {
+                        continue;
+                    }
                     if (type == "data" && id is not null && root.TryGetProperty("data", out var dataEl))
                     {
                         Data?.Invoke(id, dataEl.GetString() ?? "", _replay.IsReplaying(id));

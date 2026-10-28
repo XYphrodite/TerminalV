@@ -175,6 +175,7 @@ const sessionOptions = createSessionOptions({
     if (action !== "hide") { renderTabs(); persistSessions(); }
   },
   onHide: hideTab,
+  onRefreshEnv: refreshEnvironment,
   restoreFocus: () => {
     const tab = currentTab();
     if (tab) focusTerminal(tab);
@@ -1620,6 +1621,62 @@ function newTab(options = {}) {
     renderTabs();
     activate(id);
   }
+}
+
+function preserveViewportSequence(term, banner) {
+  const resetModes = "\x1b[?1049l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?2004l\x1b[0m\x1b[?25h";
+  const buf = term.buffer?.normal;
+  const rows = term.rows || 24;
+  if (!buf) return `${resetModes}\x1b[H`;
+  let lastUsedRow = -1;
+  for (let r = rows - 1; r >= 0; r--) {
+    const line = buf.getLine(buf.baseY + r);
+    if (line && line.translateToString(true).length > 0) {
+      lastUsedRow = r;
+      break;
+    }
+  }
+  if (lastUsedRow < 0) return `${resetModes}\x1b[H`;
+  if (lastUsedRow === rows - 1) {
+    return `${resetModes}\x1b[${rows};1H\r\n\x1b[90m${banner}\x1b[0m\x1b[${rows};1H${"\n".repeat(rows)}\x1b[H`;
+  }
+  return `${resetModes}\x1b[${lastUsedRow + 2};1H\x1b[2K\x1b[90m${banner}\x1b[0m\x1b[${rows};1H${"\n".repeat(lastUsedRow + 2)}\x1b[H`;
+}
+
+function refreshEnvironment(tab) {
+  if (!tabs.includes(tab) || tab.hidden || isMobileUi() || isModalOpen()) return;
+  sessionOptions.cancel(tab);
+  closeController.cancel(tab);
+  pasteController.cancel(tab);
+  if (activeId !== tab.id) activate(tab.id, { focus: false });
+  else if (!isPaneVisible(tab)) renderPaneLayout();
+  searchController.close({ focus: false });
+  tab.exited = false;
+  tab.cwdNotice = "";
+  renderCwdNotice();
+  tab.overlay.classList.remove("visible");
+  notifications.acknowledge(tab);
+  tab.output.whenParsed(() => {
+    if (!tabs.includes(tab) || tab.hidden) return;
+    if (tab.remoteGeometry) layoutMirrorViewport(tab);
+    else tab.fit.fit();
+    tab.output.write(preserveViewportSequence(tab.term, t("Session_EnvRefreshedBanner")), true);
+    try { tab.term.scrollToBottom(); } catch {}
+    post({
+      type: "restart",
+      id: tab.id,
+      cols: tab.term.cols,
+      rows: tab.term.rows,
+      cwd: tab.shell === "wsl" ? undefined : tab.cwd,
+      shell: tab.shell,
+      startupCommand: tab.startupCommand,
+      wslDistribution: tab.wslDistribution
+    });
+    tab.ptySize = { cols: tab.term.cols, rows: tab.term.rows };
+    focusTerminal(tab);
+    renderTabs();
+    schedulePersist();
+  });
 }
 
 function restart(tab) {

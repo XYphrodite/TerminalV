@@ -53,13 +53,14 @@ export function sessionGroups(sessions, { hidden = false, query = "" } = {}) {
   }));
 }
 
-export function createSessionOptions({ dialog, getSessions, onSave, onHide, restoreFocus }) {
+export function createSessionOptions({ dialog, getSessions, onSave, onHide, onRefreshEnv, restoreFocus }) {
   const form = dialog.querySelector("form");
   const name = dialog.querySelector("[data-session-name]");
   const group = dialog.querySelector("[data-session-group]");
   const colors = dialog.querySelector("[data-session-color]");
   const pinned = dialog.querySelector("[data-session-pinned]");
   const muted = dialog.querySelector("[data-session-muted]");
+  const refreshEnv = dialog.querySelector("[data-session-refresh-env]");
   const hide = dialog.querySelector("[data-session-hide]");
   const suggestions = dialog.querySelector("datalist");
   let pending = null;
@@ -77,11 +78,13 @@ export function createSessionOptions({ dialog, getSessions, onSave, onHide, rest
       onSave(tab, sessionMetadata({ group: group.value, color: colors.value, pinned: pinned.checked,
         hidden: tab.hidden, muted: muted.checked }), action);
       if (action === "hide") onHide(tab);
+      if (action === "refresh-env" && onRefreshEnv) onRefreshEnv(tab);
     }
-    restoreFocus();
+    if (action !== "refresh-env") restoreFocus();
   }
 
   form.addEventListener("submit", (event) => { event.preventDefault(); finish("save"); });
+  if (refreshEnv) refreshEnv.addEventListener("click", () => finish("refresh-env"));
   hide.addEventListener("click", () => finish("hide"));
   dialog.querySelector("[data-session-cancel]").addEventListener("click", () => finish("cancel"));
   dialog.addEventListener("cancel", (event) => { event.preventDefault(); finish("cancel"); });
@@ -98,6 +101,11 @@ export function createSessionOptions({ dialog, getSessions, onSave, onHide, rest
       colors.value = tab.color || "";
       pinned.checked = Boolean(tab.pinned);
       muted.checked = Boolean(tab.muted);
+      if (refreshEnv) {
+        refreshEnv.hidden = Boolean(tab.hidden) || dialog.ownerDocument.documentElement.classList.contains("mobile-ui");
+        refreshEnv.textContent = t("Session_RefreshEnv");
+        refreshEnv.title = t("Session_RefreshEnvHint");
+      }
       hide.hidden = Boolean(tab.hidden);
       hide.textContent = tab.exited ? t("Session_HideAndSave") : t("Session_HideKeep");
       suggestions.replaceChildren(...[...new Set(getSessions().map((item) => item.group).filter(Boolean))]

@@ -165,11 +165,13 @@ internal static class SessionHost
                         cwdTrackingSupported = true,
                         launchProfilesSupported = true,
                         wslLaunchSupported = true,
-                        environmentRefreshSupported = true
+                        environmentRefreshSupported = true,
+                        sessionRestartSupported = true
                     });
                     break;
                 case "create":
                 case "create-profile":
+                case "restart":
                     Create(request);
                     break;
                 case "attach":
@@ -213,23 +215,26 @@ internal static class SessionHost
         {
             if (request.Type == "create-profile" && Sessions.ContainsKey(request.Id))
                 throw new InvalidOperationException("Сессия уже работает. Повторный запуск профиля отменён.");
-            var isWsl = request.Type == "create-profile" && request.Shell == "wsl";
+            var hasExplicitShell = request.Type == "create-profile" || (request.Type == "restart" && request.Shell is not null);
+            var isWsl = hasExplicitShell && request.Shell == "wsl";
             if (isWsl && request.Cwd is not null)
                 throw new ArgumentException("Быстрый запуск WSL открывает домашнюю папку Linux.");
             var cwd = WorkingDirectory.Resolve(isWsl ? null : request.Cwd);
-            if (request.Type == "create-profile" && cwd.Notice is not null)
+            if (cwd.Notice is not null && (request.Type == "create-profile" || (hasExplicitShell && !string.IsNullOrWhiteSpace(request.StartupCommand))))
                 throw new DirectoryNotFoundException("Папка профиля недоступна. Запуск отменён: " + request.Cwd);
-            var shell = ShellResolver.Resolve(isWsl || (request.Cwd is null && request.Type != "create-profile") ? null : cwd.Path,
-                request.Type == "create-profile" ? request.Shell ?? "auto" : null,
-                request.Type == "create-profile" ? request.StartupCommand : null, request.WslDistribution);
+            var shell = ShellResolver.Resolve(isWsl || (request.Cwd is null && !hasExplicitShell) ? null : cwd.Path,
+                hasExplicitShell ? request.Shell ?? "auto" : null,
+                hasExplicitShell ? request.StartupCommand : null, request.WslDistribution);
             Kill(request.Id);
             ConPtySession.Start(
                 request.Id, shell.CommandLine, cwd.Path,
                 Math.Max(request.Cols, 1), Math.Max(request.Rows, 1), pty =>
                 {
                     var hosted = new HostedSession(pty, reportDirectory: !isWsl);
+                    Sessions[request.Id] = hosted;
                     pty.Output += chunk =>
                     {
+                        if (!Sessions.TryGetValue(request.Id, out var current) || !ReferenceEquals(current, hosted)) return;
                         lock (hosted.Gate)
                         {
                             hosted.Add(chunk);
@@ -238,7 +243,7 @@ internal static class SessionHost
                     };
                     pty.DirectoryChanged += _ =>
                     {
-                        if (isWsl) return;
+                        if (isWsl || !Sessions.TryGetValue(request.Id, out var current) || !ReferenceEquals(current, hosted)) return;
                         lock (hosted.Gate)
                         {
                             Send(new { type = "cwd", id = request.Id, cwd = pty.CurrentDirectory });
@@ -246,10 +251,12 @@ internal static class SessionHost
                     };
                     pty.Exited += code =>
                     {
-                        Send(new { type = "exit", id = request.Id, code });
-                        Kill(request.Id);
+                        if (((ICollection<KeyValuePair<string, HostedSession>>)Sessions).Remove(new KeyValuePair<string, HostedSession>(request.Id, hosted)))
+                        {
+                            Send(new { type = "exit", id = request.Id, code });
+                            hosted.Dispose();
+                        }
                     };
-                    Sessions[request.Id] = hosted;
                     if (!isWsl) Send(new { type = "cwd", id = request.Id, cwd = cwd.Path, notice = cwd.Notice });
                 });
         }

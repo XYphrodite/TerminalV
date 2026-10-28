@@ -224,7 +224,10 @@ internal sealed class TerminalBridge : IDisposable
         switch (message.Type)
         {
             case "create":
-                Create(message);
+                Create(message, restart: false);
+                break;
+            case "restart":
+                Create(message, restart: true);
                 break;
             case "attach":
                 if (message.Id is { } attachingId && !_attachBacklog.ContainsKey(attachingId))
@@ -611,11 +614,16 @@ internal sealed class TerminalBridge : IDisposable
         }
     }
 
-    private void Create(IncomingMessage message)
+    private void Create(IncomingMessage message, bool restart = false)
     {
         if (string.IsNullOrWhiteSpace(message.Id))
         {
             return;
+        }
+
+        if (restart)
+        {
+            _attachBacklog.Remove(message.Id);
         }
 
         try
@@ -624,7 +632,7 @@ internal sealed class TerminalBridge : IDisposable
             if (isWsl && message.Cwd is not null)
                 throw new ArgumentException(_localizer["Error_WslQuickStart"]);
             var cwd = WorkingDirectory.Resolve(isWsl ? null : message.Cwd);
-            if (message.Shell is not null && cwd.Notice is not null)
+            if (message.Shell is not null && cwd.Notice is not null && (!restart || !string.IsNullOrWhiteSpace(message.StartupCommand)))
                 throw new DirectoryNotFoundException(_localizer["Error_ProfileFolderNotFound"] + message.Cwd);
             if (!isWsl) Post(new { type = "cwd", id = message.Id, cwd = cwd.Path, notice = cwd.Notice });
             if (_host.Ensure())
@@ -632,12 +640,16 @@ internal sealed class TerminalBridge : IDisposable
                 var cols = message.Cols ?? 80;
                 var rows = message.Rows ?? 24;
                 GatewayBackend.SessionCreated(message.Id, desktopAttached: true, cols: cols, rows: rows);
-                _host.Create(message.Id, Math.Max(cols, 1), Math.Max(rows, 1),
-                    isWsl || message.Cwd is null ? null : cwd.Path, message.Shell, message.StartupCommand, message.WslDistribution);
+                if (restart)
+                    _host.Restart(message.Id, Math.Max(cols, 1), Math.Max(rows, 1),
+                        isWsl || message.Cwd is null ? null : cwd.Path, message.Shell, message.StartupCommand, message.WslDistribution);
+                else
+                    _host.Create(message.Id, Math.Max(cols, 1), Math.Max(rows, 1),
+                        isWsl || message.Cwd is null ? null : cwd.Path, message.Shell, message.StartupCommand, message.WslDistribution);
                 return;
             }
 
-            if (message.Shell is not null && _sessions.ContainsKey(message.Id))
+            if (!restart && message.Shell is not null && _sessions.ContainsKey(message.Id))
                 throw new InvalidOperationException(_localizer["Error_SessionAlreadyRunning"]);
             var shell = ShellResolver.Resolve(isWsl || (message.Cwd is null && message.Shell is null) ? null : cwd.Path, message.Shell,
                 message.Shell is null ? null : message.StartupCommand, message.WslDistribution);
@@ -649,10 +661,25 @@ internal sealed class TerminalBridge : IDisposable
                 Math.Max(message.Cols ?? 80, 1),
                 Math.Max(message.Rows ?? 24, 1), session =>
                 {
-                    session.Output += data => Post(new { type = "data", id = session.Id, data });
-                    session.DirectoryChanged += path => { if (!isWsl) Post(new { type = "cwd", id = session.Id, cwd = path }); };
-                    session.Exited += code => Post(new { type = "exit", id = session.Id, code });
                     _sessions[session.Id] = session;
+                    session.Output += data =>
+                    {
+                        if (_sessions.TryGetValue(session.Id, out var current) && ReferenceEquals(current, session))
+                            Post(new { type = "data", id = session.Id, data });
+                    };
+                    session.DirectoryChanged += path =>
+                    {
+                        if (!isWsl && _sessions.TryGetValue(session.Id, out var current) && ReferenceEquals(current, session))
+                            Post(new { type = "cwd", id = session.Id, cwd = path });
+                    };
+                    session.Exited += code =>
+                    {
+                        if (((ICollection<KeyValuePair<string, ConPtySession>>)_sessions).Remove(new KeyValuePair<string, ConPtySession>(session.Id, session)))
+                        {
+                            Post(new { type = "exit", id = session.Id, code });
+                            session.Dispose();
+                        }
+                    };
                 });
         }
         catch (Exception ex)

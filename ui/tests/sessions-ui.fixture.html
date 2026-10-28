@@ -38,6 +38,7 @@
       pinned: dialog.querySelector("[data-session-pinned]"),
       save: dialog.querySelector('[type="submit"]'),
       cancel: dialog.querySelector("[data-session-cancel]"),
+      refreshEnv: dialog.querySelector("[data-session-refresh-env]"),
       hide: dialog.querySelector("[data-session-hide]"),
       row: (id) => doc.querySelector(`.tab[data-id="${id}"]`),
       rows: () => [...doc.querySelectorAll(".tab")].map((row) => row.dataset.id),
@@ -258,11 +259,45 @@
     equal(s.doc.querySelector(".session-group img"), null);
     s.edit("first");
     const rect = s.dialog.getBoundingClientRect();
-    for (const element of [s.group, s.color, s.save, s.hide]) {
+    for (const element of [s.group, s.color, s.save, s.refreshEnv, s.hide]) {
       const child = element.getBoundingClientRect();
       equal(child.left >= rect.left && child.right <= rect.right, true);
     }
   });
+
+  await check("refresh environment restarts the shell in place preserving cwd, metadata, split layout and scrollback", async (s) => {
+    s.app.testRestartOutput = "\x1b[2J\x1b[HNEW ENV READY\r\nPS C:\\Project\\Sub> ";
+    s.app.sendHost({ type: "data", id: "first", data: "OLD LINE BEFORE SETX\r\nPS C:\\Project> " });
+    s.app.sendHost({ type: "cwd", id: "first", cwd: "C:\\Project\\Sub" });
+    await delay();
+    s.doc.getElementById("split-right").click();
+    await delay();
+    const tabsBefore = s.rows();
+    const visibleBefore = [...s.doc.querySelectorAll("#panes .pane")].length;
+    s.edit("first");
+    equal(s.refreshEnv.hidden, false);
+    s.group.value = "Обновлённая группа";
+    s.color.value = "amber";
+    s.refreshEnv.click();
+    await delay(150);
+    equal(s.dialog.open, false);
+    equal(s.rows().length, tabsBefore.length);
+    equal([...s.doc.querySelectorAll("#panes .pane")].length, visibleBefore);
+    equal(s.activeId(), "first");
+    equal(s.messages("restart").length, 1);
+    const restarted = s.messages("restart")[0];
+    equal([restarted.id, restarted.cwd, restarted.shell, restarted.startupCommand],
+      ["first", "C:\\Project\\Sub", "pwsh", "echo boot"]);
+    const saved = s.records().find((record) => record.id === "first");
+    equal([saved.group, saved.color, saved.cwd, saved.title],
+      ["Обновлённая группа", "amber", "C:\\Project\\Sub", "Muse — разработка"]);
+    equal(saved.buffer.includes("OLD LINE BEFORE SETX"), true);
+    equal(saved.buffer.includes("Окружение обновлено"), true);
+    equal(saved.buffer.includes("NEW ENV READY"), true);
+  }, [
+    { id: "first", title: "Muse — разработка", active: true, group: "TerminalV", cwd: "C:\\Project", shell: "pwsh", startupCommand: "echo boot" },
+    { id: "second", title: "Сборка [dev]", group: "TerminalV", pinned: true, color: "blue" }
+  ]);
 
   if (new URL(location.href).searchParams.has("preview")) {
     const s = await setup();

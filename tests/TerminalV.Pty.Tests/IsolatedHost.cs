@@ -11,8 +11,10 @@ internal sealed class IsolatedHost : IDisposable
     private readonly NamedPipeServerStream _pipe;
     private readonly Task _serve;
 
-    public IsolatedHost(bool supportsProfiles, bool supportsWsl = false, bool supportsEnvironmentRefresh = false)
+    public IsolatedHost(bool supportsProfiles, bool supportsWsl = false, bool supportsEnvironmentRefresh = false,
+        bool supportsSessionRestart = false, string[]? liveIds = null)
     {
+        var activeIds = new HashSet<string>(liveIds ?? []);
         _pipe = new NamedPipeServerStream(PipeName, PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
         _serve = Task.Run(async () =>
         {
@@ -30,9 +32,16 @@ internal sealed class IsolatedHost : IDisposable
                     {
                         case "list":
                             await writer.WriteLineAsync(System.Text.Json.JsonSerializer.Serialize(new {
-                                type = "list", ids = Array.Empty<string>(), launchProfilesSupported = supportsProfiles,
+                                type = "list", ids = activeIds.ToArray(), launchProfilesSupported = supportsProfiles,
                                 wslLaunchSupported = supportsWsl,
-                                environmentRefreshSupported = supportsEnvironmentRefresh }));
+                                environmentRefreshSupported = supportsEnvironmentRefresh,
+                                sessionRestartSupported = supportsSessionRestart }));
+                            break;
+                        case "kill":
+                            if (root.TryGetProperty("id", out var killId) && killId.GetString() is { } removed && activeIds.Remove(removed))
+                            {
+                                await writer.WriteLineAsync(JsonSerializer.Serialize(new { type = "exit", id = removed, code = 1 }));
+                            }
                             break;
                         case "attach":
                             await writer.WriteLineAsync(JsonSerializer.Serialize(new {

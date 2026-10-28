@@ -56,6 +56,37 @@ internal static class EnvironmentTests
             }
         });
 
+        check("in-place session restart uses atomic restart on modern host and clean kill+create fallback on legacy host", () =>
+        {
+            using (var modern = new IsolatedHost(supportsProfiles: true, supportsWsl: true, supportsEnvironmentRefresh: true, supportsSessionRestart: true, liveIds: ["live-tab"]))
+            using (var client = new SessionClient(modern.PipeName, () => { }))
+            {
+                var exits = 0;
+                client.Exited += (_, _) => Interlocked.Increment(ref exits);
+                client.Restart("live-tab", 120, 36, @"C:\Project", "pwsh", "echo fresh");
+                client.List();
+                var restartReq = modern.Requests.Single(r => r.GetProperty("type").GetString() == "restart");
+                Require(restartReq.GetProperty("id").GetString() == "live-tab", "Wrong restart id");
+                Require(restartReq.GetProperty("cwd").GetString() == @"C:\Project", "Wrong restart cwd");
+                Require(restartReq.GetProperty("shell").GetString() == "pwsh", "Wrong restart shell");
+                Require(restartReq.GetProperty("startupCommand").GetString() == "echo fresh", "Wrong restart startup command");
+                Require(!modern.Requests.Any(r => r.GetProperty("type").GetString() == "kill"), "Modern host should not receive separate kill");
+                Require(exits == 0, "Modern restart emitted spurious exit");
+            }
+
+            using (var legacy = new IsolatedHost(supportsProfiles: true, supportsWsl: true, supportsEnvironmentRefresh: true, supportsSessionRestart: false, liveIds: ["live-tab"]))
+            using (var client = new SessionClient(legacy.PipeName, () => { }))
+            {
+                var exits = 0;
+                client.Exited += (_, _) => Interlocked.Increment(ref exits);
+                client.Restart("live-tab", 100, 30, @"C:\Legacy", "cmd", "ver");
+                client.List();
+                var types = legacy.Requests.Select(r => r.GetProperty("type").GetString()).Where(t => t != "list").ToArray();
+                Require(types.SequenceEqual(["kill", "create-profile"]), "Legacy host did not receive ordered kill then create-profile");
+                Require(exits == 0, "Legacy restart leaked intermediate exit to UI");
+            }
+        });
+
         var shells = new List<string> {
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "WindowsPowerShell", "v1.0", "powershell.exe")
         };
