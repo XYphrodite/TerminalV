@@ -96,15 +96,98 @@ export function createMobileKeys({ root, send }) {
     send(resolvedKey);
   }
 
+  const TAP_SLOP_PX = 8;
+  let scrolledDuringGesture = false;
+  if (typeof root.addEventListener === "function") {
+    root.addEventListener("scroll", () => {
+      scrolledDuringGesture = true;
+    }, true);
+  }
+
   for (const button of root.querySelectorAll("[data-key]")) {
-    let pointerHandled = false;
+    let activePointer = null;
+    let suppressClick = false;
+    let clearSuppressTimer = null;
+
+    function resetSuppressClick() {
+      suppressClick = false;
+      if (clearSuppressTimer !== null) {
+        clearTimeout(clearSuppressTimer);
+        clearSuppressTimer = null;
+      }
+    }
+
+    function armSuppressClick() {
+      resetSuppressClick();
+      suppressClick = true;
+      clearSuppressTimer = setTimeout(() => {
+        suppressClick = false;
+        clearSuppressTimer = null;
+      }, 400);
+      clearSuppressTimer?.unref?.();
+    }
+
+    function samePointer(event) {
+      return activePointer !== null &&
+        (event.pointerId === undefined || activePointer.id === undefined || event.pointerId === activePointer.id);
+    }
+
+    function exceededSlop(event) {
+      if (!activePointer) return false;
+      const x = event.clientX ?? activePointer.x;
+      const y = event.clientY ?? activePointer.y;
+      return Math.hypot(x - activePointer.x, y - activePointer.y) > TAP_SLOP_PX;
+    }
+
     button.addEventListener("pointerdown", (event) => {
-      event.preventDefault();
-      pointerHandled = true;
-      sendKey(button.dataset.key);
+      if (event.button !== undefined && event.button !== 0) return;
+      // Prevent focus transfer so the mobile soft keyboard stays open,
+      // but wait for pointerup to distinguish a tap from row scrolling.
+      event.preventDefault?.();
+      scrolledDuringGesture = false;
+      resetSuppressClick();
+      activePointer = {
+        id: event.pointerId,
+        x: event.clientX ?? 0,
+        y: event.clientY ?? 0,
+        moved: false
+      };
     });
+
+    button.addEventListener("pointermove", (event) => {
+      if (!samePointer(event)) return;
+      if (scrolledDuringGesture || exceededSlop(event)) {
+        activePointer.moved = true;
+      }
+    });
+
+    button.addEventListener("pointercancel", (event) => {
+      if (!samePointer(event)) return;
+      activePointer = null;
+      armSuppressClick();
+    });
+
+    button.addEventListener("pointerup", (event) => {
+      if (!samePointer(event)) return;
+      const moved = activePointer.moved || scrolledDuringGesture || exceededSlop(event);
+      activePointer = null;
+      armSuppressClick();
+      if (!moved) {
+        sendKey(button.dataset.key);
+      }
+    });
+
     button.addEventListener("click", () => {
-      if (pointerHandled) { pointerHandled = false; return; }
+      if (suppressClick) {
+        resetSuppressClick();
+        return;
+      }
+      if (activePointer) {
+        const moved = activePointer.moved || scrolledDuringGesture;
+        activePointer = null;
+        if (!moved) sendKey(button.dataset.key);
+        return;
+      }
       sendKey(button.dataset.key);
     });
   }

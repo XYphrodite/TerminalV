@@ -120,16 +120,17 @@ h1:focus { outline: none; }
 .mobile-keys-handle[aria-expanded="true"] { bottom: var(--mobile-keys-height, 88px); }
 .mobile-keys-row {
   display: flex; gap: 6px; justify-content: flex-start; flex-wrap: nowrap; overflow-x: auto;
-  -webkit-overflow-scrolling: touch; scrollbar-width: none;
+  -webkit-overflow-scrolling: touch; scrollbar-width: none; touch-action: pan-x;
 }
 .mobile-keys-row::-webkit-scrollbar { display: none; }
 .mobile-keys button {
   min-width: 40px; min-height: 40px; padding: 0 8px;
   border: 1px solid var(--border-soft, #1c232c); border-radius: 8px;
   background: var(--surface, #171d26); color: var(--text, #E8EEF5); font: 600 14px var(--font-mono, monospace);
-  cursor: pointer; touch-action: manipulation;
+  cursor: pointer; touch-action: pan-x;
 }
-.mobile-keys-row[data-row="digits"] button { min-width: 32px; }
+.mobile-keys-row[data-row="digits"] { gap: 4px; overflow-x: hidden; }
+.mobile-keys-row[data-row="digits"] button { flex: 1 1 0; min-width: 0; padding: 0; text-align: center; }
 .mobile-keys button:active { background: var(--tab-active, #1c2736); border-color: var(--accent-dim, #2a6fb3); }
 .mobile-keys button:focus-visible { outline: 2px solid var(--accent, #3d9eff); outline-offset: 2px; }
 
