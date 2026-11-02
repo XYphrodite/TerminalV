@@ -36,4 +36,6 @@ internal interface IGatewayGeometryBackend
     event Action<string, int, int>? GeometryChanged;
     GatewayTerminalGeometry? GetGeometry(string id);
     GatewayTerminalGeometry EnsureGeometry(string id);
+    void ResizeClient(string id, object client, int cols, int rows);
+    void ReleaseClientGeometry(string id, object client);
 }

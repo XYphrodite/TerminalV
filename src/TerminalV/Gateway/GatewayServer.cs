@@ -194,6 +194,7 @@ internal sealed class GatewayServer : IDisposable
         var sendGate = new SemaphoreSlim(1, 1);
         var bound = new HashSet<string>();
         var boundGate = new object();
+        var clientOwner = new object();
         string? defaultId = null;
         var geometryBackend = _backend as IGatewayGeometryBackend;
         var terminalGeometry = false;
@@ -354,7 +355,7 @@ internal sealed class GatewayServer : IDisposable
                 }
 
                 await DispatchAsync(Encoding.UTF8.GetString(frame.Value.bytes), Bind, Unbind,
-                    () => defaultId, SendAsync, serverToken, terminalGeometry, binaryData, SendBinaryAsync).ConfigureAwait(false);
+                    () => defaultId, SendAsync, serverToken, terminalGeometry, clientOwner, binaryData, SendBinaryAsync).ConfigureAwait(false);
             }
         }
         catch (WebSocketException) { }
@@ -365,14 +366,23 @@ internal sealed class GatewayServer : IDisposable
             _backend.Exited -= OnExit;
             _backend.DirectoryChanged -= OnCwd;
             _backend.Error -= OnError;
-            if (geometryBackend is not null) geometryBackend.GeometryChanged -= OnGeometry;
+            if (geometryBackend is not null)
+            {
+                geometryBackend.GeometryChanged -= OnGeometry;
+                string[] boundIds;
+                lock (boundGate) boundIds = [.. bound];
+                foreach (var id in boundIds)
+                {
+                    try { geometryBackend.ReleaseClientGeometry(id, clientOwner); } catch { }
+                }
+            }
             sendGate.Dispose();
             await CloseAsync(ws).ConfigureAwait(false);
         }
     }
 
     private async Task DispatchAsync(string text, Action<string> bind,
-        Action<string> unbind, Func<string?> defaultId, Func<string, Task> send, CancellationToken ct, bool terminalGeometry, bool binaryData = false, Func<string, Task>? sendBinary = null)
+        Action<string> unbind, Func<string?> defaultId, Func<string, Task> send, CancellationToken ct, bool terminalGeometry, object clientOwner, bool binaryData = false, Func<string, Task>? sendBinary = null)
     {
         string? type;
         try
@@ -419,7 +429,12 @@ internal sealed class GatewayServer : IDisposable
                     }
                     break;
                 case GatewayProtocol.Detach:
-                    if (Id() is { } detachId) unbind(detachId);
+                    if (Id() is { } detachId)
+                    {
+                        unbind(detachId);
+                        if (_backend is IGatewayGeometryBackend detachGeo)
+                            SafeBackend(() => detachGeo.ReleaseClientGeometry(detachId, clientOwner), _ => Task.CompletedTask);
+                    }
                     break;
                 case GatewayProtocol.Create:
                     {
@@ -459,8 +474,23 @@ internal sealed class GatewayServer : IDisposable
                         {
                             var cols = Num("cols", 80);
                             var rows = Num("rows", 24);
-                            SafeBackend(() => _backend.Resize(target, cols, rows),
-                                errId => send(GatewayProtocol.ErrorMessage(errId, "Resize не удался.")));
+                            SafeBackend(() =>
+                            {
+                                if (_backend is IGatewayGeometryBackend resizeGeo)
+                                    resizeGeo.ResizeClient(target, clientOwner, cols, rows);
+                                else
+                                    _backend.Resize(target, cols, rows);
+                            }, errId => send(GatewayProtocol.ErrorMessage(errId, "Resize не удался.")));
+                        }
+                        break;
+                    }
+                case GatewayProtocol.ReleaseGeometry:
+                    {
+                        if (_backend is IGatewayGeometryBackend releaseGeo)
+                        {
+                            var target = Id() ?? defaultId();
+                            if (target is not null)
+                                SafeBackend(() => releaseGeo.ReleaseClientGeometry(target, clientOwner), _ => Task.CompletedTask);
                         }
                         break;
                     }

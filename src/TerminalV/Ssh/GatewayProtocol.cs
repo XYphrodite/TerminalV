@@ -40,6 +40,7 @@ public static class GatewayProtocol
     public const string Write = "write";
     public const string DataIn = "data";
     public const string Resize = "resize";
+    public const string ReleaseGeometry = "release-geometry";
     public const string Kill = "kill";
 
     // Server -> client
@@ -109,6 +110,9 @@ public static class GatewayProtocol
             cols = Math.Clamp(cols, 1, 1000),
             rows = Math.Clamp(rows, 1, 1000)
         }, Json);
+
+    public static string ReleaseGeometryRequest(string? id = null) =>
+        JsonSerializer.Serialize(new { type = ReleaseGeometry, id }, Json);
 
     public static string KillRequest(string id) =>
         JsonSerializer.Serialize(new { type = Kill, id }, Json);

@@ -208,6 +208,7 @@ createMobileKeys({
     const tab = currentTab();
     const data = MOBILE_KEY_SEQUENCES[key];
     if (!tab || tab.exited || !data) return;
+    reclaimMobileFit(tab);
     post({ type: "write", id: tab.id, data });
   }
 });
@@ -572,6 +573,10 @@ function syncScrollLock(tab) {
 })();
 
 function applyFit(tab, notifyHost = true) {
+  if (!isMobileUi() && tab.remotePtyOwner) {
+    syncTerminalViewport(tab.term);
+    return false;
+  }
   // Fit mode: the phone drives the PTY even when the desktop reported its
   // grid. A remote size wider than the screen would otherwise be mirrored
   // and panned horizontally — unusable on a phone.
@@ -628,6 +633,23 @@ function applyFit(tab, notifyHost = true) {
   }
   diag("fit", `applyFit id=${tab.id} ${proposed.cols}x${proposed.rows} ms=${(performance.now()-t0).toFixed(1)}`, tab.id);
   return true;
+}
+
+function reclaimDesktopFit(tab = currentTab()) {
+  if (isMobileUi() || !tab || tab.exited || !tab.remotePtyOwner) return;
+  tab.remotePtyOwner = false;
+  if (isPaneVisible(tab)) applyFit(tab, true);
+}
+
+function reclaimAllDesktopFits() {
+  if (isMobileUi()) return;
+  for (const item of visibleTabs()) reclaimDesktopFit(item);
+}
+
+function reclaimMobileFit(tab = currentTab()) {
+  if (!isMobileUi() || !settings.mobileFitMode || !tab || tab.exited) return;
+  tab.mobileFitClaimed = true;
+  if (isPaneVisible(tab)) applyFit(tab, true);
 }
 
 function cancelFit() {
@@ -1497,6 +1519,8 @@ function newTab(options = {}) {
   overlayBtn.addEventListener("click", () => restart(tab));
   pane.addEventListener("pointerdown", (event) => {
     if (!isPaneVisible(tab) || isModalOpen() || event.target.closest("button")) return;
+    if (isMobileUi()) reclaimMobileFit(tab);
+    else reclaimDesktopFit(tab);
     if (activeId !== id) activate(id, { focus: false });
   }, true);
   paneHead.addEventListener("click", (event) => { if (!event.target.closest("button") && !isModalOpen()) activate(id); });
@@ -1505,6 +1529,8 @@ function newTab(options = {}) {
   });
   function postWrite(targetId, data) {
     if (tab.exited) return;
+    if (isMobileUi()) reclaimMobileFit(tab);
+    else reclaimDesktopFit(tab);
     const isPaste = data.includes("\u001b[200~");
     // For bracketed paste (muse) send as single post — host will chunk efficiently in one Task.Run batch.
     // Per-chunk queueMicrotask/post caused visible inter-chunk pause ("мб между чанками большие паузы").
@@ -1564,7 +1590,13 @@ function newTab(options = {}) {
   tab.term.attachCustomWheelEventHandler(event => !(event.ctrlKey || event.metaKey));
   syncScrollLock(tab);
 
+  let lastHostSize = null;
   const observer = new ResizeObserver(() => {
+    const size = { width: hostEl.clientWidth, height: hostEl.clientHeight };
+    if (!isMobileUi() && lastHostSize && (size.width !== lastHostSize.width || size.height !== lastHostSize.height)) {
+      tab.remotePtyOwner = false;
+    }
+    lastHostSize = size;
     if (!isPaneVisible(tab)) {
       return;
     }
@@ -2216,12 +2248,43 @@ function handleHost(message) {
     return;
   }
 
+  if (message.type === "pty-geometry") {
+    if (!isMobileUi() && tab && Number.isInteger(message.cols) && Number.isInteger(message.rows) &&
+        message.cols >= 1 && message.rows >= 1) {
+      const cols = message.cols, rows = message.rows, remote = Boolean(message.remote);
+      tab.remotePtyOwner = remote;
+      tab.output.whenParsed(() => {
+        if (!tabs.includes(tab)) return;
+        tab.ptySize = { cols, rows };
+        if (remote) {
+          if (tab.term.cols !== cols || tab.term.rows !== rows) {
+            tab.term.resize(cols, rows);
+            syncTerminalViewport(tab.term);
+            tab.term.refresh(0, Math.max(0, tab.term.rows - 1), tab.term.buffer.active.type === "alternate");
+          }
+        } else if (isPaneVisible(tab)) {
+          applyFit(tab, true);
+        }
+      });
+    }
+    return;
+  }
+
   if (message.type === "terminal-size") {
-    // Fit mode: the desktop's window size must not override the phone grid.
-    // Re-fit instead of mirroring, or the next layout would restore the
-    // wide grid and the horizontal pan.
+    // Fit mode: the desktop's window size must not override the phone grid on
+    // initial attach, but if the desktop later reclaims its window grid while
+    // the phone sits idle, record the new PTY size without fighting back until
+    // the user interacts on the phone again.
     if (settings.mobileFitMode) {
-      if (tab) applyFit(tab);
+      if (tab) {
+        if (!tab.mobileFitClaimed) {
+          tab.mobileFitClaimed = true;
+          applyFit(tab);
+        } else if (Number.isInteger(message.cols) && Number.isInteger(message.rows) &&
+            message.cols >= 1 && message.rows >= 1) {
+          tab.ptySize = { cols: message.cols, rows: message.rows };
+        }
+      }
       return;
     }
     setMirrorSize(tab, message.cols, message.rows);
@@ -2325,12 +2388,12 @@ if (mobileFitModeEl) mobileFitModeEl.addEventListener("change", () => {
   persistSettings();
   if (settings.mobileFitMode) {
     for (const tab of visibleTabs()) {
-      if (tab.pane) {
-        const cols = tab.term ? tab.term.cols : 80;
-        const rows = tab.term ? tab.term.rows : 24;
-        post({ type: "resize", id: tab.id, cols, rows });
-      }
+      tab.mobileFitClaimed = true;
+      applyFit(tab, true);
     }
+  } else {
+    for (const tab of tabs) tab.mobileFitClaimed = false;
+    post({ type: "release-geometry" });
   }
   // Fit mode shrinks the mirror grid to the phone and unlocks WebGL there.
   applyRenderer();
@@ -2362,9 +2425,23 @@ bgOpacityEl.addEventListener("input", () => {
 });
 bgOpacityEl.addEventListener("change", persistSettings);
 
+window.addEventListener("focus", reclaimAllDesktopFits);
+window.addEventListener("pointerdown", () => {
+  if (!isMobileUi()) reclaimAllDesktopFits();
+}, true);
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) return;
+  if (isMobileUi()) {
+    for (const item of visibleTabs()) reclaimMobileFit(item);
+  } else {
+    reclaimAllDesktopFits();
+  }
+});
+
 window.addEventListener(
   "keydown",
   (event) => {
+    if (!isMobileUi()) reclaimAllDesktopFits();
     if (!settingsEl.classList.contains("hidden")) {
       if (event.isComposing) return;
       if (event.key === "Escape" || ((event.ctrlKey || event.metaKey) && event.key === ",")) {

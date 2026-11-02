@@ -81,6 +81,8 @@ internal sealed class TerminalBridge : IDisposable
         _canUpdate = AppVersion.CanSelfUpdate(Environment.ProcessPath);
         GatewayBackend = new SessionClientBackend(_host);
         GatewayBackend.DesktopData += (id, data, replay) => Post(new { type = "data", id, data, replay });
+        GatewayBackend.GeometryChanged += (id, cols, rows) =>
+            Post(new { type = "pty-geometry", id, cols, rows, remote = GatewayBackend.IsPhoneOwned(id) });
         GatewayBackend.Created += (id, cwd, shell, startupCommand, wslDistribution) =>
             Post(new { type = "remote-session-created", id, cwd, shell, startupCommand, wslDistribution });
         UpdateGatewaySessions(_db.LoadSessions());
@@ -252,7 +254,10 @@ internal sealed class TerminalBridge : IDisposable
                             try
                             {
                                 if (_host.Ensure())
+                                {
+                                    GatewayBackend.ReclaimDesktopGeometry(writeId);
                                     _host.Write(writeId, writeData);
+                                }
                                 else if (_sessions.TryGetValue(writeId, out var writing))
                                     writing.Write(writeData);
                             }
@@ -269,7 +274,10 @@ internal sealed class TerminalBridge : IDisposable
                         Diag.Log("bridge", $"write sync id={message.Id} len={message.Data.Length}", null);
                         var sw = Stopwatch.StartNew();
                         if (_host.Ensure())
+                        {
+                            GatewayBackend.ReclaimDesktopGeometry(message.Id);
                             _host.Write(message.Id, message.Data);
+                        }
                         else if (_sessions.TryGetValue(message.Id, out var writing))
                             writing.Write(message.Data);
                         sw.Stop();

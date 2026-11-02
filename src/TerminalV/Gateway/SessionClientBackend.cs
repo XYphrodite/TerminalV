@@ -6,6 +6,7 @@ namespace TerminalV.Gateway;
 internal sealed class SessionClientBackend : IGatewaySessionBackend, IGatewayReplayBackend, IGatewayGeometryBackend, IDisposable
 {
     private const int SnapshotCapacity = 1_500_000;
+    private static readonly object DefaultClientOwner = new();
     private readonly SessionClient _client;
     private readonly object _gate = new();
     private readonly Dictionary<string, Snapshot> _snapshots = new();
@@ -21,10 +22,12 @@ internal sealed class SessionClientBackend : IGatewaySessionBackend, IGatewayRep
         public bool DesktopAttached { get; set; }
         public Task? DesktopReplay { get; set; }
         public GatewayTerminalGeometry? Geometry { get; set; }
+        public GatewayTerminalGeometry? DesktopGeometry { get; set; }
         public bool DesktopOwnsGeometry { get; set; }
         // A connected phone drives the PTY size (fit mode). While this is set
         // the desktop window must not snap the grid back to its own layout.
         public bool PhoneOwnsGeometry { get; set; }
+        public HashSet<object> PhoneGeometryOwners { get; } = new();
     }
 
     public SessionClientBackend(SessionClient client)
@@ -61,20 +64,25 @@ internal sealed class SessionClientBackend : IGatewaySessionBackend, IGatewayRep
 
     public void SessionCreated(string id, bool desktopAttached = false, int? cols = null, int? rows = null)
     {
+        Action<string, int, int>? notify = null;
+        GatewayTerminalGeometry? initialSize = null;
         lock (_gate)
         {
             ThrowIfDisposed();
             if (_snapshots.Remove(id, out var previous)) previous.Ready.TrySetCanceled();
+            initialSize = cols is { } c && rows is { } r ? Geometry(c, r) : null;
             var snapshot = new Snapshot
             {
                 DesktopAttached = desktopAttached,
                 DesktopOwnsGeometry = desktopAttached,
-                Geometry = cols is { } c && rows is { } r ? Geometry(c, r) : null
+                Geometry = initialSize,
+                DesktopGeometry = desktopAttached ? initialSize : null
             };
             snapshot.Ready.SetResult(true);
             _snapshots[id] = snapshot;
-            if (snapshot.Geometry is { } size) GeometryChanged?.Invoke(id, size.Columns, size.Rows);
+            if (initialSize is not null) notify = GeometryChanged;
         }
+        if (initialSize is { } size) notify?.Invoke(id, size.Columns, size.Rows);
     }
 
     public Task AttachDesktopAsync(string id, int cols = 0, int rows = 0)
@@ -83,7 +91,11 @@ internal sealed class SessionClientBackend : IGatewaySessionBackend, IGatewayRep
         {
             var snapshot = GetSnapshot(id);
             // Reserve ownership before waiting for a restored host's replay.
-            if (cols > 0 && rows > 0) snapshot.DesktopOwnsGeometry = true;
+            if (cols > 0 && rows > 0)
+            {
+                snapshot.DesktopOwnsGeometry = true;
+                snapshot.DesktopGeometry = Geometry(cols, rows);
+            }
             // Duplicate requests before initial history arrives share one replay.
             if (snapshot.DesktopReplay is { IsCompleted: false }) return snapshot.DesktopReplay;
             var completed = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -98,19 +110,27 @@ internal sealed class SessionClientBackend : IGatewaySessionBackend, IGatewayRep
         try
         {
             await EnsureSnapshotAsync(id, snapshot, default).ConfigureAwait(false);
+            Action<string, int, int>? notify = null;
+            GatewayTerminalGeometry? appliedSize = null;
             lock (_gate)
             {
                 AssertCurrent(id, snapshot);
                 if (cols > 0 && rows > 0)
                 {
+                    var desktopSize = Geometry(cols, rows);
+                    snapshot.DesktopGeometry = desktopSize;
+                    snapshot.PhoneGeometryOwners.Clear();
+                    snapshot.PhoneOwnsGeometry = false;
                     snapshot.DesktopOwnsGeometry = true;
-                    SetGeometry(id, snapshot, Geometry(cols, rows));
+                    notify = SetGeometry(id, snapshot, desktopSize);
+                    appliedSize = desktopSize;
                 }
                 var replay = snapshot.Text.Snapshot();
                 if (replay.Length > 0) DesktopData?.Invoke(id, replay, true);
                 snapshot.DesktopAttached = true;
                 completed.TrySetResult(true);
             }
+            if (appliedSize is { } size) notify?.Invoke(id, size.Columns, size.Rows);
         }
         catch (Exception ex) { completed.TrySetException(ex); }
     }
@@ -204,35 +224,81 @@ internal sealed class SessionClientBackend : IGatewaySessionBackend, IGatewayRep
         }
     }
 
-    public void ResizeDesktop(string id, int cols, int rows) => ResizeCore(id, cols, rows, desktop: true);
-    public void Resize(string id, int cols, int rows) => ResizeCore(id, cols, rows, desktop: false);
+    public bool IsPhoneOwned(string id)
+    {
+        lock (_gate) return _snapshots.TryGetValue(id, out var snapshot) && snapshot.PhoneOwnsGeometry;
+    }
+
+    public void ResizeDesktop(string id, int cols, int rows) => ResizeCore(id, cols, rows, desktop: true, client: null);
+    public void Resize(string id, int cols, int rows) => ResizeCore(id, cols, rows, desktop: false, client: DefaultClientOwner);
+    public void ResizeClient(string id, object client, int cols, int rows) => ResizeCore(id, cols, rows, desktop: false, client: client);
+
+    public void ReleaseClientGeometry(string id, object client)
+    {
+        Action<string, int, int>? notify = null;
+        GatewayTerminalGeometry? restored = null;
+        lock (_gate)
+        {
+            if (_disposed || !_snapshots.TryGetValue(id, out var snapshot)) return;
+            snapshot.PhoneGeometryOwners.Remove(client);
+            if (!snapshot.PhoneOwnsGeometry || snapshot.PhoneGeometryOwners.Count > 0) return;
+            snapshot.PhoneOwnsGeometry = false;
+            if (snapshot.DesktopAttached && snapshot.DesktopGeometry is { } desktopSize)
+            {
+                snapshot.DesktopOwnsGeometry = true;
+                notify = SetGeometry(id, snapshot, desktopSize);
+                restored = desktopSize;
+            }
+        }
+        if (restored is { } size) notify?.Invoke(id, size.Columns, size.Rows);
+    }
+
+    public void ReclaimDesktopGeometry(string id)
+    {
+        Action<string, int, int>? notify = null;
+        GatewayTerminalGeometry? restored = null;
+        lock (_gate)
+        {
+            if (_disposed || !_snapshots.TryGetValue(id, out var snapshot)) return;
+            if (!snapshot.PhoneOwnsGeometry || !snapshot.DesktopAttached || snapshot.DesktopGeometry is not { } desktopSize) return;
+            snapshot.PhoneGeometryOwners.Clear();
+            snapshot.PhoneOwnsGeometry = false;
+            snapshot.DesktopOwnsGeometry = true;
+            notify = SetGeometry(id, snapshot, desktopSize);
+            restored = desktopSize;
+        }
+        if (restored is { } size) notify?.Invoke(id, size.Columns, size.Rows);
+    }
 
     private static GatewayTerminalGeometry Geometry(int cols, int rows) =>
         new(Math.Clamp(cols, 1, 1000), Math.Clamp(rows, 1, 1000));
 
-    private void ResizeCore(string id, int cols, int rows, bool desktop)
+    private void ResizeCore(string id, int cols, int rows, bool desktop, object? client)
     {
         Action<string, int, int>? notify = null;
+        var target = Geometry(cols, rows);
         lock (_gate)
         {
             var snapshot = GetSnapshot(id);
             // A connected phone drives the PTY size — that is the only readable
             // layout on a phone screen. Its resize wins over the desktop window
-            // until the desktop explicitly resizes (window resize) and takes
-            // the grid back; then the phone can claim it again on its next resize.
+            // until the desktop explicitly resizes/interacts or the phone disconnects.
             if (!desktop)
             {
+                if (client is not null) snapshot.PhoneGeometryOwners.Add(client);
                 snapshot.PhoneOwnsGeometry = true;
                 snapshot.DesktopOwnsGeometry = false;
             }
             else
             {
+                snapshot.DesktopGeometry = target;
+                snapshot.PhoneGeometryOwners.Clear();
                 snapshot.PhoneOwnsGeometry = false;
                 snapshot.DesktopOwnsGeometry = true;
             }
-            notify = SetGeometry(id, snapshot, Geometry(cols, rows));
+            notify = SetGeometry(id, snapshot, target);
         }
-        notify?.Invoke(id, cols, rows);
+        notify?.Invoke(id, target.Columns, target.Rows);
     }
 
     private Action<string, int, int>? SetGeometry(string id, Snapshot snapshot, GatewayTerminalGeometry size)

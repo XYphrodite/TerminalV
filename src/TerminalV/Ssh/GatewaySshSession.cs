@@ -133,6 +133,20 @@ public sealed class GatewaySshSession : SshSessionBase
         finally { _gate.Release(); }
     }
 
+    public async Task ReleaseGeometryAsync(CancellationToken cancellationToken = default)
+    {
+        if (IsDisposed || State != SshSessionState.Connected || _ws is null) return;
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var msg = GatewayProtocol.ReleaseGeometryRequest(_options.MirrorSessionId ?? Id);
+            var bytes = Encoding.UTF8.GetBytes(msg);
+            await _ws.SendAsync(bytes, WebSocketMessageType.Text, true, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) { RaiseError(ex.Message); }
+        finally { _gate.Release(); }
+    }
+
     protected override void DisposeCore()
     {
         try { _readCts?.Cancel(); } catch { }

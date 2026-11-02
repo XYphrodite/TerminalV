@@ -230,6 +230,9 @@ internal sealed class MobileBridge : IDisposable
             case "resize":
                 if (message.Id is not null) await HandleResize(message.Id, message.Cols ?? 80, message.Rows ?? 24);
                 break;
+            case "release-geometry":
+                ReleaseMirroredGeometry(message.Id);
+                break;
             case "kill":
                 if (message.Id is not null) HandleKill(message.Id);
                 break;
@@ -418,7 +421,8 @@ internal sealed class MobileBridge : IDisposable
             if (_connecting.TryGetValue(id, out var connecting)) await connecting;
             if (_ssh.TryGet(id) is { } session)
             {
-                // In fit mode the mobile's size drives the desktop PTY
+                // In fit mode the mobile's size drives the desktop PTY; mirror mode never resizes it.
+                if (_remoteIds.Contains(id) && !_store.LoadSettings().MobileFitMode) return;
                 if (_store.LoadSettings().MobileFitMode && _remoteIds.Contains(id))
                 {
                     try { await session.ResizeAsync(cols, rows); return; } catch { }
@@ -479,6 +483,21 @@ internal sealed class MobileBridge : IDisposable
         catch { }
     }
 
+    private void ReleaseMirroredGeometry(string? targetId)
+    {
+        List<GatewaySshSession> targets = [];
+        lock (_connectionLock)
+        {
+            foreach (var (id, observed) in _observedSessions)
+            {
+                if ((targetId is null || id == targetId) && _remoteIds.Contains(id) && observed.Session is GatewaySshSession gateway)
+                    targets.Add(gateway);
+            }
+        }
+        foreach (var gateway in targets)
+            _ = gateway.ReleaseGeometryAsync();
+    }
+
     private void PersistSettingsRaw(string json)
     {
         try
@@ -497,7 +516,10 @@ internal sealed class MobileBridge : IDisposable
                 catch { }
             }
             if (settings.GatewayPort is < 1 or > 65535) settings.GatewayPort = 5454;
+            var wasFitMode = _store.LoadSettings().MobileFitMode;
             _store.SaveSettings(settings);
+            if (wasFitMode && !settings.MobileFitMode)
+                ReleaseMirroredGeometry(null);
         }
         catch { }
     }

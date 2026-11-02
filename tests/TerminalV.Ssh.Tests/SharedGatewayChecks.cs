@@ -161,6 +161,27 @@ internal static class SharedGatewayChecks
         host.EchoResizes = false;
         Console.WriteLine("PASS desktop geometry precedes replay and real host resize output on both mirrors");
 
+        await first.ResizeAsync(52, 26).WaitAsync(TimeSpan.FromSeconds(2));
+        await Until(() => backend.GetGeometry("desktop") == new GatewayTerminalGeometry(52, 26) && backend.IsPhoneOwned("desktop"));
+        backend.ReclaimDesktopGeometry("desktop");
+        await Until(() => backend.GetGeometry("desktop") == new GatewayTerminalGeometry(102, 33)
+            && !backend.IsPhoneOwned("desktop") && first.TerminalColumns == 102 && first.TerminalRows == 33);
+
+        await first.ResizeAsync(48, 24).WaitAsync(TimeSpan.FromSeconds(2));
+        await Until(() => backend.GetGeometry("desktop") == new GatewayTerminalGeometry(48, 24) && backend.IsPhoneOwned("desktop"));
+        await first.ReleaseGeometryAsync().WaitAsync(TimeSpan.FromSeconds(2));
+        await Until(() => backend.GetGeometry("desktop") == new GatewayTerminalGeometry(102, 33)
+            && !backend.IsPhoneOwned("desktop") && first.TerminalColumns == 102 && second.TerminalColumns == 102);
+
+        using (var third = Mirror("phone-three"))
+        {
+            await third.ConnectAsync();
+            await third.ResizeAsync(50, 25).WaitAsync(TimeSpan.FromSeconds(2));
+            await Until(() => backend.GetGeometry("desktop") == new GatewayTerminalGeometry(50, 25) && backend.IsPhoneOwned("desktop"));
+        }
+        await Until(() => backend.GetGeometry("desktop") == new GatewayTerminalGeometry(102, 33) && !backend.IsPhoneOwned("desktop"));
+        Console.WriteLine("PASS desktop geometry automatically restores on PC input, fit-mode toggle off, and mobile disconnect");
+
         backend.SessionCreated("desktop-born", desktopAttached: true);
         host.Emit("new desktop output", "desktop-born");
         await Until(() => desktopEvents.Any(e => e.id == "desktop-born" && e.data == "new desktop output"));

@@ -93,6 +93,36 @@
       equal(app.hostMessages.filter(message => ["resize", "write"].includes(message.type)), [], "pan is local only");
       assertScreen(102, 33, "NEW");
     });
+    await check("fit mode hands PTY size cleanly between phone and desktop without ping-pong", async () => {
+      frame.style.width = "384px";
+      frame.style.height = "700px";
+      app.dispatchEvent(new app.Event("resize"));
+      await delay(100);
+      app.hostMessages.length = 0;
+      const fitToggle = doc.getElementById("mobile-fit-mode");
+      fitToggle.checked = true;
+      fitToggle.dispatchEvent(new app.Event("change", { bubbles: true }));
+      await delay(80);
+      const fitResizes = app.hostMessages.filter(m => m.type === "resize");
+      equal(fitResizes.length > 0 && fitResizes[0].cols < 80, true, "enabling fit mode resizes PTY down to phone width");
+      const phoneCols = fitResizes.at(-1).cols, phoneRows = fitResizes.at(-1).rows;
+      // Desktop reclaims its wide 160x45 window while phone sits idle on desk:
+      app.hostMessages.length = 0;
+      app.sendHost({ type: "terminal-size", id: "mirror", cols: 160, rows: 45 });
+      await delay(100);
+      equal(app.hostMessages.filter(m => m.type === "resize"), [], "idle phone does not fight back when desktop reclaims size");
+      // User taps phone pane -> phone reclaims its fit size:
+      tab.pane.dispatchEvent(new app.PointerEvent("pointerdown", { bubbles: true }));
+      await delay(80);
+      const reclaimed = app.hostMessages.filter(m => m.type === "resize");
+      equal(reclaimed.length === 1 && reclaimed[0].cols === phoneCols && reclaimed[0].rows === phoneRows, true, "tapping phone reclaims fit size");
+      // User disables fit mode -> releases geometry back to desktop:
+      app.hostMessages.length = 0;
+      fitToggle.checked = false;
+      fitToggle.dispatchEvent(new app.Event("change", { bubbles: true }));
+      await delay(50);
+      equal(app.hostMessages.some(m => m.type === "release-geometry"), true, "disabling fit mode sends release-geometry");
+    });
   }
   await check("mirror has no browser errors", async () => equal(app.hostErrors, [], "page errors"));
   document.body.dataset.testResult = btoa(unescape(encodeURIComponent(JSON.stringify(results))));

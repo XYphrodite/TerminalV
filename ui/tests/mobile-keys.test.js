@@ -183,8 +183,12 @@ test("mobile fit mode toggles desktop PTY sizing", () => {
   const main = readFileSync(r("ui/src/main.js"), "utf8");
   assert.match(main, /mobileFitModeEl/, "JS wires fit toggle");
   assert.match(main, /MobileFitMode/, "persists as MobileFitMode for C#");
+  assert.match(main, /pty-geometry/, "desktop syncs shared PTY geometry to prevent ghost columns");
+  assert.match(main, /reclaimDesktopFit/, "desktop reclaims full window width on user interaction");
+  assert.match(main, /release-geometry/, "disabling fit mode releases phone geometry ownership");
   const cs = readFileSync(r("src/TerminalV/Data/AppSettings.cs"), "utf8");
   assert.match(cs, /MobileFitMode/, "AppSettings has MobileFitMode");
   const bridge = readFileSync(r("src/TerminalV.Mobile/Host/MobileBridge.cs"), "utf8");
   assert.match(bridge, /MobileFitMode/, "bridge respects fit mode");
+  assert.match(bridge, /ReleaseMirroredGeometry/, "mobile bridge releases geometry when fit mode turns off");
 });
