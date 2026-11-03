@@ -1,4 +1,5 @@
 export const MAX_PANES = 8;
+export const MAX_TREE_DEPTH = 16;
 export const MIN_PANE_WIDTH = 160;
 export const MIN_PANE_HEIGHT = 100;
 export const clampRatio = (value) => Number.isFinite(value) ? Math.max(.1, Math.min(.9, value)) : .5;
@@ -30,55 +31,159 @@ export function normalizeLayouts(layouts, sessions) {
   return result;
 }
 
-export const layoutFor = (layouts, id) => layouts.find((root) => leafIds(root).includes(id));
+export const layoutFor = (layouts, id) => Array.isArray(layouts) ? layouts.find((root) => leafIds(root).includes(id)) : undefined;
 
-export const MAX_SPLIT_LEVEL = 1;
-
-// True when splitting id would nest a leaf deeper than MAX_SPLIT_LEVEL.
-// Splitting a first pane wraps the pane (new leaf one level deeper);
-// splitting a second pane wraps its parent, so the new leaf joins as a
-// sibling at the same level and never nests.
-export function splitWouldNest(layouts, id) {
-  if (!Array.isArray(layouts) || !id) return true;
-  const level = splitIndentLevel(layouts, id);
-  for (const root of layouts) {
-    const stack = [root];
-    while (stack.length) {
-      const node = stack.pop();
-      if (!node || typeof node !== "object" || node.sessionId) continue;
-      if (node.second?.sessionId === id) return false;
-      if (node.first?.sessionId === id) return level + 1 > MAX_SPLIT_LEVEL;
-      if (node.first) stack.push(node.first);
-      if (node.second) stack.push(node.second);
-    }
-  }
-  // Lone root leaf wraps to level 1, always flat.
-  const root = layoutFor(layouts, id);
-  if (root && root.sessionId === id) return false;
-  return true;
+function leafDepth(node, id, depth = 0) {
+  if (!node || typeof node !== "object") return -1;
+  if (node.sessionId) return node.sessionId === id ? depth : -1;
+  const left = leafDepth(node.first, id, depth + 1);
+  return left >= 0 ? left : leafDepth(node.second, id, depth + 1);
 }
 
-export function splitSession(layouts, id, newId, axis) {
+function maxTreeDepth(node) {
+  if (!node || typeof node !== "object" || node.sessionId) return 0;
+  return 1 + Math.max(maxTreeDepth(node.first), maxTreeDepth(node.second));
+}
+
+export function canSplitSession(layouts, id) {
   const root = layoutFor(layouts, id);
-  if (!root || !["columns", "rows"].includes(axis) || leafIds(root).length >= MAX_PANES || layoutFor(layouts, newId)) return layouts;
-  if (splitWouldNest(layouts, id)) return layouts;
-  function split(node) {
-    if (node.sessionId === id) return { axis, ratio: .5, first: node, second: { sessionId: newId } };
-    if (!node.sessionId && node.second?.sessionId === id) {
-      return { axis, ratio: .5, first: node, second: { sessionId: newId } };
+  if (!root || leafIds(root).length >= MAX_PANES) return false;
+  const depth = leafDepth(root, id);
+  return depth >= 0 && depth < MAX_TREE_DEPTH;
+}
+
+export function splitSession(layouts, id, newId, axis, placement = "after") {
+  const root = layoutFor(layouts, id);
+  if (!root || !["columns", "rows"].includes(axis) || !["before", "after"].includes(placement)) return layouts;
+  if (leafIds(root).length >= MAX_PANES || layoutFor(layouts, newId)) return layouts;
+  function split(node, depth = 0) {
+    if (node.sessionId === id) {
+      if (depth >= MAX_TREE_DEPTH) return node;
+      const added = { sessionId: newId };
+      return placement === "before"
+        ? { axis, ratio: .5, first: added, second: node }
+        : { axis, ratio: .5, first: node, second: added };
     }
-    return node.sessionId ? node : { ...node, first: split(node.first), second: split(node.second) };
+    if (node.sessionId) return node;
+    const first = split(node.first, depth + 1);
+    const second = split(node.second, depth + 1);
+    return first === node.first && second === node.second ? node : { ...node, first, second };
   }
-  return layouts.map((item) => item === root ? split(item) : item);
+  const next = split(root);
+  return next === root ? layouts : layouts.map((item) => item === root ? next : item);
+}
+
+function removeLeaf(node, id) {
+  if (node.sessionId) return node.sessionId === id ? null : node;
+  const first = removeLeaf(node.first, id), second = removeLeaf(node.second, id);
+  return first && second ? { ...node, first, second } : first || second;
+}
+
+const PANE_ZONES = {
+  left: { axis: "columns", placement: "before", root: false },
+  right: { axis: "columns", placement: "after", root: false },
+  top: { axis: "rows", placement: "before", root: false },
+  bottom: { axis: "rows", placement: "after", root: false },
+  "root-left": { axis: "columns", placement: "before", root: true },
+  "root-right": { axis: "columns", placement: "after", root: true },
+  "root-top": { axis: "rows", placement: "before", root: true },
+  "root-bottom": { axis: "rows", placement: "after", root: true }
+};
+
+export function movePane(layouts, sourceId, targetId, zone) {
+  if (!Array.isArray(layouts) || !sourceId || !targetId) return layouts;
+  const sourceRoot = layoutFor(layouts, sourceId), targetRoot = layoutFor(layouts, targetId);
+  if (!sourceRoot || !targetRoot) return layouts;
+
+  if (zone === "center") {
+    if (sourceId === targetId) return layouts;
+    const swap = (node) => {
+      if (node.sessionId === sourceId) return { sessionId: targetId };
+      if (node.sessionId === targetId) return { sessionId: sourceId };
+      return node.sessionId ? node : { ...node, first: swap(node.first), second: swap(node.second) };
+    };
+    return layouts.map(swap);
+  }
+
+  const spec = PANE_ZONES[zone];
+  if (!spec) return layouts;
+  const anchorId = spec.root
+    ? (targetId !== sourceId ? targetId : leafIds(targetRoot).find((id) => id !== sourceId))
+    : (targetId !== sourceId ? targetId : null);
+  if (!anchorId) return layouts;
+  if (sourceRoot !== targetRoot && leafIds(targetRoot).length >= MAX_PANES) return layouts;
+
+  const withoutSource = layouts.map((item) => removeLeaf(item, sourceId)).filter(Boolean);
+  let result;
+  if (spec.root) {
+    const anchorRoot = layoutFor(withoutSource, anchorId);
+    if (!anchorRoot || maxTreeDepth(anchorRoot) >= MAX_TREE_DEPTH) return layouts;
+    const added = { sessionId: sourceId };
+    const wrapped = spec.placement === "before"
+      ? { axis: spec.axis, ratio: .5, first: added, second: anchorRoot }
+      : { axis: spec.axis, ratio: .5, first: anchorRoot, second: added };
+    result = withoutSource.map((item) => item === anchorRoot ? wrapped : item);
+  } else {
+    result = splitSession(withoutSource, anchorId, sourceId, spec.axis, spec.placement);
+  }
+  if (result === withoutSource || !layoutFor(result, sourceId) || !layoutFor(result, anchorId)) return layouts;
+  return result;
 }
 
 export function detachSession(layouts, id) {
-  function remove(node) {
-    if (node.sessionId) return node.sessionId === id ? null : node;
-    const first = remove(node.first), second = remove(node.second);
-    return first && second ? { ...node, first, second } : first || second;
+  return [...layouts.map((item) => removeLeaf(item, id)).filter(Boolean), { sessionId: id }];
+}
+
+export function paneDropTarget(panes, box, clientX, clientY, { sourceId = null, allowSplit = true } = {}) {
+  if (!Array.isArray(panes) || !panes.length || !box || box.width <= 0 || box.height <= 0) return null;
+  if (clientX < box.left || clientX > box.left + box.width || clientY < box.top || clientY > box.top + box.height) return null;
+
+  if (panes.length >= 2 && allowSplit) {
+    const rimX = Math.min(18, box.width * .06), rimY = Math.min(18, box.height * .06);
+    const dl = clientX - box.left, dr = box.left + box.width - clientX;
+    const dt = clientY - box.top, db = box.top + box.height - clientY;
+    const sourcePane = sourceId ? panes.find((p) => p.id === sourceId) : null;
+    const anchor = panes.find((p) => p.id !== sourceId)?.id;
+    if (anchor) {
+      const candidates = [];
+      if (dl <= rimX) candidates.push({ dist: dl, zone: "root-left", preview: { x: 0, y: 0, width: .5, height: 1 },
+        noop: sourcePane && sourcePane.x === 0 && sourcePane.y === 0 && sourcePane.height === 1 });
+      if (dr <= rimX) candidates.push({ dist: dr, zone: "root-right", preview: { x: .5, y: 0, width: .5, height: 1 },
+        noop: sourcePane && Math.abs(sourcePane.x + sourcePane.width - 1) < 1e-6 && sourcePane.y === 0 && sourcePane.height === 1 });
+      if (dt <= rimY) candidates.push({ dist: dt, zone: "root-top", preview: { x: 0, y: 0, width: 1, height: .5 },
+        noop: sourcePane && sourcePane.x === 0 && sourcePane.y === 0 && sourcePane.width === 1 });
+      if (db <= rimY) candidates.push({ dist: db, zone: "root-bottom", preview: { x: 0, y: .5, width: 1, height: .5 },
+        noop: sourcePane && sourcePane.x === 0 && Math.abs(sourcePane.y + sourcePane.height - 1) < 1e-6 && sourcePane.width === 1 });
+      candidates.sort((a, b) => a.dist - b.dist);
+      if (candidates.length) {
+        return candidates[0].noop ? null : { targetId: anchor, zone: candidates[0].zone, preview: candidates[0].preview };
+      }
+    }
   }
-  return [...layouts.map(remove).filter(Boolean), { sessionId: id }];
+
+  const gx = (clientX - box.left) / box.width, gy = (clientY - box.top) / box.height;
+  const pane = panes.find((p) => gx >= p.x && gx <= p.x + p.width && gy >= p.y && gy <= p.y + p.height)
+    || panes.reduce((best, p) => {
+      const dx = Math.max(p.x - gx, 0, gx - (p.x + p.width));
+      const dy = Math.max(p.y - gy, 0, gy - (p.y + p.height));
+      const dist = dx * dx + dy * dy;
+      return !best || dist < best.dist ? { p, dist } : best;
+    }, null)?.p;
+  if (!pane || pane.id === sourceId) return null;
+
+  const rx = Math.max(0, Math.min(1, (gx - pane.x) / pane.width));
+  const ry = Math.max(0, Math.min(1, (gy - pane.y) / pane.height));
+  if (!allowSplit || (rx > .25 && rx < .75 && ry > .25 && ry < .75)) {
+    return { targetId: pane.id, zone: "center", preview: { x: pane.x, y: pane.y, width: pane.width, height: pane.height } };
+  }
+
+  const edges = [
+    { dist: rx, zone: "left", preview: { x: pane.x, y: pane.y, width: pane.width / 2, height: pane.height } },
+    { dist: 1 - rx, zone: "right", preview: { x: pane.x + pane.width / 2, y: pane.y, width: pane.width / 2, height: pane.height } },
+    { dist: ry, zone: "top", preview: { x: pane.x, y: pane.y, width: pane.width, height: pane.height / 2 } },
+    { dist: 1 - ry, zone: "bottom", preview: { x: pane.x, y: pane.y + pane.height / 2, width: pane.width, height: pane.height / 2 } }
+  ].sort((a, b) => a.dist - b.dist);
+  return { targetId: pane.id, zone: edges[0].zone, preview: edges[0].preview };
 }
 
 export function layoutGeometry(root) {
@@ -111,49 +216,24 @@ export function neighborPane(panes, id, direction) {
 
 export function isSplitChild(layouts, id) {
   if (!Array.isArray(layouts) || !id) return false;
-  const stack = [...layouts];
-  while (stack.length) {
-    const n = stack.pop();
-    if (!n || typeof n !== "object") continue;
-    if (n.sessionId) continue;
-    if (n.second?.sessionId === id) return true;
-    if (n.first) stack.push(n.first);
-    if (n.second) stack.push(n.second);
-  }
-  return false;
+  const root = layoutFor(layouts, id);
+  if (!root || root.sessionId) return false;
+  const leaves = leafIds(root);
+  return leaves.length > 1 && leaves[0] !== id;
 }
 
-// Indent level of a session leaf: how many enclosing splits hold it in
-// their second branch. A pane split off another pane indents one step
-// deeper than its source, so generations read correctly: splitting b off
-// a, then c off b, renders a, b indented once, c twice. The first pane of
-// a split stays level with its source.
+// Sidebar keeps one flat indent level under the workspace lead pane regardless
+// of how nested the 2D spatial split tree is on screen.
 export function splitIndentLevel(layouts, id) {
-  if (!Array.isArray(layouts) || !id) return 0;
-  for (const root of layouts) {
-    const stack = [{ node: root, level: 0 }];
-    while (stack.length) {
-      const { node, level } = stack.pop();
-      if (!node || typeof node !== "object") continue;
-      if (node.sessionId) {
-        if (node.sessionId === id) return level;
-        continue;
-      }
-      if (node.first) stack.push({ node: node.first, level });
-      if (node.second) stack.push({ node: node.second, level: level + 1 });
-    }
-  }
-  return 0;
+  return isSplitChild(layouts, id) ? 1 : 0;
 }
 
-// Visual parent marker: only the first pane of a top-level split.
-// A nested first (e.g. b split into b+c) keeps its child indent and must
-// not read as a parent of its own sibling.
 export function isSplitParent(layouts, id) {
   if (!Array.isArray(layouts) || !id) return false;
-  return layouts.some((root) =>
-    root && typeof root === "object" && !root.sessionId &&
-    root.first?.sessionId === id && root.second);
+  const root = layoutFor(layouts, id);
+  if (!root || root.sessionId) return false;
+  const leaves = leafIds(root);
+  return leaves.length > 1 && leaves[0] === id;
 }
 
 export function paneShortcut(event) {

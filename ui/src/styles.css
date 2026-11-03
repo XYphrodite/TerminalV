@@ -667,10 +667,22 @@ body,
 .pane-toolbar button:disabled { opacity: .45; cursor: default; }
 .pane-head { display: none; }
 .split-view .pane-head { position: absolute; inset: 0 0 auto; height: 28px; z-index: 3; display: flex; align-items: center;
-  gap: 8px; padding: 0 6px 0 10px; background: var(--sidebar); border-bottom: 1px solid var(--sidebar-edge); }
+  gap: 8px; padding: 0 6px 0 10px; background: var(--sidebar); border-bottom: 1px solid var(--sidebar-edge); cursor: grab; user-select: none; }
 .pane-title { min-width: 0; flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--muted); font-size: 12px; }
-.pane-close { border: 0; background: transparent; color: var(--muted); width: 24px; height: 24px; cursor: pointer; }
+.pane-head-actions { display: inline-flex; align-items: center; gap: 2px; flex: 0 0 auto; }
+.pane-head-btn, .pane-close { border: 0; background: transparent; color: var(--muted); width: 24px; height: 24px; cursor: pointer; }
+.pane-head-btn:hover:not(:disabled) { color: var(--text); background: var(--tab-hover); }
+.pane-head-btn:disabled { opacity: .3; cursor: default; }
 .pane-close:hover { color: var(--danger); background: var(--tab-hover); }
+.split-view .pane:not(.active):not(:hover):not(:focus-within) .pane-head-btn { opacity: 0; pointer-events: none; }
+.pane.dragging-pane { opacity: .72; }
+.pane.dragging-pane .pane-head { cursor: grabbing; }
+.pane-dragging .terminal-host { pointer-events: none; }
+.pane-drop-preview { position: absolute; z-index: 12; pointer-events: none; border-radius: var(--radius);
+  border: 2px solid var(--accent); background: color-mix(in srgb, var(--accent) 18%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 32%, transparent);
+  transition: left 60ms ease, top 60ms ease, width 60ms ease, height 60ms ease; }
+.pane-drop-preview[hidden] { display: none; }
 .split-view .pane.active { box-shadow: inset 0 0 0 1px var(--accent); }
 .split-view .pane.active .pane-title { color: var(--text); }
 .split-view .pane.active .pane-head { border-bottom-color: var(--accent); }

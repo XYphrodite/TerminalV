@@ -333,6 +333,81 @@
     equal(s.messages("write").length, 0);
   });
 
+  await check("splitting the focused right pane downward splits only that pane, leaving the left pane full height", async (s) => {
+    const beforeLeftHeight = s.pane("a").getBoundingClientRect().height;
+    s.pane("b").querySelector(".pane-head").click();
+    await delay();
+    equal(s.active(), "b");
+    s.button("split-down").click();
+    await delay();
+    const created = s.messages("create")[0];
+    const a = s.pane("a").getBoundingClientRect();
+    const b = s.pane("b").getBoundingClientRect();
+    const c = s.pane(created.id).getBoundingClientRect();
+    equal(Math.abs(a.height - beforeLeftHeight) < 2, true);
+    equal(a.right < b.left, true);
+    equal(a.right < c.left, true);
+    equal(b.bottom < c.top, true);
+    equal(s.saved().layouts[0], branch(leaf("a"), branch(leaf("b"), leaf(created.id), "rows"), "columns"));
+  });
+
+  await check("dragging sidebar tabs and pane headers docks, rearranges, swaps and undocks live terminals like VS Code", async (s) => {
+    const panes = s.doc.getElementById("panes");
+    const termA = s.pane("a").querySelector(".xterm");
+    const termB = s.pane("b").querySelector(".xterm");
+    const termOther = s.pane("other").querySelector(".xterm");
+    const transfer = new s.app.DataTransfer();
+
+    // 1. Drag standalone sidebar session "other" onto bottom half of right pane "b"
+    s.row("other").dispatchEvent(new s.app.DragEvent("dragstart", { bubbles: true, dataTransfer: transfer }));
+    const bBox = s.pane("b").getBoundingClientRect();
+    const dropX = bBox.left + bBox.width * .5;
+    const dropY = bBox.top + bBox.height * .85;
+    panes.dispatchEvent(new s.app.DragEvent("dragover", { bubbles: true, cancelable: true, dataTransfer: transfer, clientX: dropX, clientY: dropY }));
+    const preview = s.doc.querySelector(".pane-drop-preview");
+    equal(preview.hidden, false);
+    equal(preview.dataset.zone, "bottom");
+    equal(preview.dataset.targetId, "b");
+    panes.dispatchEvent(new s.app.DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: transfer, clientX: dropX, clientY: dropY }));
+    await delay();
+    equal(preview.hidden, true);
+    equal(s.visible(), ["a", "b", "other"]);
+    equal(s.saved().layouts, [branch(leaf("a"), branch(leaf("b"), leaf("other"), "rows"), "columns")]);
+
+    // 2. Drag "other" pane header to the outer bottom rim of #panes -> spans full width under both a and b
+    const pBox = panes.getBoundingClientRect();
+    s.pane("other").querySelector(".pane-head").dispatchEvent(new s.app.DragEvent("dragstart", { bubbles: true, dataTransfer: transfer }));
+    panes.dispatchEvent(new s.app.DragEvent("dragover", { bubbles: true, cancelable: true, dataTransfer: transfer, clientX: pBox.left + pBox.width * .5, clientY: pBox.bottom - 5 }));
+    equal(preview.dataset.zone, "root-bottom");
+    panes.dispatchEvent(new s.app.DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: transfer, clientX: pBox.left + pBox.width * .5, clientY: pBox.bottom - 5 }));
+    await delay();
+    equal(s.saved().layouts, [branch(branch(leaf("a"), leaf("b"), "columns"), leaf("other"), "rows")]);
+
+    // 3. Drag "other" pane header to center of "a" -> swaps "other" and "a" in place
+    const aBox = s.pane("a").getBoundingClientRect();
+    s.pane("other").querySelector(".pane-head").dispatchEvent(new s.app.DragEvent("dragstart", { bubbles: true, dataTransfer: transfer }));
+    panes.dispatchEvent(new s.app.DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: transfer, clientX: aBox.left + aBox.width * .5, clientY: aBox.top + aBox.height * .5 }));
+    await delay();
+    equal(s.saved().layouts, [branch(branch(leaf("other"), leaf("b"), "columns"), leaf("a"), "rows")]);
+
+    // 4. Drag "a" pane header onto #tabs sidebar -> undocks "a" back into its own standalone tab
+    const tabsEl = s.doc.getElementById("tabs");
+    s.pane("a").querySelector(".pane-head").dispatchEvent(new s.app.DragEvent("dragstart", { bubbles: true, dataTransfer: transfer }));
+    tabsEl.dispatchEvent(new s.app.DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: transfer }));
+    await delay();
+    equal(s.visible(), ["b", "other"]);
+    equal(s.pane("other").getBoundingClientRect().right < s.pane("b").getBoundingClientRect().left, true);
+    equal(s.saved().layouts, [branch(leaf("other"), leaf("b"), "columns"), leaf("a")]);
+
+    // Mounted xterm instances were preserved throughout every move, swap and undock, with zero PTY restarts
+    equal(s.pane("a").querySelector(".xterm") === termA, true);
+    equal(s.pane("b").querySelector(".xterm") === termB, true);
+    equal(s.pane("other").querySelector(".xterm") === termOther, true);
+    equal(s.messages("create").length, 0);
+    equal(s.messages("kill").length, 0);
+    equal(s.messages("write").length, 0);
+  });
+
   if (new URL(location.href).searchParams.has("preview")) {
     const s = await setup({ layouts: [branch(leaf("a"), branch(leaf("b"), leaf("other"), "rows"))] });
     s.app.sendHost({ type: "data", id: "a", data: "PS C:\\Repos\\TerminalV> muse\r\n\r\nРазработка интерфейса\r\nПанели готовы к проверке.\r\n" });

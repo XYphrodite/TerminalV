@@ -23,8 +23,8 @@ import { createNotifications, createNotificationOutput } from "./notifications.j
 import { createSessionPersistence, serializeSessionBuffer } from "./session-persistence.js";
 import { createLaunchProfiles, PROFILE_SHELLS } from "./launch-profiles.js";
 import { createLaunchMenu } from "./launch-menu.js";
-import { normalizeLayouts, layoutFor, leafIds, splitSession, detachSession, layoutGeometry,
-  neighborPane, paneShortcut, MAX_PANES, MIN_PANE_WIDTH, MIN_PANE_HEIGHT, isSplitChild, isSplitParent, splitIndentLevel, splitWouldNest } from "./pane-layout.js";
+import { normalizeLayouts, layoutFor, leafIds, splitSession, detachSession, movePane, paneDropTarget, canSplitSession, layoutGeometry,
+  neighborPane, paneShortcut, MAX_PANES, MIN_PANE_WIDTH, MIN_PANE_HEIGHT, isSplitChild, isSplitParent, splitIndentLevel } from "./pane-layout.js";
 import { createPaneView } from "./pane-view.js";
 import { syncTerminalViewport, claimLiveScreenInput } from "./terminal-viewport.js";
 import { attachScrollToBottom, updateScrollToBottom } from "./scroll-to-bottom.js";
@@ -108,6 +108,8 @@ const pendingRemoteSessions = new Map();
 const clipboardWaiters = new Map();
 const pasteFileWaiters = new Map();
 let draggedTabId = null;
+let draggedSource = null;
+let activePaneDrop = null;
 
 const settings = {
   themeId: "midnight",
@@ -236,18 +238,17 @@ function isPaneVisible(tab) {
   return Boolean(tab && !tab.hidden && leafIds(layoutFor(layouts, activeId)).includes(tab.id));
 }
 
-function canSplit(axis) {
-  const tab = currentTab(), count = visibleTabs().length;
-  if (!tab || !count || count >= MAX_PANES) return false;
-  // A split that would nest deeper than one level stays disabled;
-  // splitting a child pane adds a sibling under the same parent instead.
-  if (splitWouldNest(layouts, tab.id)) return false;
+function canSplit(axis, tab = currentTab()) {
+  const count = visibleTabs().length;
+  if (!tab || !isPaneVisible(tab) || !count || count >= MAX_PANES) return false;
+  if (!canSplitSession(layouts, tab.id)) return false;
   const box = tab.pane.getBoundingClientRect();
   return axis === "columns" ? box.width >= MIN_PANE_WIDTH * 2 + 6 : box.height >= MIN_PANE_HEIGHT * 2 + 6;
 }
 
 function updatePaneToolbar() {
-  const count = visibleTabs().length;
+  const visible = visibleTabs();
+  const count = visible.length;
   const mobile = document.documentElement.classList.contains("mobile-ui");
   // One phone pane does not need the desktop split header; it is an empty band.
   paneToolbar.hidden = count < 1 || (mobile && count < 2);
@@ -258,6 +259,21 @@ function updatePaneToolbar() {
   detachPaneBtn.disabled = count < 2;
   splitRightBtn.title = splitRightBtn.disabled ? t("InsufficientSpace", { max: MAX_PANES }) : t("SplitRight");
   splitDownBtn.title = splitDownBtn.disabled ? t("InsufficientSpace", { max: MAX_PANES }) : t("SplitDown");
+  for (const tab of visible) {
+    if (!tab.paneSplitRight) continue;
+    tab.paneHead.title = t("Pane_DragHint");
+    tab.paneSplitRight.disabled = !canSplit("columns", tab);
+    tab.paneSplitDown.disabled = !canSplit("rows", tab);
+    tab.paneDetach.disabled = count < 2;
+    tab.paneSplitRight.title = tab.paneSplitRight.disabled ? t("InsufficientSpace", { max: MAX_PANES }) : t("SplitRight");
+    tab.paneSplitRight.setAttribute("aria-label", t("SplitRight"));
+    tab.paneSplitDown.title = tab.paneSplitDown.disabled ? t("InsufficientSpace", { max: MAX_PANES }) : t("SplitDown");
+    tab.paneSplitDown.setAttribute("aria-label", t("SplitDown"));
+    tab.paneDetach.title = t("Pane_Detach");
+    tab.paneDetach.setAttribute("aria-label", t("Pane_Detach"));
+    tab.paneClose.title = t("ClosePanel");
+    tab.paneClose.setAttribute("aria-label", t("ClosePanel"));
+  }
 }
 
 function updateWorkspaceContext() {
@@ -283,22 +299,178 @@ function renderPaneLayout() {
   scheduleFit();
 }
 
-function splitPane(axis) {
-  if (isModalOpen() || !settingsEl.classList.contains("hidden") || !canSplit(axis)) return;
+const paneDropPreview = document.createElement("div");
+paneDropPreview.className = "pane-drop-preview";
+paneDropPreview.hidden = true;
+paneDropPreview.setAttribute("aria-hidden", "true");
+panesEl.append(paneDropPreview);
+
+function clearPaneDropPreview() {
+  activePaneDrop = null;
+  paneDropPreview.hidden = true;
+  delete paneDropPreview.dataset.zone;
+  delete paneDropPreview.dataset.targetId;
+}
+
+function endTabDrag() {
+  draggedTabId = null;
+  draggedSource = null;
+  clearPaneDropPreview();
+  clearTabDropIndicators();
+  panesEl.classList.remove("pane-dragging");
+  tabsEl.querySelectorAll(".dragging").forEach((el) => el.classList.remove("dragging"));
+  panesEl.querySelectorAll(".dragging-pane").forEach((el) => el.classList.remove("dragging-pane"));
+}
+
+function beginTabDrag(id, source, event, element) {
+  draggedTabId = id;
+  draggedSource = source;
+  element.classList.add(source === "pane" ? "dragging-pane" : "dragging");
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = "move";
+    try { event.dataTransfer.setData("application/x-terminalv-tab", id); } catch {}
+  }
+  queueMicrotask(() => {
+    if (draggedTabId === id) panesEl.classList.add("pane-dragging");
+  });
+}
+
+function syncSplitTabOrder(root, groupSourceTab = null) {
+  if (!root || root.sessionId) return;
+  const ids = leafIds(root);
+  if (ids.length < 2) return;
+  const members = ids.map((id) => tabs.find((tab) => tab.id === id)).filter(Boolean);
+  if (members.length < 2) return;
+  const anchor = groupSourceTab || members[0];
+  for (const member of members) {
+    member.group = anchor.group;
+    member.pinned = anchor.pinned;
+  }
+  const firstIndex = tabs.findIndex((tab) => ids.includes(tab.id));
+  if (firstIndex < 0) return;
+  const idSet = new Set(ids);
+  for (let i = tabs.length - 1; i >= 0; i--) {
+    if (idSet.has(tabs[i].id)) tabs.splice(i, 1);
+  }
+  const insertAt = Math.min(firstIndex, tabs.length);
+  tabs.splice(insertAt, 0, ...members);
+}
+
+function moveDetachedTabAfterSplit(detachedId, remainingIds) {
+  if (remainingIds.length < 2) return;
+  syncSplitTabOrder(layoutFor(layouts, remainingIds[0]));
+  const detachedIndex = tabs.findIndex((tab) => tab.id === detachedId);
+  const lastRemainingIndex = tabs.reduce((acc, tab, idx) => remainingIds.includes(tab.id) ? idx : acc, -1);
+  if (detachedIndex < 0 || lastRemainingIndex < 0 || detachedIndex > lastRemainingIndex) return;
+  const [detached] = tabs.splice(detachedIndex, 1);
+  const nextLast = tabs.reduce((acc, tab, idx) => remainingIds.includes(tab.id) ? idx : acc, -1);
+  tabs.splice(nextLast + 1, 0, detached);
+}
+
+function applyPaneMove(sourceId, targetId, zone) {
+  const targetTab = tabs.find((tab) => tab.id === targetId);
+  const next = movePane(layouts, sourceId, targetId, zone);
+  if (next === layouts) return;
+  layouts = next;
+  const updatedRoot = layoutFor(layouts, sourceId);
+  if (updatedRoot && !updatedRoot.sessionId) {
+    syncSplitTabOrder(updatedRoot, targetTab);
+  }
+  activeId = sourceId;
+  renderTabs();
+  renderPaneLayout();
+  persistSessions();
+  focusTerminal();
+}
+
+function computePaneDropHit(clientX, clientY) {
+  const root = layoutFor(layouts, activeId);
+  if (!root || !draggedTabId) return null;
+  const geometry = layoutGeometry(root);
+  const inSameRoot = leafIds(root).includes(draggedTabId);
+  const allowSplit = inSameRoot || geometry.panes.length < MAX_PANES;
+  return paneDropTarget(geometry.panes, panesEl.getBoundingClientRect(), clientX, clientY, {
+    sourceId: draggedTabId,
+    allowSplit
+  });
+}
+
+panesEl.addEventListener("dragover", (event) => {
+  if (!draggedTabId || isModalOpen() || !settingsEl.classList.contains("hidden")) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const hit = computePaneDropHit(event.clientX, event.clientY);
+  if (!hit) {
+    clearPaneDropPreview();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = "none";
+    return;
+  }
+  if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+  activePaneDrop = hit;
+  paneDropPreview.hidden = false;
+  paneDropPreview.dataset.zone = hit.zone;
+  paneDropPreview.dataset.targetId = hit.targetId;
+  Object.assign(paneDropPreview.style, {
+    left: `calc(${hit.preview.x * 100}% + 3px)`,
+    top: `calc(${hit.preview.y * 100}% + 3px)`,
+    width: `calc(${hit.preview.width * 100}% - 6px)`,
+    height: `calc(${hit.preview.height * 100}% - 6px)`
+  });
+}, true);
+
+panesEl.addEventListener("dragleave", (event) => {
+  if (!draggedTabId) return;
+  if (event.relatedTarget && panesEl.contains(event.relatedTarget)) return;
+  if (event.clientX || event.clientY) {
+    const box = panesEl.getBoundingClientRect();
+    if (event.clientX > box.left && event.clientX < box.right && event.clientY > box.top && event.clientY < box.bottom) return;
+  }
+  clearPaneDropPreview();
+}, true);
+
+panesEl.addEventListener("drop", (event) => {
+  if (!draggedTabId || isModalOpen() || !settingsEl.classList.contains("hidden")) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const hit = (event.clientX || event.clientY)
+    ? computePaneDropHit(event.clientX, event.clientY)
+    : activePaneDrop;
+  const sourceId = draggedTabId;
+  endTabDrag();
+  if (hit) applyPaneMove(sourceId, hit.targetId, hit.zone);
+}, true);
+
+window.addEventListener("dragend", endTabDrag);
+window.addEventListener("blur", () => { if (draggedTabId) endTabDrag(); });
+
+function splitPane(axis, targetId = activeId) {
+  const sourceTab = tabs.find((item) => item.id === targetId);
+  if (isModalOpen() || !settingsEl.classList.contains("hidden") || !canSplit(axis, sourceTab)) return;
   searchController.close({ focus: false });
   pasteController.cancel(currentTab());
-  newTab({ splitFrom: activeId, splitAxis: axis });
+  newTab({ splitFrom: sourceTab.id, splitAxis: axis });
+}
+
+function detachPane(targetId = activeId, { keepWorkspaceFocus = false } = {}) {
+  if (isModalOpen() || !settingsEl.classList.contains("hidden")) return;
+  const oldRoot = layoutFor(layouts, targetId);
+  if (!oldRoot || oldRoot.sessionId) return;
+  const remainingIds = leafIds(oldRoot).filter((id) => id !== targetId);
+  if (!remainingIds.length) return;
+  layouts = detachSession(layouts, targetId);
+  moveDetachedTabAfterSplit(targetId, remainingIds);
+  if (keepWorkspaceFocus && activeId === targetId) {
+    activeId = remainingIds[0];
+  }
+  renderTabs();
+  renderPaneLayout();
+  persistSessions();
+  focusTerminal();
 }
 
 splitRightBtn.addEventListener("click", () => splitPane("columns"));
 splitDownBtn.addEventListener("click", () => splitPane("rows"));
-detachPaneBtn.addEventListener("click", () => {
-  if (isModalOpen() || visibleTabs().length < 2) return;
-  layouts = detachSession(layouts, activeId);
-  renderPaneLayout();
-  persistSessions();
-  focusTerminal();
-});
+detachPaneBtn.addEventListener("click", () => detachPane(activeId));
 new ResizeObserver(() => { updatePaneToolbar(); scheduleFit(); }).observe(panesEl);
 
 function openTabs() {
@@ -925,17 +1097,14 @@ function renderTabs() {
         }
       });
       row.addEventListener("dragstart", (event) => {
-        draggedTabId = tab.id;
-        row.classList.add("dragging");
-        event.dataTransfer.effectAllowed = "move";
-        event.dataTransfer.setData("text/plain", tab.id);
+        beginTabDrag(tab.id, "tab", event, row);
       });
       row.addEventListener("dragover", (event) => {
-        if (tab.hidden || !draggedTabId || draggedTabId === tab.id) {
+        if (tab.hidden || !draggedTabId || (draggedTabId === tab.id && draggedSource !== "pane")) {
           return;
         }
         event.preventDefault();
-        event.dataTransfer.dropEffect = "move";
+        if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
         clearTabDropIndicators();
         row.classList.add(event.clientY < row.getBoundingClientRect().top + row.offsetHeight / 2
           ? "drag-over-before"
@@ -946,16 +1115,22 @@ function renderTabs() {
       });
       row.addEventListener("drop", (event) => {
         event.preventDefault();
-        if (!draggedTabId || draggedTabId === tab.id) {
+        event.stopPropagation();
+        if (!draggedTabId || (draggedTabId === tab.id && draggedSource !== "pane")) {
           return;
         }
+        const sourceId = draggedTabId;
+        const fromPane = draggedSource === "pane";
         const before = event.clientY < row.getBoundingClientRect().top + row.offsetHeight / 2;
-        moveTab(draggedTabId, tab.id, before);
+        endTabDrag();
+        if (fromPane) {
+          detachPaneToSidebar(sourceId, tab.id, before);
+        } else {
+          moveTab(sourceId, tab.id, before);
+        }
       });
       row.addEventListener("dragend", () => {
-        draggedTabId = null;
-        clearTabDropIndicators();
-        row.classList.remove("dragging");
+        endTabDrag();
       });
       tabsEl.append(row);
     }
@@ -978,6 +1153,39 @@ function clearTabDropIndicators() {
     row.classList.remove("drag-over-before", "drag-over-after");
   });
 }
+
+function detachPaneToSidebar(sourceId, targetTabId = null, before = false) {
+  const oldRoot = layoutFor(layouts, sourceId);
+  const remainingIds = oldRoot && !oldRoot.sessionId ? leafIds(oldRoot).filter((id) => id !== sourceId) : [];
+  if (remainingIds.length) {
+    layouts = detachSession(layouts, sourceId);
+    if (activeId === sourceId) activeId = remainingIds[0];
+  }
+  if (targetTabId && targetTabId !== sourceId) {
+    moveTab(sourceId, targetTabId, before);
+    if (remainingIds.length >= 2) syncSplitTabOrder(layoutFor(layouts, remainingIds[0]));
+  } else if (remainingIds.length) {
+    moveDetachedTabAfterSplit(sourceId, remainingIds);
+  }
+  renderTabs();
+  renderPaneLayout();
+  persistSessions();
+  focusTerminal();
+}
+
+tabsEl.addEventListener("dragover", (event) => {
+  if (!draggedTabId || draggedSource !== "pane") return;
+  event.preventDefault();
+  if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+});
+
+tabsEl.addEventListener("drop", (event) => {
+  if (!draggedTabId || draggedSource !== "pane") return;
+  event.preventDefault();
+  const sourceId = draggedTabId;
+  endTabDrag();
+  detachPaneToSidebar(sourceId);
+});
 
 function moveTab(sourceId, targetId, before) {
   const sourceIndex = tabs.findIndex((tab) => tab.id === sourceId);
@@ -1415,9 +1623,10 @@ function attachCopyPaste(tab) {
 
 function newTab(options = {}) {
   // Restored tabs explicitly carry their own cwd (possibly null). Only a fresh
-  // tab inherits the active session, never a title or another restored tab.
-  const cwd = options.shell === "wsl" ? null : Object.hasOwn(options, "cwd") ? options.cwd : currentTab()?.shell === "wsl" ? null : currentTab()?.cwd;
-  const metadata = sessionMetadata({ ...options, group: Object.hasOwn(options, "group") ? options.group : currentTab()?.group });
+  // tab inherits the source/active session, never a title or another restored tab.
+  const sourceTab = (options.splitFrom && tabs.find((item) => item.id === options.splitFrom)) || currentTab();
+  const cwd = options.shell === "wsl" ? null : Object.hasOwn(options, "cwd") ? options.cwd : sourceTab?.shell === "wsl" ? null : sourceTab?.cwd;
+  const metadata = sessionMetadata({ ...options, group: Object.hasOwn(options, "group") ? options.group : sourceTab?.group });
   const id = options.id || uuid();
   const index = options.title ? nextIndex : nextIndex++;
   const pane = document.createElement("div");
@@ -1426,8 +1635,33 @@ function newTab(options = {}) {
   pane.setAttribute("role", "region");
   const paneHead = document.createElement("div");
   paneHead.className = "pane-head";
+  paneHead.draggable = true;
+  paneHead.title = t("Pane_DragHint");
   const paneTitle = document.createElement("span");
   paneTitle.className = "pane-title";
+  const paneActions = document.createElement("div");
+  paneActions.className = "pane-head-actions";
+  const paneSplitRight = document.createElement("button");
+  paneSplitRight.type = "button";
+  paneSplitRight.className = "pane-head-btn pane-split-right";
+  paneSplitRight.append(icon("right"));
+  paneSplitRight.title = t("SplitRight");
+  paneSplitRight.setAttribute("aria-label", t("SplitRight"));
+  paneSplitRight.addEventListener("click", (event) => { event.stopPropagation(); splitPane("columns", id); });
+  const paneSplitDown = document.createElement("button");
+  paneSplitDown.type = "button";
+  paneSplitDown.className = "pane-head-btn pane-split-down";
+  paneSplitDown.append(icon("down"));
+  paneSplitDown.title = t("SplitDown");
+  paneSplitDown.setAttribute("aria-label", t("SplitDown"));
+  paneSplitDown.addEventListener("click", (event) => { event.stopPropagation(); splitPane("rows", id); });
+  const paneDetach = document.createElement("button");
+  paneDetach.type = "button";
+  paneDetach.className = "pane-head-btn pane-detach";
+  paneDetach.append(icon("detach"));
+  paneDetach.title = t("Pane_Detach");
+  paneDetach.setAttribute("aria-label", t("Pane_Detach"));
+  paneDetach.addEventListener("click", (event) => { event.stopPropagation(); detachPane(id); });
   const paneClose = document.createElement("button");
   paneClose.type = "button";
   paneClose.className = "pane-close";
@@ -1435,10 +1669,19 @@ function newTab(options = {}) {
   paneClose.title = t("ClosePanel");
   paneClose.setAttribute("aria-label", t("ClosePanel"));
   paneClose.addEventListener("click", (event) => { event.stopPropagation(); closeTab(id); });
+  paneActions.append(paneSplitRight, paneSplitDown, paneDetach, paneClose);
   const paneState = document.createElement("span");
   paneState.className = "pane-state";
   paneState.setAttribute("aria-hidden", "true");
-  paneHead.append(paneState, paneTitle, paneClose);
+  paneHead.append(paneState, paneTitle, paneActions);
+  paneHead.addEventListener("dragstart", (event) => {
+    if (event.target.closest("button") || isModalOpen() || !settingsEl.classList.contains("hidden") || visibleTabs().length < 2) {
+      event.preventDefault();
+      return;
+    }
+    beginTabDrag(id, "pane", event, pane);
+  });
+  paneHead.addEventListener("dragend", () => endTabDrag());
   pane.append(paneHead);
 
   const hostEl = document.createElement("div");
@@ -1502,7 +1745,12 @@ function newTab(options = {}) {
     unread: false,
     exited: false,
     pane,
+    paneHead,
     paneTitle,
+    paneSplitRight,
+    paneSplitDown,
+    paneDetach,
+    paneClose,
     host: hostEl,
     overlay,
     overlayText,
