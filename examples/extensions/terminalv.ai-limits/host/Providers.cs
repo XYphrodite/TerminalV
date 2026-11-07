@@ -70,11 +70,11 @@ internal static class Providers
         if (!status.Installed) return 6;
         if (!status.Authenticated) return 5;
         if (!status.AuthOk) return 4;
-        if (status.LimitsStale) return 2;
+        if (status.LimitsStale) return 3;
         var active = status.Limits.Where(l => l.ResetsAt is null || l.ResetsAt > now).ToArray();
         if (active.Length == 0) return 1;
         var isExhausted = active.Any(l => (l.UsedPercent ?? 0) >= 100);
-        return isExhausted ? 3 : 0;
+        return isExhausted ? 2 : 0;
     }
 
     static ServiceStatus Guard(string id, string name, Func<ServiceStatus> probe, DateTimeOffset now)
