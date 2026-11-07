@@ -10,6 +10,7 @@
     <PackageReference Include="SSH.NET" Version="2026.0.0" />
     <Compile Include="../../src/TerminalV/Ssh/*.cs" Link="Ssh/%(Filename)%(Extension)" />
     <Compile Include="../../src/TerminalV/Gateway/GatewayServer.cs" />
+    <Compile Include="../../src/TerminalV/Gateway/GatewayUploadStore.cs" />
     <Compile Include="../../src/TerminalV/Gateway/TailnetAccess.cs" />
     <Compile Include="../../src/TerminalV/Gateway/IGatewaySessionBackend.cs" />
     <Compile Include="../../src/TerminalV/Data/AppSettings.cs" />

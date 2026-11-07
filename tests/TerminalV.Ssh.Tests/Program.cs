@@ -652,6 +652,7 @@ CheckAsync("Gateway shares the desktop pipe and replays only to the new subscrib
 CheckAsync("Gateway preserves terminal modes across host and live replay truncation", GatewayReplayBufferChecks.Run);
 CheckAsync("Gateway binary S->C path: handshake, history and live as Binary frames", GatewayBinaryChecks.Run);
 CheckAsync("Gateway HTTP upload endpoint and client streaming", GatewayUploadChecks.Run);
+CheckAsync("Mobile v0.8.26 adversarial verification (extension sanitization, boundaries, cleanup)", AdversarialMobileChecks.Run);
 Console.WriteLine($"Ssh checks: {passed} passed, {failed} failed.");
 if (failed > 0) Environment.Exit(1);
 
