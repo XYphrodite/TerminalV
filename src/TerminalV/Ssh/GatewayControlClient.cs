@@ -24,6 +24,7 @@ public sealed class GatewayControlClient : IDisposable
     private ClientWebSocket? _ws;
     private int _disposed;
     private readonly bool _tailnetIdentity;
+    private readonly Func<string, int, CancellationToken, Task<Stream>>? _dial;
     private readonly System.Net.Http.HttpMessageInvoker? _transport;
 
     public GatewayControlClient(string gatewayUrl, string? gatewayToken = null, TimeSpan? timeout = null,
@@ -35,6 +36,7 @@ public sealed class GatewayControlClient : IDisposable
         _token = gatewayToken;
         _timeout = timeout ?? TimeSpan.FromSeconds(15);
         _tailnetIdentity = tailnetIdentity;
+        _dial = dial;
         _transport = GatewayTransport.CreateHandler(dial);
     }
 
@@ -120,6 +122,47 @@ public sealed class GatewayControlClient : IDisposable
         await SendAsync(ws, GatewayProtocol.KillRequest(id), cts.Token).ConfigureAwait(false);
     }
 
+    public async Task<string> UploadAsync(Stream content, string? fileName = null,
+        TimeSpan? uploadTimeout = null, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(content);
+        using var http = GatewayTransport.CreateHttpClient(_dial, uploadTimeout ?? TimeSpan.FromMinutes(2));
+        using var request = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Post, ToHttpUploadUrl(_url, fileName));
+        request.Headers.TryAddWithoutValidation("X-TerminalV-Upload", "1");
+        if (_tailnetIdentity)
+            request.Headers.TryAddWithoutValidation("Authorization", "Tailscale");
+        else if (!string.IsNullOrWhiteSpace(_token))
+            request.Headers.TryAddWithoutValidation("Authorization", "Bearer " + _token);
+
+        var streamContent = new System.Net.Http.StreamContent(content, 65536);
+        streamContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
+        request.Content = streamContent;
+
+        using var response = await http.SendAsync(request, System.Net.Http.HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
+        var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+
+        if ((int)response.StatusCode == 426)
+            throw new InvalidOperationException("Обновите TerminalV на ПК, чтобы загружать фото и файлы с телефона.");
+        if ((int)response.StatusCode is 401 or 403)
+            throw new InvalidOperationException("Шлюз отклонил загрузку файла (проверьте токен или доступ Tailscale).");
+        if ((int)response.StatusCode == 413)
+            throw new InvalidOperationException("Файл слишком большой (максимум 256 МБ).");
+        if (!response.IsSuccessStatusCode)
+        {
+            var err = ReadError(body);
+            throw new InvalidOperationException(!string.IsNullOrWhiteSpace(err) ? err : $"Ошибка загрузки файла ({(int)response.StatusCode}).");
+        }
+
+        using var doc = JsonDocument.Parse(body);
+        if (doc.RootElement.TryGetProperty("path", out var pathEl) &&
+            pathEl.ValueKind == JsonValueKind.String &&
+            pathEl.GetString() is { Length: > 0 } savedPath)
+        {
+            return savedPath;
+        }
+        throw new InvalidOperationException("Шлюз не вернул путь к загруженному файлу.");
+    }
+
     public void Dispose()
     {
         if (Interlocked.Exchange(ref _disposed, 1) == 0)
@@ -181,6 +224,31 @@ public sealed class GatewayControlClient : IDisposable
             return null;
         }
         catch (JsonException) { return null; }
+    }
+
+    private static string? ReadError(string text)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(text);
+            if (doc.RootElement.TryGetProperty("error", out var e) && e.ValueKind == JsonValueKind.String)
+                return e.GetString();
+            return null;
+        }
+        catch (JsonException) { return null; }
+    }
+
+    internal static string ToHttpUploadUrl(string wsUrl, string? fileName)
+    {
+        var baseUrl = Normalize(wsUrl);
+        if (baseUrl.StartsWith("ws://", StringComparison.OrdinalIgnoreCase))
+            baseUrl = "http://" + baseUrl[5..];
+        else if (baseUrl.StartsWith("wss://", StringComparison.OrdinalIgnoreCase))
+            baseUrl = "https://" + baseUrl[6..];
+        var uploadUrl = baseUrl + "/terminalv/upload";
+        if (!string.IsNullOrWhiteSpace(fileName))
+            uploadUrl += "?name=" + Uri.EscapeDataString(fileName);
+        return uploadUrl;
     }
 
     internal static string Normalize(string gatewayUrl)

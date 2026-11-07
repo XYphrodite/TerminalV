@@ -242,6 +242,15 @@ internal sealed class MobileBridge : IDisposable
             case "paste-file-store":
                 HandlePasteFileStore(message.RequestId, message.Data);
                 break;
+            case "clipboard-image-store":
+                _ = HandleClipboardImageStoreAsync(message.RequestId);
+                break;
+            case "mobile-upload-file":
+                _ = HandleMobileUploadAsync(message.RequestId, message.Id, message.Source);
+                break;
+            case "mobile-upload-bytes":
+                _ = HandleMobileUploadBytesAsync(message.RequestId, message.Id, message.FileName, message.Data);
+                break;
             case "clipboard-write":
                 if (!string.IsNullOrEmpty(message.Data))
                     _ = HandleClipboardWrite(message.Data!);
@@ -458,6 +467,7 @@ internal sealed class MobileBridge : IDisposable
         try
         {
             if (string.IsNullOrEmpty(data)) { Post(new { type = "paste-file-stored", requestId, path = (string?)null }); return; }
+            if (HasConnectionSettings()) { _ = UploadPasteTextAsync(requestId, data); return; }
             var dir = Path.Combine(Path.GetTempPath(), "TerminalV", "pastes");
             Directory.CreateDirectory(dir);
             var path = Path.Combine(dir, $"paste-{Guid.NewGuid():N}.txt");
@@ -465,6 +475,193 @@ internal sealed class MobileBridge : IDisposable
             Post(new { type = "paste-file-stored", requestId, path });
         }
         catch { Post(new { type = "paste-file-stored", requestId, path = (string?)null }); }
+    }
+
+    private async Task UploadPasteTextAsync(string requestId, string data)
+    {
+        try
+        {
+            var bytes = Encoding.UTF8.GetBytes(data);
+            await using var ms = new MemoryStream(bytes, writable: false);
+            var remotePath = await UploadRemotePasteAsync(ms, "paste.txt").ConfigureAwait(false);
+            Post(new { type = "paste-file-stored", requestId, path = remotePath });
+        }
+        catch (Exception ex)
+        {
+            Post(new { type = "paste-file-stored", requestId, path = (string?)null, error = ex.Message });
+        }
+    }
+
+    private async Task HandleClipboardImageStoreAsync(string? requestId)
+    {
+        if (string.IsNullOrEmpty(requestId)) return;
+        try
+        {
+            if (!HasConnectionSettings())
+            {
+                Post(new { type = "paste-file-stored", requestId, path = (string?)null });
+                return;
+            }
+            var clipImage = await TryReadClipboardImageAsync().ConfigureAwait(false);
+            if (clipImage is null)
+            {
+                Post(new { type = "paste-file-stored", requestId, path = (string?)null });
+                return;
+            }
+            await using (clipImage.Value.Stream)
+            {
+                var remotePath = await UploadRemotePasteAsync(clipImage.Value.Stream, clipImage.Value.FileName).ConfigureAwait(false);
+                Post(new { type = "paste-file-stored", requestId, path = remotePath });
+            }
+        }
+        catch (Exception ex)
+        {
+            Post(new { type = "paste-file-stored", requestId, path = (string?)null, error = ex.Message });
+        }
+    }
+
+    private async Task HandleMobileUploadAsync(string? requestId, string? id, string? source)
+    {
+        try
+        {
+            if (!HasConnectionSettings())
+                throw new InvalidOperationException("Выберите компьютер в настройках подключения.");
+
+            var picked = await PickUploadFileAsync(source).ConfigureAwait(false);
+            if (picked is null)
+            {
+                Post(new { type = "mobile-file-uploaded", requestId, id, canceled = true });
+                return;
+            }
+
+            var fileName = string.IsNullOrWhiteSpace(picked.FileName)
+                ? (source is "gallery" or "camera" ? "photo.jpg" : "file.bin")
+                : picked.FileName;
+
+            Post(new { type = "mobile-upload-started", requestId, id, fileName });
+
+            await using var stream = await picked.OpenReadAsync().ConfigureAwait(false);
+            var remotePath = await UploadRemotePasteAsync(stream, fileName).ConfigureAwait(false);
+            Post(new { type = "mobile-file-uploaded", requestId, id, path = remotePath, fileName });
+        }
+        catch (Exception ex)
+        {
+            Post(new { type = "mobile-file-uploaded", requestId, id, error = ex.Message });
+        }
+    }
+
+    private async Task<string> UploadRemotePasteAsync(Stream content, string fileName, CancellationToken ct = default)
+    {
+        if (!HasConnectionSettings())
+            throw new InvalidOperationException("Выберите компьютер в настройках подключения.");
+
+        var options = BuildOptions(80, 24, null, null, null);
+        if (options.GatewayTailnetIdentity)
+        {
+            await (_account ?? throw new InvalidOperationException("Вход через Tailscale недоступен.")).StartAsync(new TailscaleOptions()).ConfigureAwait(false);
+            options = BuildOptions(80, 24, null, null, null);
+        }
+
+        if (UsesGateway())
+        {
+            using var client = new GatewayControlClient(options.GatewayUrl!, options.GatewayToken,
+                tailnetIdentity: options.GatewayTailnetIdentity, dial: options.GatewayDial);
+            return await client.UploadAsync(content, fileName, cancellationToken: ct).ConfigureAwait(false);
+        }
+
+        return await SshFileUploader.UploadAsync(options, content, fileName, ct).ConfigureAwait(false);
+    }
+
+    private static async Task<Microsoft.Maui.Storage.FileResult?> PickUploadFileAsync(string? source)
+    {
+        return await Microsoft.Maui.ApplicationModel.MainThread.InvokeOnMainThreadAsync(async () =>
+        {
+#pragma warning disable CS0618
+            switch (source)
+            {
+                case "gallery":
+                    return await Microsoft.Maui.Media.MediaPicker.Default.PickPhotoAsync(new Microsoft.Maui.Media.MediaPickerOptions
+                    {
+                        Title = "Выберите фото"
+                    });
+                case "camera":
+                {
+                    if (!Microsoft.Maui.Media.MediaPicker.Default.IsCaptureSupported)
+                        throw new InvalidOperationException("Камера недоступна на этом устройстве.");
+                    var status = await Microsoft.Maui.ApplicationModel.Permissions.RequestAsync<Microsoft.Maui.ApplicationModel.Permissions.Camera>();
+                    if (status != Microsoft.Maui.ApplicationModel.PermissionStatus.Granted)
+                        throw new InvalidOperationException("Нет доступа к камере. Разрешите камеру в настройках приложения.");
+                    return await Microsoft.Maui.Media.MediaPicker.Default.CapturePhotoAsync(new Microsoft.Maui.Media.MediaPickerOptions
+                    {
+                        Title = "Сделать фото"
+                    });
+                }
+                default:
+                    return await Microsoft.Maui.Storage.FilePicker.Default.PickAsync(new Microsoft.Maui.Storage.PickOptions
+                    {
+                        PickerTitle = "Выберите файл для отправки в терминал"
+                    });
+            }
+#pragma warning restore CS0618
+        }).ConfigureAwait(false);
+    }
+
+    private static async Task<(Stream Stream, string FileName)?> TryReadClipboardImageAsync()
+    {
+#if WINDOWS
+        return await Microsoft.Maui.ApplicationModel.MainThread.InvokeOnMainThreadAsync<(Stream, string)?>(async () =>
+        {
+            var content = Windows.ApplicationModel.DataTransfer.Clipboard.GetContent();
+            if (!content.Contains(Windows.ApplicationModel.DataTransfer.StandardDataFormats.Bitmap))
+                return null;
+            var bmpRef = await content.GetBitmapAsync();
+            using var winStream = await bmpRef.OpenReadAsync();
+            var ms = new MemoryStream();
+            await winStream.AsStreamForRead().CopyToAsync(ms);
+            if (ms.Length == 0)
+            {
+                ms.Dispose();
+                return null;
+            }
+            ms.Position = 0;
+            var mime = winStream.ContentType ?? "";
+            var ext = mime.ToLowerInvariant() switch
+            {
+                "image/jpeg" or "image/jpg" => ".jpg",
+                "image/webp" => ".webp",
+                "image/gif" => ".gif",
+                "image/bmp" => ".bmp",
+                _ => ".png"
+            };
+            return (ms, "clipboard" + ext);
+        }).ConfigureAwait(false);
+#else
+        await Task.CompletedTask;
+        return null;
+#endif
+    }
+
+    private async Task HandleMobileUploadBytesAsync(string? requestId, string? id, string? fileName, string? base64)
+    {
+        try
+        {
+            if (!HasConnectionSettings())
+                throw new InvalidOperationException("Выберите компьютер в настройках подключения.");
+            if (string.IsNullOrEmpty(base64))
+                throw new InvalidDataException("Пустой файл.");
+
+            var resolvedName = string.IsNullOrWhiteSpace(fileName) ? "clipboard.png" : fileName;
+            Post(new { type = "mobile-upload-started", requestId, id, fileName = resolvedName });
+
+            var bytes = Convert.FromBase64String(base64);
+            await using var ms = new MemoryStream(bytes, writable: false);
+            var remotePath = await UploadRemotePasteAsync(ms, resolvedName).ConfigureAwait(false);
+            Post(new { type = "mobile-file-uploaded", requestId, id, path = remotePath, fileName = resolvedName });
+        }
+        catch (Exception ex)
+        {
+            Post(new { type = "mobile-file-uploaded", requestId, id, error = ex.Message });
+        }
     }
 
     private async Task HandleClipboardWrite(string data)

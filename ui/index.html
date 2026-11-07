@@ -46,6 +46,7 @@
           <div class="workspace-context"><span class="workspace-icon" data-icon="terminal"></span><div class="workspace-labels"><div id="workspace-title">Терминал</div><div id="workspace-path" dir="auto"></div></div></div>
           <div class="pane-actions">
             <span id="pane-count" class="count-badge">Панели · 1</span>
+            <button id="pane-upload-btn" type="button" class="ghost" title="Вставить фото или файл" aria-label="Вставить фото или файл" aria-haspopup="dialog" aria-expanded="false" aria-controls="mobile-upload-menu" data-mobile-only hidden><span data-icon="paperclip"></span><span class="action-label">Вставить</span></button>
             <button id="split-right" type="button" class="ghost" title="Разделить справа (Alt+Shift+=)" aria-label="Разделить справа"><span data-icon="right"></span><span class="action-label">Справа</span></button>
             <button id="split-down" type="button" class="ghost" title="Разделить снизу (Alt+Shift+-)" aria-label="Разделить снизу"><span data-icon="down"></span><span class="action-label">Снизу</span></button>
             <button id="detach-pane" type="button" class="ghost" title="Показать активную панель отдельно, не завершая сессию" aria-label="Отделить панель"><span data-icon="detach"></span></button>
@@ -111,7 +112,7 @@
             <span class="mobile-keys-spacer" aria-hidden="true"></span>
           </div>
           <div class="mobile-keys-row" data-row="arrows2">
-            <span class="mobile-keys-spacer" aria-hidden="true"></span>
+            <button id="keys-upload-btn" type="button" class="mobile-keys-action" title="Вставить фото или файл" aria-label="Вставить фото или файл" aria-haspopup="dialog" aria-expanded="false" aria-controls="mobile-upload-menu"><span data-icon="paperclip"></span></button>
             <span class="mobile-keys-spacer" aria-hidden="true"></span>
             <button type="button" data-key="ArrowLeft" title="Влево" aria-label="Стрелка влево">←</button>
             <button type="button" data-key="ArrowDown" title="Вниз" aria-label="Стрелка вниз">↓</button>
@@ -278,6 +279,15 @@
       <div class="launch-menu-foot">
         <button type="button" data-launch-new data-launch-key="new"><span data-icon="plus"></span>Создать профиль</button>
         <button type="button" class="icon-btn" data-launch-refresh data-desktop-only data-launch-key="refresh" aria-label="Обновить список оболочек и WSL" title="Обновить список оболочек и WSL" data-icon="restore"></button>
+      </div>
+    </dialog>
+    <dialog id="mobile-upload-menu" class="launch-menu mobile-upload-menu" aria-labelledby="mobile-upload-title">
+      <div class="launch-menu-head"><h2 id="mobile-upload-title">Вставить в терминал</h2><button type="button" class="icon-btn" data-upload-close aria-label="Закрыть меню" title="Закрыть (Esc)" data-icon="close"></button></div>
+      <div class="mobile-upload-options">
+        <div class="launch-row"><button type="button" class="launch-item" data-upload-source="gallery"><span data-icon="image"></span><span class="launch-labels"><span data-upload-label="gallery">Фото из галереи</span><span data-upload-hint="gallery">Загрузить снимок на ПК и вставить путь</span></span></button></div>
+        <div class="launch-row"><button type="button" class="launch-item" data-upload-source="camera"><span data-icon="camera"></span><span class="launch-labels"><span data-upload-label="camera">Камера</span><span data-upload-hint="camera">Сделать фото и вставить путь</span></span></button></div>
+        <div class="launch-row"><button type="button" class="launch-item" data-upload-source="file"><span data-icon="paperclip"></span><span class="launch-labels"><span data-upload-label="file">Любой файл</span><span data-upload-hint="file">Выбрать документ или архив с телефона</span></span></button></div>
+        <div class="launch-row"><button type="button" class="launch-item" data-upload-source="clipboard"><span data-icon="clipboard"></span><span class="launch-labels"><span data-upload-label="clipboard">Из буфера обмена</span><span data-upload-hint="clipboard">Вставить скопированный текст или картинку</span></span></button></div>
       </div>
     </dialog>
     <dialog id="launch-profiles" class="confirmation-dialog" aria-labelledby="launch-profiles-title">

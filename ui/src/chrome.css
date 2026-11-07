@@ -426,3 +426,12 @@ input[type="range"], input[type="checkbox"] { accent-color: var(--accent); }
   border-color: #2a5a8a;
   color: #cfe4ff;
 }
+.mobile-keys .mobile-keys-action { display: inline-flex; align-items: center; justify-content: center; }
+.mobile-keys .mobile-keys-action .ui-icon { width: 16px; height: 16px; }
+.mobile-keys .mobile-keys-action:disabled { opacity: .45; cursor: default; }
+.mobile-upload-menu { inset: 0; margin: auto; width: min(360px, calc(100vw - 24px)); }
+.mobile-upload-menu::backdrop { background: #00000068; backdrop-filter: blur(2px); }
+.mobile-upload-menu .launch-item { min-height: 48px; }
+.mobile-upload-btn[data-uploading="true"],
+#pane-upload-btn[data-uploading="true"],
+#keys-upload-btn[data-uploading="true"] { color: var(--accent); }

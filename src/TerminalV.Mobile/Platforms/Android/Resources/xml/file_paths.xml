@@ -2,4 +2,8 @@
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
     <!-- Update payloads live in the app cache directory (see AppUpdater). -->
     <cache-path name="updates" path="updates/" />
+    <!-- MAUI Essentials MediaPicker / FilePicker / Share temporary files. -->
+    <cache-path name="essential_cache" path="." />
+    <external-cache-path name="essential_external_cache" path="." />
+    <files-path name="essential_files" path="." />
 </paths>

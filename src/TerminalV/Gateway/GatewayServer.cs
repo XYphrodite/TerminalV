@@ -29,17 +29,26 @@ internal sealed class GatewayServer : IDisposable
     private bool _disposed;
     private readonly ITailnetAccess? _tailnet;
     private readonly Func<GatewaySessionInfo[]>? _sessionCatalog;
+    private readonly string? _uploadDirectory;
+    private readonly long _maxUploadBytes;
+    private readonly bool _loopbackOnly;
 
     public GatewayServer(IGatewaySessionBackend backend, int port, string? token = null, ITailnetAccess? tailnet = null,
-        Func<GatewaySessionInfo[]>? sessionCatalog = null)
+        Func<GatewaySessionInfo[]>? sessionCatalog = null, string? uploadDirectory = null,
+        long maxUploadBytes = GatewayUploadStore.MaxUploadBytes, bool loopbackOnly = false)
     {
         _backend = backend ?? throw new ArgumentNullException(nameof(backend));
         if (port is < 1 or > 65535)
             throw new ArgumentOutOfRangeException(nameof(port));
+        if (maxUploadBytes < 1)
+            throw new ArgumentOutOfRangeException(nameof(maxUploadBytes));
         _port = port;
         _token = string.IsNullOrWhiteSpace(token) ? null : token;
         _tailnet = tailnet;
         _sessionCatalog = sessionCatalog;
+        _uploadDirectory = uploadDirectory;
+        _maxUploadBytes = maxUploadBytes;
+        _loopbackOnly = loopbackOnly;
     }
 
     public int Port => _port;
@@ -56,7 +65,7 @@ internal sealed class GatewayServer : IDisposable
             return;
 
         var listener = new HttpListener();
-        listener.Prefixes.Add($"http://*:{_port}/");
+        listener.Prefixes.Add($"http://{(_loopbackOnly ? "localhost" : "*")}:{_port}/");
         try
         {
             listener.Start();
@@ -137,6 +146,11 @@ internal sealed class GatewayServer : IDisposable
             try { await context.Response.OutputStream.WriteAsync(bytes, token); } finally { context.Response.Close(); }
             return;
         }
+        if (path == "/terminalv/upload")
+        {
+            await HandleUploadAsync(context, identity, token).ConfigureAwait(false);
+            return;
+        }
         if (!context.Request.IsWebSocketRequest)
         {
             context.Response.StatusCode = 426;
@@ -187,6 +201,93 @@ internal sealed class GatewayServer : IDisposable
         if (header == "Bearer " + _token)
             return true;
         return request.QueryString["token"] == _token;
+    }
+
+    private async Task HandleUploadAsync(HttpListenerContext context, TailnetIdentity? identity, CancellationToken token)
+    {
+        if (!(identity is not null && _tailnet!.IsApproved(identity)) && !Authorized(context.Request))
+        {
+            context.Response.StatusCode = 401;
+            try { context.Response.Close(); } catch { }
+            return;
+        }
+        if (!string.Equals(context.Request.HttpMethod, "POST", StringComparison.OrdinalIgnoreCase))
+        {
+            context.Response.StatusCode = 405;
+            try { context.Response.Close(); } catch { }
+            return;
+        }
+        // Require a custom header so a cross-origin browser <form> cannot POST
+        // files to a tokenless LAN gateway without a preflight.
+        if (context.Request.Headers["X-TerminalV-Upload"] != "1")
+        {
+            context.Response.StatusCode = 400;
+            await WriteJsonResponseAsync(context.Response, new { error = "Missing X-TerminalV-Upload header." }, token).ConfigureAwait(false);
+            return;
+        }
+        if (context.Request.ContentLength64 > _maxUploadBytes)
+        {
+            context.Response.StatusCode = 413;
+            await WriteJsonResponseAsync(context.Response, new { error = "Файл слишком большой." }, token).ConfigureAwait(false);
+            return;
+        }
+
+        var fileName = ReadQueryParameter(context.Request.Url, "name");
+        try
+        {
+            var savedPath = await GatewayUploadStore.SaveStreamAsync(
+                context.Request.InputStream, fileName, _uploadDirectory, _maxUploadBytes, token).ConfigureAwait(false);
+            context.Response.StatusCode = 200;
+            await WriteJsonResponseAsync(context.Response, new { path = savedPath }, token).ConfigureAwait(false);
+        }
+        catch (GatewayUploadTooLargeException ex)
+        {
+            context.Response.StatusCode = 413;
+            await WriteJsonResponseAsync(context.Response, new { error = ex.Message }, token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            try { context.Response.Close(); } catch { }
+        }
+        catch (Exception ex)
+        {
+            context.Response.StatusCode = 500;
+            await WriteJsonResponseAsync(context.Response, new { error = ex.Message }, token).ConfigureAwait(false);
+        }
+    }
+
+    private static string? ReadQueryParameter(Uri? url, string key)
+    {
+        var query = url?.Query;
+        if (string.IsNullOrEmpty(query))
+            return null;
+        var trimmed = query.TrimStart('?');
+        foreach (var pair in trimmed.Split('&', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var eq = pair.IndexOf('=');
+            var rawKey = eq >= 0 ? pair[..eq] : pair;
+            if (!string.Equals(Uri.UnescapeDataString(rawKey.Replace('+', ' ')), key, StringComparison.Ordinal))
+                continue;
+            var rawValue = eq >= 0 ? pair[(eq + 1)..] : "";
+            return Uri.UnescapeDataString(rawValue.Replace('+', ' '));
+        }
+        return null;
+    }
+
+    private static async Task WriteJsonResponseAsync(HttpListenerResponse response, object payload, CancellationToken token)
+    {
+        try
+        {
+            response.ContentType = "application/json";
+            var bytes = JsonSerializer.SerializeToUtf8Bytes(payload, Json);
+            response.ContentLength64 = bytes.Length;
+            await response.OutputStream.WriteAsync(bytes, token).ConfigureAwait(false);
+        }
+        catch { }
+        finally
+        {
+            try { response.Close(); } catch { }
+        }
     }
 
     private async Task ServeAsync(WebSocket ws, CancellationToken serverToken)

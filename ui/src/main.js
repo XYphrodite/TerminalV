@@ -107,6 +107,10 @@ let readyForPersist = false;
 const pendingRemoteSessions = new Map();
 const clipboardWaiters = new Map();
 const pasteFileWaiters = new Map();
+const mobileUploads = new Map();
+let lastClipboardWasEmpty = false;
+let lastPasteStoreError = "";
+let pendingDomPasteText = null;
 let draggedTabId = null;
 let draggedSource = null;
 let activePaneDrop = null;
@@ -134,6 +138,10 @@ const pasteController = createPasteController({
   dialog: document.getElementById("paste-confirmation"),
   readClipboard: readClipboardForPaste,
   canPaste: (tab) => tabs.includes(tab) && tab.id === activeId && !tab.exited && !closeController.isOpen && !sessionOptions.isOpen && !launchProfiles.isOpen && !launchMenu.isOpen,
+  beforePaste: (tab) => {
+    reclaimMobileFit(tab);
+    claimLiveScreenInput(tab.term, tab.host, { swallow: false });
+  },
   restoreFocus: () => focusTerminal()
 });
 
@@ -215,8 +223,113 @@ createMobileKeys({
   }
 });
 
+const mobileUploadDialog = document.getElementById("mobile-upload-menu");
+const mobileUploadBtn = document.getElementById("mobile-upload-btn");
+const paneUploadBtn = document.getElementById("pane-upload-btn");
+const keysUploadBtn = document.getElementById("keys-upload-btn");
+const mobileUploadButtons = [mobileUploadBtn, paneUploadBtn, keysUploadBtn].filter(Boolean);
+let mobileUploadTrigger = null;
+
 function isModalOpen() {
-  return pasteController.isOpen || closeController.isOpen || sessionOptions.isOpen || launchProfiles.isOpen || launchMenu.isOpen;
+  return pasteController.isOpen || closeController.isOpen || sessionOptions.isOpen || launchProfiles.isOpen || launchMenu.isOpen || Boolean(mobileUploadDialog?.open);
+}
+
+function syncMobileUploadLabels() {
+  const titleEl = document.getElementById("mobile-upload-title");
+  if (titleEl) titleEl.textContent = t("Upload_MenuTitle");
+  const items = {
+    gallery: [t("Upload_Gallery"), t("Upload_GalleryHint")],
+    camera: [t("Upload_Camera"), t("Upload_CameraHint")],
+    file: [t("Upload_File"), t("Upload_FileHint")],
+    clipboard: [t("Upload_Clipboard"), t("Upload_ClipboardHint")]
+  };
+  for (const [key, [label, hint]] of Object.entries(items)) {
+    const labelEl = mobileUploadDialog?.querySelector(`[data-upload-label="${key}"]`);
+    const hintEl = mobileUploadDialog?.querySelector(`[data-upload-hint="${key}"]`);
+    if (labelEl) labelEl.textContent = label;
+    if (hintEl) hintEl.textContent = hint;
+  }
+  updateUploadButtons();
+}
+
+function updateUploadButtons() {
+  const tab = currentTab();
+  const busy = mobileUploads.size > 0;
+  const disabled = !tab || Boolean(tab.exited) || busy;
+  const label = busy ? t("Upload_UploadingGeneric") : t("Upload_Button");
+  const aria = busy ? t("Upload_UploadingGeneric") : t("Upload_ButtonAria");
+  for (const btn of mobileUploadButtons) {
+    btn.disabled = disabled;
+    btn.dataset.uploading = String(busy);
+    btn.title = aria;
+    btn.setAttribute("aria-label", aria);
+    const textEl = btn.querySelector(".mobile-upload-label, .action-label");
+    if (textEl) textEl.textContent = label;
+  }
+}
+
+function openMobileUploadMenu(trigger) {
+  if (!mobileUploadDialog || isModalOpen() || !settingsEl.classList.contains("hidden")) return;
+  const tab = currentTab();
+  if (!tab || tab.exited || mobileUploads.size > 0) return;
+  pasteController.cancel(tab);
+  searchController.close({ focus: false });
+  mobileUploadTrigger = trigger || null;
+  for (const btn of mobileUploadButtons) btn.setAttribute("aria-expanded", "true");
+  mobileUploadDialog.showModal();
+  mobileUploadDialog.querySelector(".launch-item")?.focus({ preventScroll: true });
+}
+
+function closeMobileUploadMenu({ focus = true } = {}) {
+  if (mobileUploadDialog?.open) mobileUploadDialog.close();
+  for (const btn of mobileUploadButtons) btn.setAttribute("aria-expanded", "false");
+  const trigger = mobileUploadTrigger;
+  mobileUploadTrigger = null;
+  if (focus) {
+    if (!isMobileUi() && currentTab()) focusTerminal();
+    else if (trigger?.isConnected && trigger.getClientRects().length > 0 && !trigger.disabled) trigger.focus({ preventScroll: true });
+  }
+}
+
+if (mobileUploadDialog) {
+  for (const btn of mobileUploadButtons) {
+    btn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      openMobileUploadMenu(btn);
+    });
+  }
+  mobileUploadDialog.querySelector("[data-upload-close]")?.addEventListener("click", () => closeMobileUploadMenu());
+  mobileUploadDialog.addEventListener("cancel", (event) => {
+    event.preventDefault();
+    closeMobileUploadMenu();
+  });
+  mobileUploadDialog.addEventListener("click", (event) => {
+    if (event.target === mobileUploadDialog) closeMobileUploadMenu();
+  });
+  mobileUploadDialog.addEventListener("keydown", (event) => event.stopPropagation());
+  for (const item of mobileUploadDialog.querySelectorAll("[data-upload-source]")) {
+    item.addEventListener("click", async () => {
+      const source = item.dataset.uploadSource;
+      closeMobileUploadMenu({ focus: false });
+      const tab = currentTab();
+      if (!tab || tab.exited) return;
+      if (source === "clipboard") {
+        reclaimMobileFit(tab);
+        lastClipboardWasEmpty = false;
+        lastPasteStoreError = "";
+        await pasteController.request(tab);
+        if (lastClipboardWasEmpty && !lastPasteStoreError) {
+          tab.cwdNotice = t("Upload_ClipboardEmpty");
+          renderCwdNotice();
+        }
+        return;
+      }
+      const requestId = uuid();
+      mobileUploads.set(requestId, { tabId: tab.id, fileName: "" });
+      updateUploadButtons();
+      post({ type: "mobile-upload-file", requestId, id: tab.id, source });
+    });
+  }
 }
 
 const paneToolbar = document.getElementById("pane-toolbar");
@@ -259,6 +372,7 @@ function updatePaneToolbar() {
   detachPaneBtn.disabled = count < 2;
   splitRightBtn.title = splitRightBtn.disabled ? t("InsufficientSpace", { max: MAX_PANES }) : t("SplitRight");
   splitDownBtn.title = splitDownBtn.disabled ? t("InsufficientSpace", { max: MAX_PANES }) : t("SplitDown");
+  updateUploadButtons();
   for (const tab of visible) {
     if (!tab.paneSplitRight) continue;
     tab.paneHead.title = t("Pane_DragHint");
@@ -285,6 +399,7 @@ function updateWorkspaceContext() {
   path.textContent = tab?.cwd || (tab ? sessionMetaText(tab) : "");
   path.title = path.textContent;
   paneToolbar.classList.toggle("session-exited", Boolean(tab?.exited));
+  updateUploadButtons();
 }
 
 function renderPaneLayout() {
@@ -471,7 +586,16 @@ function detachPane(targetId = activeId, { keepWorkspaceFocus = false } = {}) {
 splitRightBtn.addEventListener("click", () => splitPane("columns"));
 splitDownBtn.addEventListener("click", () => splitPane("rows"));
 detachPaneBtn.addEventListener("click", () => detachPane(activeId));
-new ResizeObserver(() => { updatePaneToolbar(); scheduleFit(); }).observe(panesEl);
+let paneToolbarRaf = 0;
+new ResizeObserver(() => {
+  if (!paneToolbarRaf) {
+    paneToolbarRaf = window.requestAnimationFrame(() => {
+      paneToolbarRaf = 0;
+      updatePaneToolbar();
+    });
+  }
+  scheduleFit();
+}).observe(panesEl);
 
 function openTabs() {
   return sessionGroups(tabs).flatMap((group) => group.tabs);
@@ -900,14 +1024,16 @@ const cwdNotice = document.getElementById("cwd-notice");
 let legacyHostNotice = "";
 
 function renderCwdNotice() {
-  const text = currentTab()?.cwdNotice || legacyHostNotice;
+  const tab = currentTab();
+  const text = tab?.uploadNotice || tab?.cwdNotice || legacyHostNotice;
   cwdNotice.hidden = !text;
   cwdNotice.querySelector("span").textContent = text;
 }
 
 cwdNotice.querySelector("button").addEventListener("click", () => {
   const tab = currentTab();
-  if (tab?.cwdNotice) tab.cwdNotice = "";
+  if (tab?.uploadNotice) tab.uploadNotice = "";
+  else if (tab?.cwdNotice) tab.cwdNotice = "";
   else legacyHostNotice = "";
   renderCwdNotice();
   if (!isModalOpen() && !searchController.isOpen) focusTerminal(tab);
@@ -1433,21 +1559,29 @@ async function copyText(text) {
 }
 
 async function readClipboard() {
-  try {
-    return await navigator.clipboard.readText();
-  } catch {
-    return new Promise((resolve) => {
-      const requestId = uuid();
-      clipboardWaiters.set(requestId, resolve);
-      post({ type: "clipboard-read", requestId });
-      setTimeout(() => {
-        if (clipboardWaiters.has(requestId)) {
-          clipboardWaiters.delete(requestId);
-          resolve("");
-        }
-      }, 1000);
-    });
+  if (pendingDomPasteText !== null) {
+    const inline = pendingDomPasteText;
+    pendingDomPasteText = null;
+    if (inline) return inline;
   }
+  if (!isMobileUi()) {
+    try {
+      return await navigator.clipboard.readText();
+    } catch {
+      // Fall back to host bridge below.
+    }
+  }
+  return new Promise((resolve) => {
+    const requestId = uuid();
+    clipboardWaiters.set(requestId, resolve);
+    post({ type: "clipboard-read", requestId });
+    setTimeout(() => {
+      if (clipboardWaiters.has(requestId)) {
+        clipboardWaiters.delete(requestId);
+        resolve("");
+      }
+    }, 1000);
+  });
 }
 
 // Large pastes go to a host temp file; the path is pasted instead of the
@@ -1459,22 +1593,24 @@ async function readClipboardForPaste() {
   if (shouldStoreAsFile(text)) {
     const path = await storePasteAsFile(text);
     if (!path) {
+      lastClipboardWasEmpty = false;
       return text;
     }
     diag("ui", `paste-file stored len=${text.length} path=${path}`);
+    lastClipboardWasEmpty = false;
     return formatPastedPath(path);
   }
   const imagePath = text ? null : await storeClipboardImageAsFile();
-  return pasteTextForClipboard(text, imagePath);
+  const result = pasteTextForClipboard(text, imagePath);
+  lastClipboardWasEmpty = !result;
+  return result;
 }
 
 // The host writes a temp PNG for an image-only clipboard and returns its path.
-// Mobile and Mirror drive sessions on another machine, where a path to a file
-// on the viewer is meaningless — those keep the "paste nothing" behavior.
+// On Mobile and Mirror the bridge uploads the clipboard image to the remote
+// host's paste folder and returns that remote path.
 function storeClipboardImageAsFile() {
-  if (isMobileUi()) {
-    return Promise.resolve(null);
-  }
+  const timeoutMs = isMobileUi() ? 30000 : PASTE_FILE_STORE_TIMEOUT_MS;
   return new Promise((resolve) => {
     const requestId = uuid();
     pasteFileWaiters.set(requestId, resolve);
@@ -1485,11 +1621,12 @@ function storeClipboardImageAsFile() {
         diag("ui", "clipboard-image store timeout");
         resolve(null);
       }
-    }, PASTE_FILE_STORE_TIMEOUT_MS);
+    }, timeoutMs);
   });
 }
 
 function storePasteAsFile(text) {
+  const timeoutMs = isMobileUi() ? 30000 : PASTE_FILE_STORE_TIMEOUT_MS;
   return new Promise((resolve) => {
     const requestId = uuid();
     pasteFileWaiters.set(requestId, resolve);
@@ -1500,7 +1637,7 @@ function storePasteAsFile(text) {
         diag("ui", "paste-file store timeout, falling back to text");
         resolve(null);
       }
-    }, PASTE_FILE_STORE_TIMEOUT_MS);
+    }, timeoutMs);
   });
 }
 
@@ -1530,12 +1667,79 @@ function applyZoomDelta(delta) {
   persistSettings();
 }
 
+const MAX_DIRECT_PASTE_BYTES = 32 * 1024 * 1024;
+
+function extForMime(mime = "") {
+  const m = mime.toLowerCase();
+  if (m === "image/jpeg" || m === "image/jpg") return ".jpg";
+  if (m === "image/webp") return ".webp";
+  if (m === "image/gif") return ".gif";
+  if (m === "image/heic") return ".heic";
+  if (m === "image/bmp") return ".bmp";
+  return ".png";
+}
+
+function arrayBufferToBase64(buffer) {
+  const bytes = new Uint8Array(buffer);
+  const chunk = 0x8000;
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  }
+  return btoa(binary);
+}
+
+async function uploadMobileBlob(tab, file) {
+  if (!tab || tab.exited || !file || mobileUploads.size > 0) return;
+  if (file.size > MAX_DIRECT_PASTE_BYTES) {
+    tab.cwdNotice = t("Upload_Failed", { error: "32 MB max" });
+    renderCwdNotice();
+    return;
+  }
+  const fileName = file.name && /\.[a-z0-9]{1,12}$/i.test(file.name)
+    ? file.name
+    : `clipboard${extForMime(file.type)}`;
+  const requestId = uuid();
+  mobileUploads.set(requestId, { tabId: tab.id, fileName });
+  tab.uploadNotice = t("Upload_Uploading", { name: fileName });
+  renderCwdNotice();
+  updateUploadButtons();
+  try {
+    const base64 = arrayBufferToBase64(await file.arrayBuffer());
+    post({ type: "mobile-upload-bytes", requestId, id: tab.id, fileName, data: base64 });
+  } catch (err) {
+    mobileUploads.delete(requestId);
+    tab.uploadNotice = "";
+    tab.cwdNotice = t("Upload_Failed", { error: err?.message || String(err) });
+    renderCwdNotice();
+    updateUploadButtons();
+  }
+}
+
 function attachCopyPaste(tab) {
   // Shortcuts and right-click use pasteController, including confirmation.
   // Stop xterm's native paste event so the text is not sent a second time.
+  // On mobile soft keyboards (Gboard clipboard bar), route paste events here.
   tab.host.addEventListener("paste", (event) => {
     event.preventDefault();
     event.stopPropagation();
+    if (!isMobileUi() || tab.exited) return;
+    let pastedFile = event.clipboardData?.files?.[0] || null;
+    if (!pastedFile && event.clipboardData?.items) {
+      for (const item of event.clipboardData.items) {
+        if (item.kind === "file") {
+          pastedFile = item.getAsFile();
+          if (pastedFile) break;
+        }
+      }
+    }
+    if (pastedFile) {
+      void uploadMobileBlob(tab, pastedFile);
+      return;
+    }
+    const inlineText = event.clipboardData?.getData?.("text/plain") || "";
+    if (inlineText) pendingDomPasteText = inlineText;
+    void pasteController.request(tab);
   }, true);
   tab.host.addEventListener("copy", (event) => {
     if (!tab.term.hasSelection()) {
@@ -2153,6 +2357,7 @@ function syncSettingsForm() {
     fontFamilyEl.value = current;
   }
   renderThemeGrid();
+  syncMobileUploadLabels();
   applyChrome();
   applyToTerminals();
 }
@@ -2466,8 +2671,63 @@ function handleHost(message) {
     const waiter = pasteFileWaiters.get(message.requestId);
     if (waiter) {
       pasteFileWaiters.delete(message.requestId);
+      if (!message.path && message.error && isMobileUi()) {
+        lastPasteStoreError = message.error;
+        const active = currentTab();
+        if (active) active.cwdNotice = t("Upload_Failed", { error: message.error });
+        else legacyHostNotice = t("Upload_Failed", { error: message.error });
+        renderCwdNotice();
+      }
       waiter(message.path ?? null);
     }
+    return;
+  }
+
+  if (message.type === "mobile-upload-started") {
+    const entry = mobileUploads.get(message.requestId);
+    if (entry) {
+      entry.fileName = message.fileName || "";
+      const target = tabs.find((item) => item.id === (message.id || entry.tabId)) || currentTab();
+      if (target) {
+        target.uploadNotice = entry.fileName
+          ? t("Upload_Uploading", { name: entry.fileName })
+          : t("Upload_UploadingGeneric");
+        renderCwdNotice();
+      }
+      updateUploadButtons();
+    }
+    return;
+  }
+
+  if (message.type === "mobile-file-uploaded") {
+    const entry = mobileUploads.get(message.requestId);
+    mobileUploads.delete(message.requestId);
+    const target = tabs.find((item) => item.id === (message.id || entry?.tabId)) || currentTab();
+    if (target) target.uploadNotice = "";
+    if (message.canceled) {
+      renderCwdNotice();
+      updateUploadButtons();
+      return;
+    }
+    if (message.error) {
+      const errText = t("Upload_Failed", { error: message.error });
+      if (target) target.cwdNotice = errText;
+      else legacyHostNotice = errText;
+      renderCwdNotice();
+      updateUploadButtons();
+      return;
+    }
+    if (typeof message.path === "string" && message.path.length > 0 && target && !target.exited) {
+      if (target.cwdNotice) target.cwdNotice = "";
+      renderCwdNotice();
+      updateUploadButtons();
+      reclaimMobileFit(target);
+      claimLiveScreenInput(target.term, target.host, { swallow: false });
+      target.term.paste(formatPastedPath(message.path));
+      return;
+    }
+    renderCwdNotice();
+    updateUploadButtons();
     return;
   }
 
@@ -2546,6 +2806,7 @@ function handleHost(message) {
     tab.exited = true;
     closeController.cancel(tab);
     pasteController.cancel(tab);
+    if (tab.id === activeId) closeMobileUploadMenu({ focus: false });
     syncScrollLock(tab);
     tab.overlayText.textContent = t("ProcessExited", { code: message.code ?? 0 });
     tab.overlay.classList.add("visible");
@@ -2558,6 +2819,7 @@ function handleHost(message) {
     tab.exited = true;
     closeController.cancel(tab);
     pasteController.cancel(tab);
+    if (tab.id === activeId) closeMobileUploadMenu({ focus: false });
     tab.overlayText.textContent = message.message || t("SessionLaunchFailed");
     tab.overlay.classList.add("visible");
     renderTabs();

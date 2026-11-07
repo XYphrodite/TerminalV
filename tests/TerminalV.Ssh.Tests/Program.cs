@@ -651,6 +651,7 @@ CheckAsync("Tailnet gateway access", TailnetChecks.Run);
 CheckAsync("Gateway shares the desktop pipe and replays only to the new subscriber", SharedGatewayChecks.Run);
 CheckAsync("Gateway preserves terminal modes across host and live replay truncation", GatewayReplayBufferChecks.Run);
 CheckAsync("Gateway binary S->C path: handshake, history and live as Binary frames", GatewayBinaryChecks.Run);
+CheckAsync("Gateway HTTP upload endpoint and client streaming", GatewayUploadChecks.Run);
 Console.WriteLine($"Ssh checks: {passed} passed, {failed} failed.");
 if (failed > 0) Environment.Exit(1);
 

@@ -69,9 +69,13 @@ h1:focus { outline: none; }
 #app.collapsed #new-tab, #app.collapsed #launch-profiles-btn,
 #app.collapsed .new-tab-split { width:44px; min-height:44px; }
 
-#mobile-toolbar { display:none; flex-shrink:0; padding:0 8px; background:var(--surface); border-bottom:1px solid var(--border-soft); }
+#mobile-toolbar { display:none; flex-shrink:0; align-items:center; justify-content:space-between; gap:8px; padding:0 8px; background:var(--surface); border-bottom:1px solid var(--border-soft); }
 #mobile-sessions-open { display:inline-flex; align-items:center; gap:8px; min-height:44px; padding:8px 12px; border:0; border-radius:8px; color:var(--text); background:transparent; font:600 13px var(--font-ui); }
 #mobile-sessions-open:hover { background:var(--tab-hover); }
+#mobile-upload-btn { display:inline-flex; align-items:center; gap:7px; margin-left:auto; min-height:44px; padding:8px 12px; border:0; border-radius:8px; color:var(--text); background:transparent; font:600 13px var(--font-ui); cursor:pointer; }
+#mobile-upload-btn[hidden] { display:none !important; }
+#mobile-upload-btn:hover { background:var(--tab-hover); }
+#mobile-upload-btn:disabled { opacity:.45; cursor:default; }
 @media (max-width:700px), (max-height:500px) {
     #app.collapsed #mobile-toolbar { display:flex; padding-top:0; }
     #app #panes { margin: 0; }

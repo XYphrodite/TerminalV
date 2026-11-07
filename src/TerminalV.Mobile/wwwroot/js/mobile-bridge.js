@@ -47,7 +47,7 @@
       let type;
       try { type = typeof msg === "string" ? JSON.parse(msg)?.type : msg?.type; } catch {}
       // UI controls must stay responsive while an SSH write waits for a connection.
-      if (dotNetRef && (type === "open-connection" || type === "close-connection")) {
+      if (dotNetRef && (type === "open-connection" || type === "close-connection" || type === "mobile-upload-file" || type === "mobile-upload-bytes")) {
         void dotNetRef.invokeMethodAsync("HandleMessage", json)
           .catch(error => console.error("[mobile-bridge] connection dialog", error));
         return;

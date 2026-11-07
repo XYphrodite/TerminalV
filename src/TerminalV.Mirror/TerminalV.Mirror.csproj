@@ -72,6 +72,7 @@
     <Compile Include="..\TerminalV\Ssh\GatewayProtocol.cs" Link="Ssh\GatewayProtocol.cs" />
     <Compile Include="..\TerminalV\Ssh\GatewayControlClient.cs" Link="Ssh\GatewayControlClient.cs" />
     <Compile Include="..\TerminalV\Ssh\GatewayTransport.cs" Link="Ssh\GatewayTransport.cs" />
+    <Compile Include="..\TerminalV\Ssh\SshFileUploader.cs" Link="Ssh\SshFileUploader.cs" />
     <Compile Include="..\TerminalV\Ssh\SshService.cs" Link="Ssh\SshService.cs" />
     <Compile Include="..\TerminalV\Data\AppSettings.cs" Link="Data\AppSettings.cs" />
     <Compile Include="..\TerminalV\Data\JsonNullToDefault.cs" Link="Data\JsonNullToDefault.cs" />

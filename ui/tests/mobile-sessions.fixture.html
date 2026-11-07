@@ -211,7 +211,7 @@
     const snapshot = app.hostMessages.filter(m => m.type === "persist-sessions" && m.requestId === "snap-mobile").at(-1);
     equal(Boolean(snapshot), true, "flush posts persist-sessions");
     equal(snapshot.sessions.find(s => s.id === "desktop").buffer.includes("MOBILE-SNAPSHOT"), true);
-    equal(app.hostErrors.length, 0);
+    if (app.hostErrors.length !== 0) throw new Error("hostErrors: " + JSON.stringify(app.hostErrors));
   });
   await check("typing in a disconnected session preserves its error and restart sends a new create", async () => {
     doc.querySelector('.tab[data-id="desktop"]').click();
@@ -284,6 +284,113 @@
     sync(["desktop"]);
     await delay();
   });
+  await check("mobile upload menu inserts remote file paths from gallery, camera, file picker and image clipboard", async () => {
+    frame.style.width = "320px"; frame.style.height = "640px";
+    app.__terminalvSetSidebarCollapsed(true);
+    await delay(200);
+    const uploadBtn = doc.getElementById("mobile-upload-btn");
+    equal(Boolean(uploadBtn), true, "upload button exists in mobile toolbar");
+    equal(uploadBtn.hidden, false, "upload button visible on mobile");
+    equal(uploadBtn.disabled, false, "upload button enabled for live session");
+    equal(uploadBtn.getBoundingClientRect().height >= 44, true, "upload button meets 44px touch target");
+
+    // Open attachment menu and verify all 4 sources
+    uploadBtn.click();
+    await delay(50);
+    const menu = doc.getElementById("mobile-upload-menu");
+    equal(menu.open, true, "upload dialog opened");
+    const sources = [...menu.querySelectorAll("[data-upload-source]")].map(b => b.dataset.uploadSource);
+    equal(JSON.stringify(sources), JSON.stringify(["gallery", "camera", "file", "clipboard"]));
+
+    // 1. Gallery upload -> started notice -> path pasted into active session
+    menu.querySelector('[data-upload-source="gallery"]').click();
+    await delay(50);
+    equal(menu.open, false, "menu closes on source selection");
+    const req = app.hostMessages.filter(m => m.type === "mobile-upload-file").at(-1);
+    equal(Boolean(req), true, "mobile-upload-file sent");
+    equal(req.source, "gallery");
+    equal(req.id, "desktop");
+    equal(uploadBtn.disabled, true, "button disabled while upload pending");
+
+    app.sendHost({ type: "mobile-upload-started", requestId: req.requestId, id: "desktop", fileName: "IMG_2026.jpg" });
+    await delay(50);
+    equal(doc.getElementById("cwd-notice").hidden, false, "uploading notice visible");
+    equal(doc.getElementById("cwd-notice").textContent.includes("IMG_2026.jpg"), true);
+
+    const writesBefore = app.hostMessages.filter(m => m.type === "write" && m.id === "desktop").length;
+    app.sendHost({
+      type: "mobile-file-uploaded",
+      requestId: req.requestId,
+      id: "desktop",
+      path: "C:\\Users\\John Smith\\AppData\\Local\\Temp\\TerminalV\\pastes\\paste-1234.jpg"
+    });
+    await delay(80);
+    equal(uploadBtn.disabled, false, "button re-enabled after upload");
+    equal(doc.getElementById("cwd-notice").hidden, true, "uploading notice cleared");
+    const pastedWrite = app.hostMessages.filter(m => m.type === "write" && m.id === "desktop").at(-1);
+    equal(app.hostMessages.filter(m => m.type === "write" && m.id === "desktop").length > writesBefore, true);
+    equal(pastedWrite.data.includes('"C:\\Users\\John Smith\\AppData\\Local\\Temp\\TerminalV\\pastes\\paste-1234.jpg"'), true);
+
+    // 2. Cancelled camera picker restores button cleanly without writing or error
+    uploadBtn.click();
+    await delay(50);
+    menu.querySelector('[data-upload-source="camera"]').click();
+    await delay(50);
+    const camReq = app.hostMessages.filter(m => m.type === "mobile-upload-file").at(-1);
+    equal(camReq.source, "camera");
+    const writesBeforeCancel = app.hostMessages.filter(m => m.type === "write" && m.id === "desktop").length;
+    app.sendHost({ type: "mobile-file-uploaded", requestId: camReq.requestId, id: "desktop", canceled: true });
+    await delay(50);
+    equal(uploadBtn.disabled, false);
+    equal(doc.getElementById("cwd-notice").hidden, true);
+    equal(app.hostMessages.filter(m => m.type === "write" && m.id === "desktop").length, writesBeforeCancel);
+
+    // 3. Clipboard image paste from mobile menu uploads image and pastes remote path
+    uploadBtn.click();
+    await delay(50);
+    menu.querySelector('[data-upload-source="clipboard"]').click();
+    await delay(50);
+    const clipRead = app.hostMessages.filter(m => m.type === "clipboard-read").at(-1);
+    equal(Boolean(clipRead), true, "requests host clipboard-read on mobile");
+    app.sendHost({ type: "clipboard-data", requestId: clipRead.requestId, data: "" });
+    await delay(50);
+    const imgStore = app.hostMessages.filter(m => m.type === "clipboard-image-store").at(-1);
+    equal(Boolean(imgStore), true, "falls back to clipboard-image-store when text clipboard is empty");
+    app.sendHost({
+      type: "paste-file-stored",
+      requestId: imgStore.requestId,
+      path: "C:\\Temp\\TerminalV\\pastes\\paste-clip.png"
+    });
+    await delay(80);
+    const clipWrite = app.hostMessages.filter(m => m.type === "write" && m.id === "desktop").at(-1);
+    equal(clipWrite.data.includes("C:\\Temp\\TerminalV\\pastes\\paste-clip.png"), true);
+
+    // 4. Soft-keyboard (Gboard) image paste directly inside the session chat uploads bytes and pastes path
+    const dt = new app.DataTransfer();
+    dt.items.add(new app.File([new Uint8Array([137, 80, 78, 71])], "gboard-shot.png", { type: "image/png" }));
+    const pasteTarget = doc.querySelector('.pane.active .xterm-helper-textarea');
+    pasteTarget.dispatchEvent(new app.ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+    for (let i = 0; i < 50 && !app.hostMessages.some(m => m.type === "mobile-upload-bytes"); i++) {
+      await new Promise(resolve => { const ch = new MessageChannel(); ch.port1.onmessage = resolve; ch.port2.postMessage(0); });
+    }
+    const bytesReq = app.hostMessages.filter(m => m.type === "mobile-upload-bytes").at(-1);
+    if (!bytesReq) throw new Error("no bytesReq; uploadDisabled=" + uploadBtn.disabled + " msgs=" + JSON.stringify(app.hostMessages.slice(-4)));
+    equal(bytesReq.fileName, "gboard-shot.png");
+    equal(bytesReq.data, btoa(String.fromCharCode(137, 80, 78, 71)));
+    app.sendHost({
+      type: "mobile-file-uploaded",
+      requestId: bytesReq.requestId,
+      id: "desktop",
+      path: "C:\\Temp\\TerminalV\\pastes\\paste-gboard.png"
+    });
+    await delay(80);
+    const gboardWrite = app.hostMessages.filter(m => m.type === "write" && m.id === "desktop").at(-1);
+    equal(gboardWrite.data.includes("C:\\Temp\\TerminalV\\pastes\\paste-gboard.png"), true);
+
+    app.__terminalvSetSidebarCollapsed(false);
+    frame.style.width = "100%"; frame.style.height = "700px";
+    await delay(260);
+  });
   await check("desktop host retains gateway, shortcuts, updates and local launch settings", async () => {
     app.sendHost({ type: "init", mobile: false, version: "0.7.9", updateSupported: true, shortcutsSupported: true });
     await delay();
@@ -305,7 +412,7 @@
     for (const selector of ["#profile-shell", "#profile-cwd", "#profile-command"]) {
       equal(doc.querySelector(selector).getClientRects().length > 0, true);
     }
-    equal(app.hostErrors.length, 0);
+    if (app.hostErrors.length !== 0) throw new Error("hostErrors: " + JSON.stringify(app.hostErrors));
   });
   document.body.dataset.testResult = btoa(unescape(encodeURIComponent(JSON.stringify(results))));
 </script>

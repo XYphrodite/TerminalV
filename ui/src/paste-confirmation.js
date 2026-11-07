@@ -1,6 +1,6 @@
 const PREVIEW_LIMIT = 12000;
 
-export function createPasteController({ dialog, readClipboard, canPaste, restoreFocus }) {
+export function createPasteController({ dialog, readClipboard, canPaste, beforePaste, restoreFocus }) {
   const preview = dialog.querySelector("[data-paste-preview]");
   const truncated = dialog.querySelector("[data-paste-truncated]");
   const confirm = dialog.querySelector("[data-paste-confirm]");
@@ -27,6 +27,7 @@ export function createPasteController({ dialog, readClipboard, canPaste, restore
         const t0 = performance.now();
         diag(`paste term.paste start len=${operation.text.length}`);
         // Keep xterm's newline normalization and bracketed paste support.
+        beforePaste?.(operation.tab);
         operation.tab.term.paste(operation.text);
         diag(`paste term.paste done ms=${(performance.now()-t0).toFixed(1)}`);
       } else if (approved) {

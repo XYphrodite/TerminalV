@@ -174,3 +174,34 @@ test("Export/import JSON replaces all via Share", () => {
   assert.match(shim, /export-json/, "shim export");
   assert.match(shim, /import-json/, "shim import");
 });
+
+test("Mobile photo and file upload pipeline is wired across UI, Android manifest, FileProvider and Gateway", () => {
+  for (const htmlPath of ["ui/index.html", "src/TerminalV.Mobile/wwwroot/index.html"]) {
+    const html = readFileSync(r(htmlPath), "utf8");
+    assert.match(html, /id="mobile-upload-menu"/, `${htmlPath}: upload dialog`);
+    for (const src of ["gallery", "camera", "file", "clipboard"]) {
+      assert.match(html, new RegExp(`data-upload-source="${src}"`), `${htmlPath}: ${src} option`);
+    }
+  }
+  const mobileHtml = readFileSync(r("src/TerminalV.Mobile/wwwroot/index.html"), "utf8");
+  assert.match(mobileHtml, /id="mobile-upload-btn"/, "toolbar upload button");
+
+  const manifest = readFileSync(r("src/TerminalV.Mobile/Platforms/Android/AndroidManifest.xml"), "utf8");
+  assert.match(manifest, /android\.permission\.CAMERA/, "CAMERA permission");
+  assert.match(manifest, /android\.hardware\.camera.*android:required="false"/, "camera feature optional");
+  assert.match(manifest, /android\.media\.action\.IMAGE_CAPTURE/, "IMAGE_CAPTURE query for Android 11+");
+
+  const filePaths = readFileSync(r("src/TerminalV.Mobile/Platforms/Android/Resources/xml/file_paths.xml"), "utf8");
+  assert.match(filePaths, /essential_cache/, "cache-path for MediaPicker");
+  assert.match(filePaths, /essential_external_cache/, "external-cache-path for MediaPicker");
+  assert.match(filePaths, /essential_files/, "files-path for MediaPicker");
+
+  const gateway = readFileSync(r("src/TerminalV/Gateway/GatewayServer.cs"), "utf8");
+  assert.match(gateway, /\/terminalv\/upload/, "gateway HTTP upload endpoint");
+  assert.match(gateway, /X-TerminalV-Upload/, "CSRF upload header check");
+
+  const bridge = readFileSync(r("src/TerminalV.Mobile/Host/MobileBridge.cs"), "utf8");
+  assert.match(bridge, /case "mobile-upload-file"/, "handles mobile-upload-file");
+  assert.match(bridge, /case "clipboard-image-store"/, "handles clipboard-image-store");
+  assert.match(bridge, /UploadRemotePasteAsync/, "uploads to remote host");
+});
