@@ -44,7 +44,7 @@ internal static class Providers
     public static ServiceStatus[] Collect(IReadOnlyDictionary<string, string> overrides)
     {
         var now = DateTimeOffset.UtcNow;
-        return
+        ServiceStatus[] items =
         [
             Guard("claude", "Claude", () => Claude(overrides, now), now),
             Guard("codex", "Codex", () => Codex(overrides, now), now),
@@ -54,6 +54,25 @@ internal static class Providers
             Guard("kimi", "Kimi", () => Kimi(overrides, now), now),
             Guard("muse", "Muse", () => Muse(overrides, now), now)
         ];
+        return SortByActivity(items, now);
+    }
+
+    internal static ServiceStatus[] SortByActivity(IEnumerable<ServiceStatus> items, DateTimeOffset now)
+        => items
+            .Select((status, index) => (status, index))
+            .OrderBy(entry => ServicePriority(entry.status, now))
+            .ThenBy(entry => entry.index)
+            .Select(entry => entry.status)
+            .ToArray();
+
+    internal static int ServicePriority(ServiceStatus status, DateTimeOffset now)
+    {
+        if (!status.Installed) return 5;
+        if (!status.Authenticated) return 4;
+        if (!status.AuthOk) return 3;
+        if (status.LimitsStale) return 2;
+        var hasActiveLimit = status.Limits.Any(l => l.ResetsAt is null || l.ResetsAt > now);
+        return hasActiveLimit ? 0 : 1;
     }
 
     static ServiceStatus Guard(string id, string name, Func<ServiceStatus> probe, DateTimeOffset now)

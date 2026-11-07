@@ -39,6 +39,21 @@ function serviceTone(service) {
   return "ok";
 }
 
+export function servicePriority(service) {
+  if (!service?.installed) return 5;
+  if (!service.authenticated) return 4;
+  if (service.authOk === false) return 3;
+  if (service.limitsStale) return 2;
+  return activeLimits(service).length > 0 ? 0 : 1;
+}
+
+export function sortServices(services) {
+  return (services ?? [])
+    .map((service, index) => ({ service, index, priority: servicePriority(service) }))
+    .sort((a, b) => a.priority - b.priority || a.index - b.index)
+    .map(entry => entry.service);
+}
+
 export async function activate(api) {
   const panel = api.ui.createSidebarPanel({ id: "ai-limits", title: "AI Limits" });
   const root = document.createElement("div");
@@ -99,7 +114,7 @@ export async function activate(api) {
   root.append(toolbar, list);
 
   function renderState(state) {
-    const services = state?.services ?? [];
+    const services = sortServices(state?.services ?? []);
     stamp.textContent = state?.checkedAt
       ? `Проверено: ${new Date(state.checkedAt).toLocaleTimeString()}`
       : "";
