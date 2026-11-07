@@ -40,11 +40,14 @@ function serviceTone(service) {
 }
 
 export function servicePriority(service) {
-  if (!service?.installed) return 5;
-  if (!service.authenticated) return 4;
-  if (service.authOk === false) return 3;
+  if (!service?.installed) return 6;
+  if (!service.authenticated) return 5;
+  if (service.authOk === false) return 4;
   if (service.limitsStale) return 2;
-  return activeLimits(service).length > 0 ? 0 : 1;
+  const active = activeLimits(service);
+  if (active.length === 0) return 1;
+  const isExhausted = active.some(l => (l.usedPercent ?? 0) >= 100);
+  return isExhausted ? 3 : 0;
 }
 
 export function sortServices(services) {

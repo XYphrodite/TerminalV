@@ -67,12 +67,14 @@ internal static class Providers
 
     internal static int ServicePriority(ServiceStatus status, DateTimeOffset now)
     {
-        if (!status.Installed) return 5;
-        if (!status.Authenticated) return 4;
-        if (!status.AuthOk) return 3;
+        if (!status.Installed) return 6;
+        if (!status.Authenticated) return 5;
+        if (!status.AuthOk) return 4;
         if (status.LimitsStale) return 2;
-        var hasActiveLimit = status.Limits.Any(l => l.ResetsAt is null || l.ResetsAt > now);
-        return hasActiveLimit ? 0 : 1;
+        var active = status.Limits.Where(l => l.ResetsAt is null || l.ResetsAt > now).ToArray();
+        if (active.Length == 0) return 1;
+        var isExhausted = active.Any(l => (l.UsedPercent ?? 0) >= 100);
+        return isExhausted ? 3 : 0;
     }
 
     static ServiceStatus Guard(string id, string name, Func<ServiceStatus> probe, DateTimeOffset now)
