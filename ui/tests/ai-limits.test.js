@@ -130,10 +130,11 @@ test("ai-limits renders collapsible groups and preserves collapsed state across 
 
     const panelRoot = makeNode("div");
     let changedHandler = null;
+    let badgeValue = null;
     const api = {
       signal: new AbortController().signal,
       ui: {
-        createSidebarPanel: () => ({ element: panelRoot, setBadge() {} }),
+        createSidebarPanel: () => ({ element: panelRoot, setBadge(val) { badgeValue = val; } }),
         showNotification() {}
       },
       host: {
@@ -144,6 +145,7 @@ test("ai-limits renders collapsible groups and preserves collapsed state across 
     };
 
     await activate(api);
+    assert.equal(badgeValue, "1", "panel badge displays count of 'Лимиты есть'");
     const root = panelRoot.children[0];
     const list = root.children[2];
     assert.equal(list.children.length, 4, "empty groups are omitted");
@@ -162,11 +164,21 @@ test("ai-limits renders collapsible groups and preserves collapsed state across 
     assert.equal(unauthToggle.getAttribute("aria-expanded"), "false");
     assert.equal(storage.get("tv-ai-limits-group:unauth"), "1");
 
-    // Trigger host state refresh: collapsed state must remain collapsed
-    changedHandler(state);
+    // Trigger host state refresh: collapsed state must remain collapsed and badge reflects available count
+    changedHandler({
+      ...state,
+      services: [
+        ...state.services,
+        { id: "muse", name: "Muse", installed: true, authenticated: true, authOk: true, limits: [] }
+      ]
+    });
+    assert.equal(badgeValue, "2");
     const refreshedUnauth = list.children[3];
     assert.equal(refreshedUnauth.classList.contains("collapsed"), true);
     assert.equal(refreshedUnauth.children[0].getAttribute("aria-expanded"), "false");
+
+    changedHandler({ ...state, services: state.services.filter(s => s.id !== "agy") });
+    assert.equal(badgeValue, "0", "panel badge shows 0 when no services are in 'Лимиты есть'");
   } finally {
     globalThis.document = prevDoc;
     globalThis.localStorage = prevStorage;

@@ -238,11 +238,8 @@ export async function activate(api) {
       ? `Проверено: ${new Date(state.checkedAt).toLocaleTimeString()}`
       : "";
     list.replaceChildren(...groups.map(renderGroup));
-    const limited = services.filter(s => {
-      const tone = serviceTone(s);
-      return tone === "exhausted" || tone === "limited" || tone === "missing";
-    }).length;
-    panel.setBadge(limited > 0 ? String(limited) : "");
+    const available = services.filter(s => serviceGroupId(s) === "available").length;
+    panel.setBadge(String(available));
   }
 
   function renderCard(service) {
