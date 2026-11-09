@@ -131,6 +131,7 @@ test("ai-limits renders collapsible groups and preserves collapsed state across 
     const panelRoot = makeNode("div");
     let changedHandler = null;
     let badgeValue = null;
+    const invoked = [];
     const api = {
       signal: new AbortController().signal,
       ui: {
@@ -138,7 +139,10 @@ test("ai-limits renders collapsible groups and preserves collapsed state across 
         showNotification() {}
       },
       host: {
-        invoke: async () => state,
+        invoke: async (method) => {
+          invoked.push(method);
+          return method === "getState" ? state : { started: true };
+        },
         on: (ev, fn) => { if (ev === "changed") changedHandler = fn; }
       },
       commands: { register() {} }
@@ -176,6 +180,29 @@ test("ai-limits renders collapsible groups and preserves collapsed state across 
     const refreshedUnauth = list.children[3];
     assert.equal(refreshedUnauth.classList.contains("collapsed"), true);
     assert.equal(refreshedUnauth.children[0].getAttribute("aria-expanded"), "false");
+
+    changedHandler({
+      ...state,
+      services: [
+        {
+          id: "mimo",
+          name: "MiMo",
+          installed: true,
+          authenticated: true,
+          authOk: true,
+          actionId: "connectMimo",
+          actionLabel: "Подключить квоты",
+          limits: []
+        }
+      ]
+    });
+    assert.equal(badgeValue, "1");
+    const mimoCard = list.children[0].children[1].children[0];
+    const actionBtn = mimoCard.children.find(ch => ch.className === "ai-card-action");
+    assert.ok(actionBtn, "MiMo card renders inline connect button");
+    assert.equal(actionBtn.textContent, "Подключить квоты");
+    actionBtn.click();
+    assert.ok(invoked.includes("connectMimo"), "clicking inline button invokes connectMimo");
 
     changedHandler({ ...state, services: state.services.filter(s => s.id !== "agy") });
     assert.equal(badgeValue, "0", "panel badge shows 0 when no services are in 'Лимиты есть'");

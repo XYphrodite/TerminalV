@@ -1,3 +1,5 @@
+using System.IO;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using TerminalV.Extensibility;
 
@@ -12,6 +14,7 @@ public sealed class AiLimitsExtension : ITerminalVExtension
     private Dictionary<string, string> _overrides = new();
     private ServiceStatus[] _snapshot = [];
     private int _intervalSeconds = 300;
+    private bool _loginWindowOpened;
 
     public Task ActivateAsync(IExtensionContext context, CancellationToken lifetime)
     {
@@ -75,6 +78,21 @@ public sealed class AiLimitsExtension : ITerminalVExtension
                 _context.Publish("changed", StateObject());
                 return Task.FromResult<JsonElement?>(SerializeState());
             }
+            case "connectMimo":
+            {
+                string cookieFile;
+                lock (_gate) cookieFile = Providers.ResolveMimoCookieFile(_overrides);
+                try
+                {
+                    OpenMimoLoginWindow(cookieFile, msg => _context.Log(msg));
+                    _loginWindowOpened = true;
+                }
+                catch (FileNotFoundException)
+                {
+                    throw new InvalidOperationException("Окно входа доступно только в настольном приложении TerminalV.");
+                }
+                return Task.FromResult<JsonElement?>(JsonSerializer.SerializeToElement(new { started = true }, Json.Options));
+            }
             default:
                 throw new ArgumentException($"Unknown method: {method}");
         }
@@ -113,7 +131,7 @@ public sealed class AiLimitsExtension : ITerminalVExtension
         {
             "claude.bin", "claude.config", "codex.bin", "codex.auth",
             "grok.bin", "grok.auth", "grok.version", "agy.bin",
-            "mimo.bin", "kimi.bin", "kimi.status", "muse.bin"
+            "mimo.bin", "mimo.auth", "mimo.cookieFile", "kimi.bin", "kimi.status", "muse.bin"
         })
         {
             var value = context.Storage.Get($"path.{key}");
@@ -145,6 +163,8 @@ public sealed class AiLimitsExtension : ITerminalVExtension
         path = status.Path,
         account = status.Account,
         detail = status.Detail,
+        actionId = status.ActionId,
+        actionLabel = status.ActionLabel,
         checkedAt = status.CheckedAt,
         limits = status.Limits.Select(l => new
         {
@@ -160,9 +180,21 @@ public sealed class AiLimitsExtension : ITerminalVExtension
     private JsonElement SerializeState()
         => JsonSerializer.SerializeToElement(StateObject(), Json.Options);
 
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void OpenMimoLoginWindow(string cookieFile, Action<string> log)
+        => MimoLoginWindow.Open(cookieFile, log);
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void CloseMimoLoginWindow()
+        => MimoLoginWindow.CloseActive();
+
     public async ValueTask DisposeAsync()
     {
         if (_stop is null) return;
+        if (_loginWindowOpened)
+        {
+            try { CloseMimoLoginWindow(); } catch { }
+        }
         Providers.AgyUpdated -= OnAgyUpdated;
         await _stop.CancelAsync();
         try { await _loop; } catch { /* loop logs its own errors */ }

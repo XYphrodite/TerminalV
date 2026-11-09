@@ -1,3 +1,4 @@
+using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -34,6 +35,8 @@ internal sealed class ServiceStatus
     public string? Path { get; set; }
     public string? Account { get; set; }
     public string? Detail { get; set; }
+    public string? ActionId { get; set; }
+    public string? ActionLabel { get; set; }
     public List<LimitWindow> Limits { get; set; } = [];
     public DateTimeOffset CheckedAt { get; set; }
 }
@@ -904,10 +907,38 @@ internal static class Providers
     sealed class MimoQuota
     {
         public DateTimeOffset FetchedAt { get; init; }
+        public string? CookieUsed { get; init; }
         public string? PlanName { get; init; }
         public List<LimitWindow> Limits { get; init; } = [];
         public bool CookieExpired { get; init; }
         public string? Error { get; init; }
+    }
+
+    public enum MimoProbeResult { InvalidOrExpired, NoActivePlan, Accepted }
+
+    public static string ResolveMimoCookieFile(IReadOnlyDictionary<string, string> overrides)
+        => Resolve(overrides, "mimo.cookieFile", Path.Combine(Home, ".local", "share", "mimocode", "platform-cookie.txt"));
+
+    public static async Task<MimoProbeResult> TryAcceptMimoCookieAsync(string cookieHeader, string cookieFilePath)
+    {
+        var normalized = NormalizeCookieHeader(cookieHeader);
+        if (string.IsNullOrWhiteSpace(normalized)) return MimoProbeResult.InvalidOrExpired;
+
+        var quota = await RunMimoQuota(normalized).ConfigureAwait(false);
+        if (quota.CookieExpired) return MimoProbeResult.InvalidOrExpired;
+        if (quota.Limits.Count == 0) return MimoProbeResult.NoActivePlan;
+
+        var dir = Path.GetDirectoryName(cookieFilePath);
+        if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+        await File.WriteAllTextAsync(cookieFilePath, normalized).ConfigureAwait(false);
+
+        lock (MimoGate)
+        {
+            _mimoQuota = quota;
+            _mimoFetching = false;
+        }
+        try { AgyUpdated?.Invoke(); } catch { }
+        return MimoProbeResult.Accepted;
     }
 
     static string? NormalizeCookieHeader(string? raw)
@@ -985,6 +1016,8 @@ internal static class Providers
             lock (MimoGate)
             {
                 cached = _mimoQuota;
+                var cookieChanged = cached is not null && !string.Equals(cached.CookieUsed, cookie, StringComparison.Ordinal);
+                if (cookieChanged) cached = null;
                 if (!_mimoFetching && (cached is null || now - cached.FetchedAt >= MimoMinInterval))
                     start = _mimoFetching = true;
             }
@@ -999,12 +1032,16 @@ internal static class Providers
             if (cached.CookieExpired)
             {
                 status.AuthOk = hasCliKey;
-                status.Detail = "Cookie platform.xiaomimimo.com истёк — обновите platform-cookie.txt.";
+                status.Detail = "Сессия platform.xiaomimimo.com истекла.";
+                status.ActionId = "connectMimo";
+                status.ActionLabel = "Обновить сессию";
                 return status;
             }
             if (cached.Limits.Count == 0)
             {
                 status.Detail = cached.Error ?? "Лимиты Token Plan недоступны.";
+                status.ActionId = "connectMimo";
+                status.ActionLabel = "Подключить квоты";
                 return status;
             }
             status.Limits.AddRange(cached.Limits.Where(l => l.ResetsAt is null || l.ResetsAt > now));
@@ -1022,7 +1059,9 @@ internal static class Providers
             status.Authenticated = true;
             status.AuthOk = true;
             status.Account = account;
-            status.Detail = "Ключ активен. Для полоски квот нужен cookie platform.xiaomimimo.com.";
+            status.Detail = "Ключ активен. Подключите веб-сессию для полоски лимитов.";
+            status.ActionId = "connectMimo";
+            status.ActionLabel = "Подключить квоты";
             return status;
         }
 
@@ -1032,6 +1071,8 @@ internal static class Providers
         {
             status.Authenticated = true;
             status.AuthOk = false;
+            status.ActionId = "connectMimo";
+            status.ActionLabel = "Подключить квоты";
             var last = lo[lo.GetArrayLength() - 1];
             if (last.ValueKind == JsonValueKind.Object && last.TryGetProperty("at", out var atProp)
                 && atProp.ValueKind == JsonValueKind.Number && atProp.TryGetInt64(out var ms) && ms > 0)
@@ -1048,6 +1089,8 @@ internal static class Providers
 
         status.Authenticated = false;
         status.AuthOk = false;
+        status.ActionId = "connectMimo";
+        status.ActionLabel = "Подключить квоты";
         status.Detail = "Нет активных учётных данных (`mimo auth login`).";
         return status;
     }
@@ -1061,7 +1104,7 @@ internal static class Providers
         }
         catch (Exception ex)
         {
-            result = new MimoQuota { FetchedAt = DateTimeOffset.UtcNow, Error = ex.Message };
+            result = new MimoQuota { FetchedAt = DateTimeOffset.UtcNow, CookieUsed = cookie, Error = ex.Message };
         }
         lock (MimoGate)
         {
@@ -1082,13 +1125,13 @@ internal static class Providers
 
         using var detailMsg = await http.GetAsync("https://platform.xiaomimimo.com/api/v1/tokenPlan/detail");
         if ((int)detailMsg.StatusCode is 401 or 403 or 301 or 302 or 307 or 308)
-            return new MimoQuota { FetchedAt = now, CookieExpired = true };
+            return new MimoQuota { FetchedAt = now, CookieUsed = cookie, CookieExpired = true };
         detailMsg.EnsureSuccessStatusCode();
         var detailResp = await detailMsg.Content.ReadAsStringAsync();
 
         using var usageMsg = await http.GetAsync("https://platform.xiaomimimo.com/api/v1/tokenPlan/usage");
         if ((int)usageMsg.StatusCode is 401 or 403 or 301 or 302 or 307 or 308)
-            return new MimoQuota { FetchedAt = now, CookieExpired = true };
+            return new MimoQuota { FetchedAt = now, CookieUsed = cookie, CookieExpired = true };
         usageMsg.EnsureSuccessStatusCode();
         var usageResp = await usageMsg.Content.ReadAsStringAsync();
 
@@ -1098,7 +1141,7 @@ internal static class Providers
         {
             if (detailDoc.RootElement.TryGetProperty("code", out var codeProp)
                 && codeProp.ValueKind == JsonValueKind.Number && codeProp.TryGetInt32(out var code) && code == 401)
-                return new MimoQuota { FetchedAt = now, CookieExpired = true };
+                return new MimoQuota { FetchedAt = now, CookieUsed = cookie, CookieExpired = true };
 
             if (detailDoc.RootElement.TryGetProperty("data", out var d) && d.ValueKind == JsonValueKind.Object)
             {
@@ -1152,6 +1195,7 @@ internal static class Providers
         return new MimoQuota
         {
             FetchedAt = now,
+            CookieUsed = cookie,
             PlanName = planName,
             Limits = limits,
             Error = limits.Count == 0 ? "Нет активного Token Plan." : null

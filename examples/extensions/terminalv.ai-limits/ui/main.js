@@ -159,6 +159,16 @@ export async function activate(api) {
     .ai-bar > i { display: block; height: 100%; background: var(--accent, #6aa9ff); border-radius: inherit; }
     .ai-limit.warn .ai-bar > i { background: #e2b93b; }
     .ai-limit.danger .ai-bar > i { background: var(--danger, #e25555); }
+    .ai-card-action {
+      justify-self: start; cursor: pointer;
+      border: 1px solid var(--sidebar-edge); border-radius: 6px;
+      background: color-mix(in srgb, var(--accent, #6aa9ff) 12%, transparent);
+      color: inherit; padding: 3px 8px; font: inherit; font-size: 11px; font-weight: 500;
+    }
+    .ai-card-action:hover {
+      background: color-mix(in srgb, var(--accent, #6aa9ff) 20%, transparent);
+    }
+    .ai-card-action:disabled { opacity: 0.6; cursor: default; }
   `;
   root.append(style);
 
@@ -268,6 +278,20 @@ export async function activate(api) {
 
     card.append(head, meta);
 
+    if (service.actionId && service.actionLabel) {
+      const btn = doc.createElement("button");
+      btn.type = "button";
+      btn.className = "ai-card-action";
+      btn.textContent = service.actionLabel;
+      btn.addEventListener("click", () => {
+        btn.disabled = true;
+        api.host.invoke(service.actionId)
+          .catch(error => { if (!api.signal.aborted) api.ui.showNotification(error.message); })
+          .finally(() => { btn.disabled = false; });
+      });
+      card.append(btn);
+    }
+
     for (const limit of activeLimits(service)) {
       const row = doc.createElement("div");
       row.className = percentClass(limit.usedPercent);
@@ -310,5 +334,6 @@ export async function activate(api) {
 
   api.host.on("changed", renderState);
   api.commands.register("refresh", "Обновить лимиты AI", () => api.host.invoke("refresh").then(renderState));
+  api.commands.register("connectMimo", "Подключить квоты MiMo", () => api.host.invoke("connectMimo"));
   await load();
 }
