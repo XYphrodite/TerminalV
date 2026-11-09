@@ -2206,6 +2206,7 @@ function setUpdateBar(visible, text, options = {}) {
     updateApply.textContent = options.buttonLabel;
   }
   const progress = options.progress;
+  if (!updateProgress) return;
   if (progress === undefined || progress === false || progress === null) {
     updateProgress.classList.add("hidden");
     updateProgress.classList.remove("indeterminate");
