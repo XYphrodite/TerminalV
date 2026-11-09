@@ -452,10 +452,38 @@ body,
   background: #241418;
 }
 
+.update-bar-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 6px;
+}
+
 .update-text {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
   font-size: 12px;
   line-height: 1.35;
   color: var(--text);
+}
+
+.update-close {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  margin: -2px -2px 0 0;
+  flex: 0 0 auto;
+  border-radius: 5px;
+}
+
+.update-close .ui-icon {
+  width: 14px;
+  height: 14px;
+}
+
+.update-close.hidden {
+  display: none;
 }
 
 .update-progress {

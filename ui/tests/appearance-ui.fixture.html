@@ -94,6 +94,42 @@
     equal(s.messages("update-check").length, 1);
     equal(s.messages("open-author").length, 2);
   });
+  await check("update banner error and available states can be dismissed with close button", (s) => {
+    const bar = s.button("update-bar");
+    const text = s.button("update-text");
+    const closeBtn = s.button("update-close");
+    const applyBtn = s.button("update-apply");
+    equal(Boolean(closeBtn.querySelector("svg[aria-hidden=true]")), true);
+    equal(Boolean(closeBtn.getAttribute("aria-label")), true);
+
+    s.app.sendHost({
+      type: "update",
+      status: "error",
+      message: "The release could not be read from GitHub: GitHub answered 504 GatewayTimeout."
+    });
+    equal(bar.classList.contains("hidden"), false);
+    equal(bar.classList.contains("error"), true);
+    equal(text.textContent, "The release could not be read from GitHub: GitHub answered 504 GatewayTimeout.");
+    equal(closeBtn.classList.contains("hidden"), false);
+    equal(applyBtn.classList.contains("hidden"), true);
+    equal(closeBtn.getBoundingClientRect().width > 0, true);
+
+    closeBtn.click();
+    equal(bar.classList.contains("hidden"), true);
+
+    s.app.sendHost({ type: "update", status: "downloading", current: "0.8.26", received: 25, total: 100 });
+    equal(bar.classList.contains("hidden"), false);
+    equal(closeBtn.classList.contains("hidden"), true);
+
+    s.app.sendHost({ type: "update", status: "available", current: "0.8.26", latest: "0.8.27" });
+    equal(bar.classList.contains("hidden"), false);
+    equal(bar.classList.contains("error"), false);
+    equal(closeBtn.classList.contains("hidden"), false);
+    equal(applyBtn.classList.contains("hidden"), false);
+
+    closeBtn.click();
+    equal(bar.classList.contains("hidden"), true);
+  });
   await check("author link fits narrow light and dark sidebars, and hides when collapsed", async (s) => {
     const link = s.button("author-link"), credit = link.parentElement;
     s.frame.style.width = "360px";

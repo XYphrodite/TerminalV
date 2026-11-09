@@ -52,6 +52,8 @@ const updateText = document.getElementById("update-text");
 const updateProgress = document.getElementById("update-progress");
 const updateProgressFill = document.getElementById("update-progress-fill");
 const updateApply = document.getElementById("update-apply");
+const updateClose = document.getElementById("update-close");
+let updateHideTimer = 0;
 const versionBtn = document.getElementById("app-version");
 const appEl = document.getElementById("app");
 const settingsEl = document.getElementById("settings");
@@ -737,6 +739,11 @@ function applyChrome() {
     ? t("ShowSessions")
     : t("HideSessions");
   collapseBtn.setAttribute("aria-label", collapseBtn.title);
+  if (updateClose) {
+    const closeLabel = t("ClosePanel");
+    updateClose.title = closeLabel;
+    updateClose.setAttribute("aria-label", closeLabel);
+  }
   document.body.style.background = chrome.bg;
 }
 
@@ -2185,9 +2192,14 @@ function restart(tab) {
 }
 
 function setUpdateBar(visible, text, options = {}) {
+  clearTimeout(updateHideTimer);
+  updateHideTimer = 0;
   updateBar.classList.toggle("hidden", !visible);
   updateBar.classList.toggle("error", Boolean(options.error));
   updateText.textContent = text || "";
+  if (updateClose) {
+    updateClose.classList.toggle("hidden", Boolean(options.hideClose));
+  }
   updateApply.classList.toggle("hidden", Boolean(options.hideButton));
   updateApply.disabled = Boolean(options.disabled);
   if (options.buttonLabel) {
@@ -2222,12 +2234,13 @@ function handleUpdate(message) {
   if (downloadView) {
     setUpdateBar(true, downloadView.text, {
       hideButton: true,
+      hideClose: true,
       progress: downloadView.bar === "indeterminate" ? true : downloadView.percent
     });
     return;
   }
   if (message.status === "restarting") {
-    setUpdateBar(true, t("UpdateRestarting", { latest: message.latest }), { hideButton: true });
+    setUpdateBar(true, t("UpdateRestarting", { latest: message.latest }), { hideButton: true, hideClose: true });
     return;
   }
   if (message.status === "installing") {
@@ -2239,7 +2252,7 @@ function handleUpdate(message) {
     setUpdateBar(true, t("UpdateCurrent", { current: message.current }), {
       hideButton: true
     });
-    setTimeout(() => updateBar.classList.add("hidden"), 2500);
+    updateHideTimer = setTimeout(() => setUpdateBar(false), 2500);
     return;
   }
   if (message.status === "unsupported" || message.status === "error") {
@@ -2844,6 +2857,12 @@ document.getElementById("launch-profiles-btn").addEventListener("click", () => {
 });
 emptyNewBtn.addEventListener("click", () => newTab());
 updateApply.addEventListener("click", () => post({ type: "update-apply" }));
+updateClose?.addEventListener("click", () => {
+  setUpdateBar(false);
+  if (!isModalOpen() && !searchController.isOpen && currentTab()) {
+    focusTerminal();
+  }
+});
 versionBtn.addEventListener("click", () => post({ type: "update-check" }));
 const authorLink = document.getElementById("author-link");
 const openAuthor = (event) => {

@@ -133,6 +133,7 @@ kbd { font: 10px var(--font-ui); letter-spacing: .02em; white-space: nowrap; }
 .version { margin: 0; width: auto; color: var(--label); font: 10px var(--font-ui); }
 .update-bar { background: var(--accent-wash); border-color: var(--accent-dim); padding: 10px; }
 .update-bar.error { background: color-mix(in srgb, var(--danger) 8%, var(--sidebar)); border-color: var(--danger); }
+.update-bar .update-close { width: 22px; height: 22px; }
 #update-apply, .overlay button { color: var(--ink); }
 
 #app.collapsed .sessions-heading,
