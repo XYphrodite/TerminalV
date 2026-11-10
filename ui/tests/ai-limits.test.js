@@ -4,8 +4,10 @@ import {
   SERVICE_GROUPS,
   activate,
   groupServices,
+  isServiceExhausted,
   serviceGroupId,
   servicePriority,
+  serviceTone,
   sortServices
 } from "../../examples/extensions/terminalv.ai-limits/ui/main.js";
 
@@ -210,4 +212,80 @@ test("ai-limits renders collapsible groups and preserves collapsed state across 
     globalThis.document = prevDoc;
     globalThis.localStorage = prevStorage;
   }
+});
+
+test("ai-limits keeps multi-pool service in 'Лимиты есть' when only one pool is exhausted", () => {
+  const future = new Date(Date.now() + 3600_000).toISOString();
+  // agy: Gemini is free (0% 5h, 39% weekly), Claude/GPT 5h is 100%
+  const agyPartial = {
+    id: "agy",
+    name: "agy",
+    installed: true,
+    authenticated: true,
+    authOk: true,
+    limits: [
+      { id: "gemini-weekly", title: "Gemini · 7 дней", usedPercent: 39, resetsAt: future },
+      { id: "gemini-5h", title: "Gemini · 5 часов", usedPercent: 0, resetsAt: future },
+      { id: "3p-weekly", title: "Claude/GPT · 7 дней", usedPercent: 60, resetsAt: future },
+      { id: "3p-5h", title: "Claude/GPT · 5 часов", usedPercent: 100, resetsAt: future }
+    ]
+  };
+
+  assert.equal(isServiceExhausted(agyPartial), false, "Gemini is still available");
+  assert.equal(serviceTone(agyPartial), "limited", "tone is limited (orange), not exhausted (red)");
+  assert.equal(servicePriority(agyPartial), 0, "priority is 0 (available)");
+  assert.equal(serviceGroupId(agyPartial), "available", "agy belongs in 'Лимиты есть'");
+
+  // agy: BOTH Gemini and Claude/GPT pools have a 100% window
+  const agyExhausted = {
+    id: "agy",
+    name: "agy",
+    installed: true,
+    authenticated: true,
+    authOk: true,
+    limits: [
+      { id: "gemini-weekly", title: "Gemini · 7 дней", usedPercent: 65, resetsAt: future },
+      { id: "gemini-5h", title: "Gemini · 5 часов", usedPercent: 100, resetsAt: future },
+      { id: "3p-weekly", title: "Claude/GPT · 7 дней", usedPercent: 60, resetsAt: future },
+      { id: "3p-5h", title: "Claude/GPT · 5 часов", usedPercent: 100, resetsAt: future }
+    ]
+  };
+
+  assert.equal(isServiceExhausted(agyExhausted), true, "all pools blocked");
+  assert.equal(serviceTone(agyExhausted), "exhausted", "tone is exhausted (red)");
+  assert.equal(servicePriority(agyExhausted), 2, "priority is 2 (exhausted)");
+  assert.equal(serviceGroupId(agyExhausted), "exhausted", "agy belongs in 'Лимитов нет'");
+
+  // grok: primary 7d is 100%, but on-demand still has balance
+  const grokWithOnDemand = {
+    id: "grok",
+    name: "Grok",
+    installed: true,
+    authenticated: true,
+    authOk: true,
+    limits: [
+      { id: "primary", title: "7 дней", usedPercent: 100, resetsAt: future },
+      { id: "on_demand", title: "Доп. лимит ($5/$50)", usedPercent: 10, resetsAt: future }
+    ]
+  };
+
+  assert.equal(isServiceExhausted(grokWithOnDemand), false, "on-demand is still available");
+  assert.equal(serviceTone(grokWithOnDemand), "limited", "tone is limited (orange)");
+  assert.equal(serviceGroupId(grokWithOnDemand), "available", "grok belongs in 'Лимиты есть'");
+
+  // grok: primary 7d is 100%, no on-demand
+  const grokOnly = {
+    id: "grok",
+    name: "Grok",
+    installed: true,
+    authenticated: true,
+    authOk: true,
+    limits: [
+      { id: "primary", title: "7 дней", usedPercent: 100, resetsAt: future }
+    ]
+  };
+
+  assert.equal(isServiceExhausted(grokOnly), true, "primary limit reached");
+  assert.equal(serviceTone(grokOnly), "exhausted", "tone is exhausted (red)");
+  assert.equal(serviceGroupId(grokOnly), "exhausted", "grok belongs in 'Лимитов нет'");
 });

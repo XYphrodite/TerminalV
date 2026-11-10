@@ -28,13 +28,46 @@ function activeLimits(service) {
   return (service.limits ?? []).filter(isActiveLimit);
 }
 
-function serviceTone(service) {
+function limitPool(limit) {
+  if (!limit) return "default";
+  if (limit.title && limit.title.includes(" · ")) {
+    return limit.title.split(" · ")[0].trim();
+  }
+  if (limit.id === "on_demand" || limit.id === "compensation_total_token") {
+    return limit.id;
+  }
+  return "default";
+}
+
+export function isServiceExhausted(service) {
+  const active = activeLimits(service);
+  if (active.length === 0) return false;
+  const pools = new Map();
+  for (const limit of active) {
+    const pool = limitPool(limit);
+    const list = pools.get(pool) ?? [];
+    list.push(limit);
+    pools.set(pool, list);
+  }
+  const isPoolBlocked = limits => limits.some(l => (l.usedPercent ?? 0) >= 100);
+  return Array.from(pools.values()).every(isPoolBlocked);
+}
+
+export function hasPartialLimit(service) {
+  const active = activeLimits(service);
+  if (active.length === 0) return false;
+  return active.some(l => (l.usedPercent ?? 0) >= 100);
+}
+
+export function serviceTone(service) {
   if (!service.installed) return "missing";
   if (service.authenticated && service.authOk === false) return "expired";
   if (!service.authenticated) return "unauth";
-  const maxPct = Math.max(0, ...activeLimits(service).map(l => l.usedPercent ?? 0));
-  if (maxPct >= 100) return "exhausted";
-  if (maxPct >= 85) return "limited";
+  const active = activeLimits(service);
+  if (active.length === 0) return "ok";
+  if (isServiceExhausted(service)) return "exhausted";
+  const maxPct = Math.max(0, ...active.map(l => l.usedPercent ?? 0));
+  if (maxPct >= 85 || hasPartialLimit(service)) return "limited";
   if (maxPct >= 60 || service.limitsStale) return "warn";
   return "ok";
 }
@@ -54,8 +87,7 @@ export function servicePriority(service) {
   if (service.limitsStale) return 3;
   const active = activeLimits(service);
   if (active.length === 0) return 1;
-  const isExhausted = active.some(l => (l.usedPercent ?? 0) >= 100);
-  return isExhausted ? 2 : 0;
+  return isServiceExhausted(service) ? 2 : 0;
 }
 
 export function serviceGroupId(service) {
