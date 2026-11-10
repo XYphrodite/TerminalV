@@ -7,6 +7,7 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import { CanvasAddon } from "@xterm/addon-canvas/lib/xterm-addon-canvas.mjs";
 import { SerializeAddon } from "@xterm/addon-serialize";
 import { SearchAddon } from "@xterm/addon-search";
+import { Unicode11Addon } from "@xterm/addon-unicode11";
 import "@xterm/xterm/css/xterm.css";
 import "./styles.css";
 import "./chrome.css";
@@ -1939,6 +1940,10 @@ function newTab(options = {}) {
   term.loadAddon(serialize);
   const search = new SearchAddon({ highlightLimit: SEARCH_HIGHLIGHT_LIMIT });
   term.loadAddon(search);
+  // Unicode 11 widths match what TUIs (wcwidth, Ink) assume: emoji take two cells.
+  // With xterm's default Unicode 6 table every wide glyph shifts the rest of its row.
+  term.loadAddon(new Unicode11Addon());
+  term.unicode.activeVersion = "11";
   term.open(hostEl);
   term.loadAddon(new SynchronizedOutputAddon());
 

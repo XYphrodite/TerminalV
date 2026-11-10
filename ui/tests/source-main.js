@@ -6,6 +6,7 @@ const packages = [
   ["@xterm/addon-webgl", "addon-webgl", "WebglAddon", "window.WebglAddon"],
   ["@xterm/addon-serialize", "addon-serialize", "SerializeAddon", "window.SerializeAddon"],
   ["@xterm/addon-search", "addon-search", "SearchAddon", "window.SearchAddon"],
+  ["@xterm/addon-unicode11", "addon-unicode11", "Unicode11Addon", "window.Unicode11Addon"],
   // main.js imports the actual bundle path (the beta's "module" entry is broken),
   // so the matcher must tolerate a suffix after the package name.
   ["@xterm/addon-canvas", "addon-canvas", "CanvasAddon", "window.CanvasAddon"]
