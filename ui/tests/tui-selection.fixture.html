@@ -95,6 +95,19 @@
     return new Promise((resolve) => setTimeout(resolve, 1));
   }
 
+  function rightClick(term, host, point, init = {}) {
+    const screen = host.querySelector(".xterm-screen");
+    const pressInit = { button: 2, buttons: 2, ...init };
+    const delivered = pointer(screen, "pointerdown", point.x, point.y, pressInit);
+    if (delivered) compat(screen, "mousedown", point.x, point.y, pressInit);
+    pointer(screen, "pointerup", point.x, point.y, { button: 2, buttons: 0, ...init });
+    compat(screen, "mouseup", point.x, point.y, { button: 2, buttons: 0, ...init });
+    host.dispatchEvent(new MouseEvent("contextmenu", {
+      bubbles: true, cancelable: true, button: 2, clientX: point.x, clientY: point.y, ...init
+    }));
+    return new Promise((resolve) => setTimeout(resolve, 1));
+  }
+
   const SGR_REPORT = /^\x1b\[<\d+;\d+;\d+[Mm]$/;
 
   await check("plain drag selects chat text and sends nothing to the app", async ({ term, write, host, reports }) => {
@@ -181,6 +194,26 @@
     equal(term.hasSelection(), true);
     equal(getPlainSelection(term), "at answer line one\r\nchat answer");
     equal(reports.length, 0);
+  });
+
+  await check("right click in a TUI sends no mouse reports to the app so host paste does not duplicate", async ({ term, write, host, reports }) => {
+    await write(HERMES_MODES);
+    await write(CHAT);
+    const geom = geometry(term, host);
+    await rightClick(term, host, at(geom, 40, 2));
+    equal(reports.filter((data) => SGR_REPORT.test(data)).length, 0);
+  });
+
+  await check("right click while text is selected keeps selection intact and sends no mouse reports", async ({ term, write, host, reports }) => {
+    await write(HERMES_MODES);
+    await write(CHAT);
+    const geom = geometry(term, host);
+    await drag(term, host, at(geom, 2, 0), at(geom, 12, 1));
+    equal(term.hasSelection(), true);
+    await rightClick(term, host, at(geom, 40, 2));
+    equal(term.hasSelection(), true);
+    equal(getPlainSelection(term), "at answer line one\r\nchat answer");
+    equal(reports.filter((data) => SGR_REPORT.test(data)).length, 0);
   });
 
   document.body.dataset.testResult = btoa(unescape(encodeURIComponent(JSON.stringify(results))));

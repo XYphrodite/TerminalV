@@ -12,7 +12,9 @@
 //  - a plain button-0 gesture is taken away from xterm before it sees it: a tap
 //    is replayed to xterm so the app gets exactly the press/release reports it
 //    got before (Approve buttons keep working), and a drag becomes an xterm
-//    force-selection that the app never sees.
+//    force-selection that the app never sees;
+//  - button-2 (right-click) is swallowed before xterm so TUIs (hermes --tui) do
+//    not report raw mouse clicks and duplicate TerminalV's host-level paste.
 // Modified gestures (Shift/Ctrl/Alt/Meta) and non-mouse pointers fall through
 // to xterm untouched.
 
@@ -151,6 +153,27 @@ export function attachTuiMouse(tab) {
     window.addEventListener("pointercancel", onCancel, true);
     window.addEventListener("click", onCompatUp, true);
   }
+
+  function interceptTuiRightClick(event) {
+    if (event.button !== 2) return;
+    if (term.modes.mouseTrackingMode === "none") return;
+    // Right-click is handled authoritatively at the host level in TerminalV
+    // (copy on active selection, paste via pasteController otherwise). When a
+    // TUI tracks mouse (hermes --tui), raw button-2 reports to the PTY trigger
+    // the app's own paste fallback, duplicating TerminalV's bracketed paste.
+    // Swallowing button-2 before xterm sees it keeps reports off the wire while
+    // allowing contextmenu to fire and perform the single host paste.
+    event.stopPropagation();
+    event.preventDefault();
+    if (event.type === "pointerdown" || event.type === "mousedown") {
+      term.focus();
+    }
+  }
+
+  host.addEventListener("pointerdown", interceptTuiRightClick, true);
+  host.addEventListener("pointerup", interceptTuiRightClick, true);
+  host.addEventListener("mousedown", interceptTuiRightClick, true);
+  host.addEventListener("mouseup", interceptTuiRightClick, true);
 
   host.addEventListener("pointerdown", (event) => {
     if (event.button !== 0 && event.button !== 1) return;
