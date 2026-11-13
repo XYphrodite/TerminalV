@@ -30,9 +30,11 @@ test("phone WebGL is allowed only for phone-sized grids, not desktop mirrors", (
   assert.match(main, /function webglAllowed\(tab\)/, "per-tab gate exists");
   assert.match(main, /if \(!isMobileUi\(\)\) return true/, "desktop follows the setting alone");
   assert.match(main, /if \(!tab\?\.remoteGeometry\) return true/, "local/direct tabs are fine on phones");
-  assert.match(main, /if \(!settings\.mobileFitMode\) return false/, "desktop-sized mirrors stay on DOM");
+  assert.match(main, /if \(!settings\.mobileFitMode\) return false/, "desktop-sized mirrors stay off WebGL");
   assert.match(main, /PHONE_GRID_MAX_COLS/, "mirror grid is size-capped");
   assert.match(main, /webglAllowed\(tab\)/, "ensureWebgl/applyRenderer consult the gate");
+  const ensureCanvasBlock = main.match(/function ensureCanvas\(tab\)\s*\{[\s\S]*?\n\}/)?.[0] || "";
+  assert.doesNotMatch(ensureCanvasBlock, /isMobileUi/, "desktop uses CanvasAddon fallback when WebGL is off");
   const html = readFileSync(resolve(dir, "index.html"), "utf8");
   assert.match(html, /data-mobile-only>На телефоне WebGL/, "settings explain the phone gate");
   assert.match(html, /включится быстрый WebGL-рендер/, "fit mode advertises the faster renderer");

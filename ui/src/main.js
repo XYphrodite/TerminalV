@@ -633,6 +633,7 @@ function hideTab(tab) {
   layouts = normalizeLayouts(layouts, tabs);
   tab.renaming = false;
   dropWebgl(tab);
+  dropCanvas(tab);
   if (tab.id === activeId) {
     searchController.close({ focus: false });
     tab.pane.classList.remove("active");
@@ -930,7 +931,10 @@ function applyFit(tab, notifyHost = true) {
   }
   // Alternate buffer (muse TUI) leaves torn top after resize — hard refresh only its canvas, not normal scrollback
   if (tab.term.buffer.active.type === "alternate") {
-    try { tab.webgl?.clearTexture?.(); } catch {}
+    try {
+      tab.webgl?.clearTexture?.();
+      tab.canvas?.clearTextureAtlas?.();
+    } catch {}
     tab.term.refresh(0, Math.max(0, tab.term.rows - 1), true);
   } else {
     tab.term.refresh(0, Math.max(0, tab.term.rows - 1));
@@ -1398,19 +1402,21 @@ function applyRenderer() {
     if (webglAllowed(tab)) {
       if (isPaneVisible(tab)) {
         ensureWebgl(tab);
+        ensureCanvas(tab);
       }
     } else {
       dropWebgl(tab);
-      // A phone mirror falls back from WebGL (banned for desktop-sized grids)
-      // to the canvas renderer — the DOM default is the slowest of the three
-      // and is what made scrolling the mirror janky on budget devices.
+      // When WebGL is disabled or disallowed (desktop toggle or large mobile
+      // mirrors), fall back to CanvasAddon rather than DOM: DOM renders box
+      // drawing and sparkline glyphs as text spans, leaving line-height gaps
+      // and subpixel width drift, and is far slower on mobile.
       if (isPaneVisible(tab)) ensureCanvas(tab);
     }
   }
 }
 
 function ensureCanvas(tab) {
-  if (tab.canvas || !isMobileUi() || tab.webgl) return;
+  if (tab.canvas || tab.webgl) return;
   try {
     tab.canvas = new CanvasAddon();
     tab.term.loadAddon(tab.canvas);
@@ -1436,9 +1442,12 @@ function ensureWebgl(tab) {
 
   try {
     tab.webgl = new WebglAddon();
-    tab.webgl.onContextLoss?.(() => dropWebgl(tab));
+    tab.webgl.onContextLoss?.(() => {
+      dropWebgl(tab);
+      if (isPaneVisible(tab)) ensureCanvas(tab);
+    });
     tab.term.loadAddon(tab.webgl);
-    // WebGL supersedes the mobile canvas fallback.
+    // WebGL supersedes the canvas fallback.
     dropCanvas(tab);
   } catch {
     tab.webgl = null;
@@ -1530,6 +1539,7 @@ function removeTab(tab) {
   pasteController.cancel(tab);
   if (!tab.exited) post({ type: "kill", id: tab.id });
   dropWebgl(tab);
+  dropCanvas(tab);
   tab.output.dispose();
   tab.resizeObserver?.disconnect();
   try {
@@ -2510,6 +2520,7 @@ function reconcileMobileSessions(message) {
         notifications.acknowledge(tab);
         tabs.splice(tabs.indexOf(tab), 1);
         dropWebgl(tab);
+        dropCanvas(tab);
         tab.output.dispose();
         tab.resizeObserver?.disconnect();
         tab.term.dispose();
@@ -2598,8 +2609,8 @@ function handleHost(message) {
       else initI18n(settings.language);
     }
     // Hardware rendering on phones follows webglAllowed(): a mirrored
-    // desktop-sized grid stays on the DOM renderer, phone-sized fit grids
-    // may use WebGL.
+    // desktop-sized grid falls back to the canvas renderer, phone-sized
+    // fit grids may use WebGL.
     gatewayState = message.gateway ?? null;
     fillFonts(message.fonts);
     window.__liveIds = message.liveIds || [];

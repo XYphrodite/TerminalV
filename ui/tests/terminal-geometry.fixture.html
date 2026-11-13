@@ -103,7 +103,8 @@
     await settle();
     const tab = tabFor("tui");
     equal(Boolean(tab), true, `source terminal loaded (${JSON.stringify(app.hostErrors)})`);
-    equal(Boolean(tab.host.querySelector(".xterm-rows")), true, "real DOM renderer");
+    equal(Boolean(tab.host.querySelector(".xterm canvas")), true, "real canvas renderer");
+    equal(Boolean(tab.host.querySelector(".xterm-rows")), false, "DOM renderer is not the fallback");
     const attach = samples("restore").find(sample => sample.type === "attach");
     equal(Boolean(attach?.proposed), true, "attached visible pane");
     equal(attach.actual, attach.proposed, "replay starts at the fitted grid");
