@@ -3,7 +3,10 @@
 export function serializeSessionBuffer(tab) {
   if (!tab.output.hasParsed && tab.buffer) return tab.buffer;
   try {
-    let buffer = tab.serialize.serialize({ excludeAltBuffer: false, excludeModes: false });
+    // Phones cap the saved history so a periodic snapshot stays cheap on a weak CPU.
+    const options = { excludeAltBuffer: false, excludeModes: false };
+    if (Number.isInteger(tab.persistScrollback) && tab.persistScrollback > 0) options.scrollback = tab.persistScrollback;
+    let buffer = tab.serialize.serialize(options);
     // xterm 5.5's serializer saves mouse tracking but omits its encoding. Without
     // SGR, restored Grok wheel events switch to the legacy binary input channel.
     // Isolate the private read until the serializer includes these modes itself.

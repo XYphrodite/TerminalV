@@ -181,7 +181,10 @@ internal sealed class SessionClientBackend : IGatewaySessionBackend, IGatewayRep
         await snapshot.Ready.Task.WaitAsync(TimeSpan.FromSeconds(5), ct).ConfigureAwait(false);
     }
 
-    public async Task ReplayAndBindAsync(string id, Action<string> replay, Action bind, CancellationToken ct, Action? beforeReplay = null)
+    public Task ReplayAndBindAsync(string id, Action<string> replay, Action bind, CancellationToken ct, Action? beforeReplay = null)
+        => ReplayAndBindAsync(id, replay, bind, ct, beforeReplay, maxReplayChars: null);
+
+    public async Task ReplayAndBindAsync(string id, Action<string> replay, Action bind, CancellationToken ct, Action? beforeReplay, int? maxReplayChars)
     {
         Snapshot snapshot;
         lock (_gate)
@@ -196,7 +199,7 @@ internal sealed class SessionClientBackend : IGatewaySessionBackend, IGatewayRep
             // OnData holds this same lock: snapshot first, then every subsequent
             // live chunk exactly once. Only the new subscriber gets the replay.
             beforeReplay?.Invoke();
-            var output = snapshot.Text.Snapshot();
+            var output = snapshot.Text.Snapshot(maxReplayChars);
             if (output.Length > 0) replay(output);
             bind();
         }

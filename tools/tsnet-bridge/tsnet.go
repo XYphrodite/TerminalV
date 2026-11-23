@@ -9,6 +9,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -32,6 +33,7 @@ func (t *Tsnet) Account(command, payload string) (string, error) {
 		if args.StateDir == "" { return "", fmt.Errorf("state directory required") }
 		t.mu.Lock()
 		if t.srv == nil {
+			limitMemory()
 			files := filepath.Dir(args.StateDir)
 			_ = os.Setenv("HOME", files)
 			_ = os.Setenv("TMPDIR", files)
@@ -78,6 +80,13 @@ func (t *Tsnet) Account(command, payload string) (string, error) {
 var global *Tsnet
 var globalMu sync.Mutex
 
+// limitMemory keeps the embedded Go runtime from competing with the WebView on
+// low-RAM phones: a soft heap limit makes the GC work harder before growing.
+func limitMemory() {
+	debug.SetMemoryLimit(96 << 20)
+	debug.SetGCPercent(50)
+}
+
 // Start запускает tsnet. Идемпотентно.
 // authKey — из admin.tailscale.com → Keys (ephemeral, reusable). Пустой = interactive (не для mobile).
 // hostname — например terminalv-mobile, controlUrl — обычно "", stateDir — filesDir/tsnet-state
@@ -87,6 +96,7 @@ func (t *Tsnet) Start(authKey, hostname, controlURL, stateDir string, logVerbosi
 	if t.srv != nil {
 		return nil
 	}
+	limitMemory()
 	if stateDir == "" {
 		stateDir = os.TempDir() + "/tsnet-terminalv"
 	}

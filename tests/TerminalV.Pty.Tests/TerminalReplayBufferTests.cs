@@ -122,6 +122,21 @@ internal static class TerminalReplayBufferTests
             Equal(AfterTrim(Esc + "[?1003h" + Esc + "[?1003\x1al"), Esc + "[?1003hFRAME");
         });
 
+        check("a capped phone replay keeps only the tail and the modes active at its boundary", () =>
+        {
+            var replay = new TerminalReplayBuffer(1000);
+            replay.Add(Esc + "[?1049;1003;1006hOLD FRAME " + new string('o', 100));
+            replay.Add("NEW FRAME");
+            var capped = replay.Snapshot(20);
+            Equal(capped, Esc + "[?1049h" + Esc + "[?1003h" + Esc + "[?1006h" + new string('o', 11) + "NEW FRAME");
+            Equal(replay.Snapshot(null), replay.Snapshot());
+            Equal(replay.Snapshot(100_000), replay.Snapshot());
+            // A mode exit inside the skipped region must not leak into the capped replay.
+            var exited = new TerminalReplayBuffer(1000);
+            exited.Add(Esc + "[?1049hTUI" + Esc + "[?1049l" + new string('s', 50));
+            Equal(exited.Snapshot(10), new string('s', 10));
+        });
+
         check("large chunks and unfinished control strings keep replay memory bounded", () =>
         {
             var replay = new TerminalReplayBuffer(16);

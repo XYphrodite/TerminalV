@@ -40,6 +40,43 @@ internal sealed class TerminalReplayBuffer
 
     public string Snapshot() => _boundary.Prefix() + string.Concat(_chunks);
 
+    /// <summary>
+    /// Returns at most <paramref name="maxChars"/> trailing characters of the replay buffer,
+    /// advancing a cloned mode tracker across any additionally skipped prefix so active
+    /// terminal modes (alternate screen, mouse tracking, SGR encoding) remain intact.
+    /// </summary>
+    public string Snapshot(int? maxChars)
+    {
+        if (maxChars is not { } limit || limit < 1 || _length <= limit)
+            return Snapshot();
+
+        var toSkip = _length - limit;
+        var modes = _boundary.Clone();
+        var tail = new StringBuilder(limit + 64);
+        foreach (var chunk in _chunks)
+        {
+            if (toSkip <= 0)
+            {
+                tail.Append(chunk);
+                continue;
+            }
+            if (toSkip >= chunk.Length)
+            {
+                modes.Feed(chunk);
+                toSkip -= chunk.Length;
+                continue;
+            }
+            var cut = toSkip;
+            if (cut < chunk.Length && char.IsHighSurrogate(chunk[cut - 1]) && char.IsLowSurrogate(chunk[cut]))
+                cut++;
+            modes.Feed(chunk.AsSpan(0, cut));
+            toSkip = 0;
+            if (cut < chunk.Length)
+                tail.Append(chunk, cut, chunk.Length - cut);
+        }
+        return modes.Prefix() + tail;
+    }
+
     private sealed class BoundaryModes
     {
         private enum State { Ground, Escape, Csi, CsiIgnore, Osc, DcsHeader, DcsBody, IgnoreString }
@@ -51,6 +88,21 @@ internal sealed class TerminalReplayBuffer
         private int _mouse;
         private int _encoding;
         private const int MaxSequence = 1024;
+
+        public BoundaryModes Clone()
+        {
+            var copy = new BoundaryModes
+            {
+                _state = _state,
+                _alternate = _alternate,
+                _mouse = _mouse,
+                _encoding = _encoding
+            };
+            copy._pending.Append(_pending);
+            foreach (var kv in _private) copy._private[kv.Key] = kv.Value;
+            foreach (var mode in _normal) copy._normal.Add(mode);
+            return copy;
+        }
 
         public void Feed(ReadOnlySpan<char> text)
         {

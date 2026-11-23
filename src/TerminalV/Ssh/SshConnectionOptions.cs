@@ -22,6 +22,12 @@ public sealed class SshConnectionOptions
     /// pointing at a TerminalV mirror gateway; host/user/password are unused.
     /// </summary>
     public string? MirrorSessionId { get; set; }
+    /// <summary>
+    /// Optional cap on initial replay size requested from the mirror gateway.
+    /// Null preserves the full server snapshot; mobile sets a bounded tail to avoid
+    /// multi-second parsing stalls on low-end devices.
+    /// </summary>
+    public int? MaxReplayBytes { get; set; }
     public TailscaleOptions Tailscale { get; set; } = new();
     public bool UseTailscale => Tailscale.Enabled;
     public string TerminalType { get; set; } = "xterm-256color";

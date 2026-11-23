@@ -300,6 +300,13 @@ internal sealed class GatewayServer : IDisposable
         var geometryBackend = _backend as IGatewayGeometryBackend;
         var terminalGeometry = false;
         var binaryData = false;
+        int? maxReplayBytes = null;
+
+        const int MaxCoalescedChars = 65536;
+        var outGate = new object();
+        var outOrder = new List<string>();
+        var outBuffers = new Dictionary<string, StringBuilder>();
+        var outFlushing = false;
 
         bool IsBound(string id)
         {
@@ -343,11 +350,99 @@ internal sealed class GatewayServer : IDisposable
             finally { sendGate.Release(); }
         }
 
+        async Task SendOutputBatchAsync(List<(string Id, string Data)> batch)
+        {
+            foreach (var (id, chunk) in batch)
+            {
+                if (binaryData) await SendBinaryAsync(chunk).ConfigureAwait(false);
+                else await SendAsync(GatewayProtocol.DataMessage(id, chunk)).ConfigureAwait(false);
+            }
+        }
+
+        List<(string Id, string Data)> DrainOutputLocked(string? onlyId = null)
+        {
+            var batch = new List<(string Id, string Data)>();
+            if (onlyId is not null)
+            {
+                if (outBuffers.Remove(onlyId, out var sb))
+                {
+                    outOrder.Remove(onlyId);
+                    if (sb.Length > 0) batch.Add((onlyId, sb.ToString()));
+                }
+                return batch;
+            }
+            for (var i = 0; i < outOrder.Count; i++)
+            {
+                var id = outOrder[i];
+                if (!outBuffers.TryGetValue(id, out var sb) || sb.Length == 0) continue;
+                if (sb.Length <= MaxCoalescedChars)
+                {
+                    batch.Add((id, sb.ToString()));
+                    outBuffers.Remove(id);
+                }
+                else
+                {
+                    var cut = MaxCoalescedChars;
+                    if (char.IsHighSurrogate(sb[cut - 1]) && char.IsLowSurrogate(sb[cut])) cut++;
+                    batch.Add((id, sb.ToString(0, cut)));
+                    sb.Remove(0, cut);
+                }
+            }
+            outOrder.RemoveAll(id => !outBuffers.ContainsKey(id));
+            return batch;
+        }
+
+        async Task FlushOutputLoopAsync()
+        {
+            try
+            {
+                var firstPass = true;
+                while (!serverToken.IsCancellationRequested && ws.State == WebSocketState.Open)
+                {
+                    if (!firstPass)
+                    {
+                        try { await Task.Delay(12, serverToken).ConfigureAwait(false); }
+                        catch (OperationCanceledException) { return; }
+                    }
+                    firstPass = false;
+                    List<(string Id, string Data)> batch;
+                    lock (outGate)
+                    {
+                        batch = DrainOutputLocked();
+                        if (batch.Count == 0)
+                        {
+                            outFlushing = false;
+                            return;
+                        }
+                    }
+                    await SendOutputBatchAsync(batch).ConfigureAwait(false);
+                }
+            }
+            finally
+            {
+                lock (outGate) outFlushing = false;
+            }
+        }
+
         void OnData(string id, string data)
         {
-            if (!IsBound(id)) return;
-            if (binaryData) _ = SendBinaryAsync(data);
-            else _ = SendAsync(GatewayProtocol.DataMessage(id, data));
+            if (!IsBound(id) || string.IsNullOrEmpty(data)) return;
+            var start = false;
+            lock (outGate)
+            {
+                if (!outBuffers.TryGetValue(id, out var sb))
+                {
+                    outBuffers[id] = sb = new StringBuilder(Math.Max(256, data.Length));
+                    outOrder.Add(id);
+                }
+                sb.Append(data);
+                if (!outFlushing)
+                {
+                    outFlushing = true;
+                    start = true;
+                }
+            }
+            if (start) _ = FlushOutputLoopAsync();
         }
 
         void OnExit(string id, uint code)
@@ -355,8 +450,23 @@ internal sealed class GatewayServer : IDisposable
             if (IsBound(id))
             {
                 Unbind(id);
-                _ = SendAsync(GatewayProtocol.ExitMessage(id, code));
+                List<(string Id, string Data)> pending;
+                lock (outGate) pending = DrainOutputLocked(id);
+                if (pending.Count == 0)
+                {
+                    _ = SendAsync(GatewayProtocol.ExitMessage(id, code));
+                }
+                else
+                {
+                    _ = SendExitAfterPendingAsync(pending, id, code);
+                }
             }
+        }
+
+        async Task SendExitAfterPendingAsync(List<(string Id, string Data)> pending, string id, uint code)
+        {
+            await SendOutputBatchAsync(pending).ConfigureAwait(false);
+            await SendAsync(GatewayProtocol.ExitMessage(id, code)).ConfigureAwait(false);
         }
 
         void OnCwd(string id, string cwd)
@@ -380,9 +490,11 @@ internal sealed class GatewayServer : IDisposable
         _backend.Error += OnError;
         if (geometryBackend is not null) geometryBackend.GeometryChanged += OnGeometry;
 
+        var recvBuffer = new byte[8192];
+        using var recvStream = new MemoryStream();
         try
         {
-            var first = await ReceiveAsync(ws, serverToken).ConfigureAwait(false);
+            var first = await ReceiveAsync(ws, recvBuffer, recvStream, serverToken).ConfigureAwait(false);
             if (first is null || first.Value.binary)
             {
                 await CloseAsync(ws).ConfigureAwait(false);
@@ -399,6 +511,7 @@ internal sealed class GatewayServer : IDisposable
             // Older APKs render unknown control frames as terminal text.
             terminalGeometry = handshake.TerminalGeometry;
             binaryData = handshake.BinaryData;
+            maxReplayBytes = handshake.MaxReplayBytes;
 
             if (!handshake.Control)
             {
@@ -411,7 +524,7 @@ internal sealed class GatewayServer : IDisposable
                         {
                             // History can be large. Sending it must not block reading
                             // keystrokes; the send gate still keeps history ahead of "attached".
-                            var history = await AttachBackendAsync(id, Bind, SendAsync, SendBinaryAsync, serverToken, terminalGeometry, binaryData).ConfigureAwait(false);
+                            var history = await AttachBackendAsync(id, Bind, SendAsync, SendBinaryAsync, serverToken, terminalGeometry, binaryData, maxReplayBytes).ConfigureAwait(false);
                             _ = Task.WhenAll(history, SendAsync(GatewayProtocol.AttachedReply(id)));
                         }
                         catch (Exception ex)
@@ -444,7 +557,7 @@ internal sealed class GatewayServer : IDisposable
 
             while (ws.State == WebSocketState.Open && !serverToken.IsCancellationRequested)
             {
-                var frame = await ReceiveAsync(ws, serverToken).ConfigureAwait(false);
+                var frame = await ReceiveAsync(ws, recvBuffer, recvStream, serverToken).ConfigureAwait(false);
                 if (frame is null)
                     break;
                 if (frame.Value.binary)
@@ -456,7 +569,7 @@ internal sealed class GatewayServer : IDisposable
                 }
 
                 await DispatchAsync(Encoding.UTF8.GetString(frame.Value.bytes), Bind, Unbind,
-                    () => defaultId, SendAsync, serverToken, terminalGeometry, clientOwner, binaryData, SendBinaryAsync).ConfigureAwait(false);
+                    () => defaultId, SendAsync, serverToken, terminalGeometry, clientOwner, binaryData, SendBinaryAsync, maxReplayBytes).ConfigureAwait(false);
             }
         }
         catch (WebSocketException) { }
@@ -483,7 +596,7 @@ internal sealed class GatewayServer : IDisposable
     }
 
     private async Task DispatchAsync(string text, Action<string> bind,
-        Action<string> unbind, Func<string?> defaultId, Func<string, Task> send, CancellationToken ct, bool terminalGeometry, object clientOwner, bool binaryData = false, Func<string, Task>? sendBinary = null)
+        Action<string> unbind, Func<string?> defaultId, Func<string, Task> send, CancellationToken ct, bool terminalGeometry, object clientOwner, bool binaryData = false, Func<string, Task>? sendBinary = null, int? maxReplayBytes = null)
     {
         string? type;
         try
@@ -517,8 +630,8 @@ internal sealed class GatewayServer : IDisposable
                             try
                             {
                                 var history = binaryData && sendBinary != null
-                                    ? await AttachBackendAsync(attachId, bind, send, sendBinary, ct, terminalGeometry, true).ConfigureAwait(false)
-                                    : await AttachBackendAsync(attachId, bind, send, null, ct, terminalGeometry, false).ConfigureAwait(false);
+                                    ? await AttachBackendAsync(attachId, bind, send, sendBinary, ct, terminalGeometry, true, maxReplayBytes).ConfigureAwait(false)
+                                    : await AttachBackendAsync(attachId, bind, send, null, ct, terminalGeometry, false, maxReplayBytes).ConfigureAwait(false);
                                 _ = Task.WhenAll(history, send(GatewayProtocol.AttachedReply(attachId)));
                             }
                             catch (Exception ex)
@@ -605,7 +718,7 @@ internal sealed class GatewayServer : IDisposable
         catch (JsonException) { }
     }
 
-    private async Task<Task> AttachBackendAsync(string id, Action<string> bind, Func<string, Task> send, Func<string, Task>? sendBinary, CancellationToken ct, bool terminalGeometry, bool binaryData)
+    private async Task<Task> AttachBackendAsync(string id, Action<string> bind, Func<string, Task> send, Func<string, Task>? sendBinary, CancellationToken ct, bool terminalGeometry, bool binaryData, int? maxReplayBytes = null)
     {
         var geometrySent = Task.CompletedTask;
         void BeforeReplay()
@@ -621,7 +734,7 @@ internal sealed class GatewayServer : IDisposable
             var replaySent = Task.CompletedTask;
             await replayBackend.ReplayAndBindAsync(id,
                 data => replaySent = binaryData && sendBinary != null ? sendBinary(data) : send(GatewayProtocol.DataMessage(id, data)),
-                () => bind(id), ct, BeforeReplay).ConfigureAwait(false);
+                () => bind(id), ct, BeforeReplay, maxReplayBytes).ConfigureAwait(false);
             return Task.WhenAll(geometrySent, replaySent);
         }
         // Independent backends may synchronously emit history from Attach.
@@ -661,10 +774,9 @@ internal sealed class GatewayServer : IDisposable
         catch { _ = onError(null); }
     }
 
-    private static async Task<(bool binary, byte[] bytes)?> ReceiveAsync(WebSocket ws, CancellationToken token)
+    private static async Task<(bool binary, byte[] bytes)?> ReceiveAsync(WebSocket ws, byte[] buffer, MemoryStream ms, CancellationToken token)
     {
-        var buffer = new byte[65536];
-        using var ms = new MemoryStream();
+        ms.SetLength(0);
         bool binary = false;
         while (true)
         {
@@ -678,9 +790,20 @@ internal sealed class GatewayServer : IDisposable
                 return null;
             if (result.MessageType == WebSocketMessageType.Binary)
                 binary = true;
+            if (result.EndOfMessage && ms.Length == 0)
+            {
+                var single = new byte[result.Count];
+                Buffer.BlockCopy(buffer, 0, single, 0, result.Count);
+                return (binary, single);
+            }
             ms.Write(buffer, 0, result.Count);
             if (result.EndOfMessage)
-                return (binary, ms.ToArray());
+            {
+                var data = ms.ToArray();
+                ms.SetLength(0);
+                if (ms.Capacity > 65536) ms.Capacity = 0;
+                return (binary, data);
+            }
         }
     }
 

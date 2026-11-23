@@ -25,6 +25,8 @@ internal interface IGatewaySessionBackend
 internal interface IGatewayReplayBackend
 {
     Task ReplayAndBindAsync(string id, Action<string> replay, Action bind, CancellationToken ct, Action? beforeReplay = null);
+    Task ReplayAndBindAsync(string id, Action<string> replay, Action bind, CancellationToken ct, Action? beforeReplay, int? maxReplayChars)
+        => ReplayAndBindAsync(id, replay, bind, ct, beforeReplay);
 }
 
 internal readonly record struct GatewayTerminalGeometry(int Columns, int Rows);

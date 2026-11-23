@@ -1042,6 +1042,8 @@ internal sealed class MobileBridge : IDisposable
             // A failed connection must be visible and retryable by the UI; an
             // invisible transport reconnect would replay output into an exited tab.
             AutoReconnect = false,
+            // Phones parse only a recent tail of a mirrored screen; old gateways ignore this field.
+            MaxReplayBytes = 300_000,
             Columns = Math.Clamp(cols <= 0 ? 80 : cols, 1, 1000),
             Rows = Math.Clamp(rows <= 0 ? 24 : rows, 1, 1000)
         };

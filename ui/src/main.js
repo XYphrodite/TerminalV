@@ -1932,7 +1932,8 @@ function newTab(options = {}) {
     cursorBlink: !isMobileUi(),
     cursorStyle: "bar",
     cursorWidth: 2,
-    scrollback: 8000,
+    // Each buffered line costs memory and serialization time; weak phones get a smaller history.
+    scrollback: isMobileUi() ? 2000 : 8000,
     allowProposedApi: true,
     allowTransparency: Boolean(settings.backgroundPath),
     theme: termTheme(),
@@ -1987,7 +1988,8 @@ function newTab(options = {}) {
     serialize,
     search,
     webgl: null,
-    canvas: null
+    canvas: null,
+    persistScrollback: isMobileUi() ? 1000 : undefined
   };
 
   overlayBtn.addEventListener("click", () => restart(tab));

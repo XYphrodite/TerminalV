@@ -73,6 +73,7 @@ public sealed class GatewaySshSession : SshSessionBase
                 sessionId = _options.MirrorSessionId,
                 terminalGeometry = true,
                 binaryData = true,
+                maxReplayBytes = _options.MaxReplayBytes is > 0 ? Math.Clamp(_options.MaxReplayBytes.Value, 4096, 1_500_000) : (int?)null,
                 term = TerminalType,
                 cols = Columns,
                 rows = Rows
@@ -83,7 +84,8 @@ public sealed class GatewaySshSession : SshSessionBase
             _ws = ws;
             State = SshSessionState.Connected;
             _readCts = new CancellationTokenSource();
-            _readTask = Task.Factory.StartNew(() => ReadLoop(_readCts.Token), TaskCreationOptions.LongRunning).Unwrap();
+            // Async I/O loop runs on the ThreadPool instead of pinning a dedicated 1 MB OS thread per session.
+            _readTask = Task.Run(() => ReadLoop(_readCts.Token));
         }
         catch (Exception ex)
         {
@@ -175,7 +177,7 @@ public sealed class GatewaySshSession : SshSessionBase
 
     private async Task ReadLoop(CancellationToken token)
     {
-        var buffer = new byte[8192];
+        var buffer = new byte[16384];
         var sb = new MemoryStream();
         while (!token.IsCancellationRequested && State == SshSessionState.Connected)
         {
@@ -190,13 +192,24 @@ public sealed class GatewaySshSession : SshSessionBase
                     if (_options.AutoReconnect) _ = Task.Run(async () => { try { await ReconnectAsync().ConfigureAwait(false); } catch { } });
                     break;
                 }
-                sb.Write(buffer, 0, result.Count);
-                if (!result.EndOfMessage) continue;
-                var payload = sb.ToArray();
-                sb.SetLength(0);
+                string text;
+                if (result.EndOfMessage && sb.Length == 0)
+                {
+                    // Fast path: decode single-frame messages directly without copying to MemoryStream/ToArray.
+                    text = Encoding.UTF8.GetString(buffer.AsSpan(0, result.Count));
+                }
+                else
+                {
+                    sb.Write(buffer, 0, result.Count);
+                    if (!result.EndOfMessage) continue;
+                    text = Encoding.UTF8.GetString(sb.GetBuffer().AsSpan(0, (int)sb.Length));
+                    if (sb.Capacity > 65536)
+                        sb = new MemoryStream();
+                    else
+                        sb.SetLength(0);
+                }
                 if (result.MessageType == WebSocketMessageType.Text)
                 {
-                    var text = Encoding.UTF8.GetString(payload);
                     // Mirror-gateway bookkeeping (attached/sessions/cwd) must
                     // never leak into the terminal as raw text.
                     if (HandleControlMessage(text))
@@ -216,7 +229,6 @@ public sealed class GatewaySshSession : SshSessionBase
                 }
                 else if (result.MessageType == WebSocketMessageType.Binary)
                 {
-                    var text = Encoding.UTF8.GetString(payload);
                     RaiseData(text);
                 }
             }
@@ -296,25 +308,25 @@ public sealed class GatewaySshSession : SshSessionBase
         } catch { return false; }
     }
 
+    private static readonly System.Reflection.PropertyInfo? DeflateProp =
+        typeof(ClientWebSocketOptions).GetProperty("DangerousDeflateOptions");
+    private static readonly System.Reflection.PropertyInfo? ClientContextTakeoverProp =
+        DeflateProp?.PropertyType.GetProperty("ClientContextTakeover");
+    private static readonly System.Reflection.PropertyInfo? ServerContextTakeoverProp =
+        DeflateProp?.PropertyType.GetProperty("ServerContextTakeover");
+
     private static void TryEnableDeflate(ClientWebSocket ws)
     {
         try
         {
             // .NET 8+ supports permessage-deflate via DangerousDeflateOptions.
-            // Reflection keeps build green on SDKs without it.
-            var options = ws.Options;
-            var prop = options.GetType().GetProperty("DangerousDeflateOptions");
-            if (prop is null) return;
-            var deflateOptionsType = prop.PropertyType;
-            var instance = Activator.CreateInstance(deflateOptionsType);
+            // Cached reflection keeps build green on SDKs without it while avoiding per-connect reflection.
+            if (DeflateProp is null) return;
+            var instance = Activator.CreateInstance(DeflateProp.PropertyType);
             if (instance is null) return;
-            // Disable context takeover for better compression ratio isolation.
-            foreach (var name in new[] { "ClientContextTakeover", "ServerContextTakeover" })
-            {
-                var p = deflateOptionsType.GetProperty(name);
-                p?.SetValue(instance, false);
-            }
-            prop.SetValue(options, instance);
+            ClientContextTakeoverProp?.SetValue(instance, false);
+            ServerContextTakeoverProp?.SetValue(instance, false);
+            DeflateProp.SetValue(ws.Options, instance);
         }
         catch { }
     }
