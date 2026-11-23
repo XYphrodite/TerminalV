@@ -1971,6 +1971,7 @@ function newTab(options = {}) {
     renaming: false,
     unread: false,
     exited: false,
+    attachFailed: false,
     pane,
     paneHead,
     paneTitle,
@@ -1992,7 +1993,10 @@ function newTab(options = {}) {
     persistScrollback: isMobileUi() ? 1000 : undefined
   };
 
-  overlayBtn.addEventListener("click", () => restart(tab));
+  overlayBtn.addEventListener("click", () => {
+    if (tab.attachFailed) retryAttach(tab);
+    else restart(tab);
+  });
   pane.addEventListener("pointerdown", (event) => {
     if (!isPaneVisible(tab) || isModalOpen() || event.target.closest("button")) return;
     if (isMobileUi()) reclaimMobileFit(tab);
@@ -2004,7 +2008,7 @@ function newTab(options = {}) {
     if (activeId !== id && isPaneVisible(tab) && !isModalOpen()) activate(id, { focus: false });
   });
   function postWrite(targetId, data) {
-    if (tab.exited) return;
+    if (tab.exited || tab.attachFailed) return;
     if (isMobileUi()) reclaimMobileFit(tab);
     else reclaimDesktopFit(tab);
     const isPaste = data.includes("\u001b[200~");
@@ -2094,16 +2098,11 @@ function newTab(options = {}) {
   const rows = term.rows || 24;
   diag("restore", `newTab id=${id} live=${!!options.live} restored=${!!options.restored} hidden=${!!tab.hidden} shell=${tab.shell||""} startup=${(tab.startupCommand||"").slice(0,40)}`, id);
   if (options.live) {
-    // Restore the pane layout before accepting cursor-addressed replay. Host
-    // replies can arrive before the first animation frame fits the terminal.
-    queueMicrotask(() => {
-      if (!tabs.includes(tab)) return;
-      applyFit(tab, false);
-      post({ type: "attach", id, cols: tab.term.cols, rows: tab.term.rows });
-      // Request replay before a PTY resize can emit a fresh repaint. Its old
-      // size is unknown, even when xterm happens to fit at the default 80x24.
-      applyFit(tab);
-    });
+    if (!options.deferAttach) {
+      // Restore the pane layout before accepting cursor-addressed replay. Host
+      // replies can arrive before the first animation frame fits the terminal.
+      queueMicrotask(() => attachLiveTab(tab));
+    }
   } else if (options.offline || tab.hidden || options.restored) {
     // The shell is gone (e.g. Windows restarted). Keep the saved screen, but
     // do not run a new shell over it: ConPTY startup clears the viewport, which
@@ -2129,6 +2128,48 @@ function newTab(options = {}) {
     renderTabs();
     activate(id);
   }
+  return tab;
+}
+
+function setOverlayAction(tab, mode) {
+  if (mode === "retry-attach") {
+    tab.overlayBtn.textContent = t("RetryAttach");
+    tab.overlayBtn.title = "";
+    return;
+  }
+  if (tab.startupCommand) {
+    tab.overlayBtn.textContent = t("RestartWithCommand");
+    tab.overlayBtn.title = tab.startupCommand;
+  } else {
+    tab.overlayBtn.textContent = t("Restart");
+    tab.overlayBtn.title = "";
+  }
+}
+
+function attachLiveTab(tab) {
+  if (!tabs.includes(tab)) return;
+  applyFit(tab, false);
+  post({ type: "attach", id: tab.id, cols: tab.term.cols, rows: tab.term.rows });
+  // Request replay before a PTY resize can emit a fresh repaint. Its old
+  // size is unknown, even when xterm happens to fit at the default 80x24.
+  applyFit(tab);
+}
+
+function retryAttach(tab) {
+  if (!tab.attachFailed || isModalOpen()) return;
+  sessionOptions.cancel(tab);
+  closeController.cancel(tab);
+  if (tab.id === activeId) searchController.close({ focus: false });
+  pasteController.cancel(tab);
+  tab.attachFailed = false;
+  tab.exited = false;
+  tab.overlay.classList.remove("visible");
+  setOverlayAction(tab, "restart");
+  notifications.acknowledge(tab);
+  tab.output.reset();
+  attachLiveTab(tab);
+  focusTerminal(tab);
+  renderTabs();
 }
 
 function preserveViewportSequence(term, banner) {
@@ -2447,10 +2488,11 @@ function restoreSessions(records, savedLayouts, mobile = false) {
   }
 
   const live = new Set(window.__liveIds || []);
+  const liveTabs = [];
   let active = null;
   for (const record of records) {
     const isLive = live.has(record.id);
-    newTab({
+    const created = newTab({
       id: record.id,
       title: record.title,
       customTitle: record.customTitle,
@@ -2463,8 +2505,10 @@ function restoreSessions(records, savedLayouts, mobile = false) {
       restored: true,
       offline: mobile && !isLive,
       live: isLive,
+      deferAttach: isLive,
       skipActivate: true
     });
+    if (isLive) liveTabs.push(created);
     if (record.active && !record.hidden) {
       active = record.id;
     }
@@ -2477,6 +2521,19 @@ function restoreSessions(records, savedLayouts, mobile = false) {
   renderTabs();
   if (firstOpen) activate(active || firstOpen.id);
   else renderPaneLayout();
+  if (liveTabs.length) {
+    // Attach the active and visible panes first so the user sees their
+    // terminal immediately while background sessions replay behind it.
+    const visibleSet = new Set(visibleTabs().map((tab) => tab.id));
+    const ordered = [
+      ...liveTabs.filter((tab) => tab.id === activeId),
+      ...liveTabs.filter((tab) => tab.id !== activeId && visibleSet.has(tab.id)),
+      ...liveTabs.filter((tab) => tab.id !== activeId && !visibleSet.has(tab.id))
+    ];
+    queueMicrotask(() => {
+      for (const tab of ordered) attachLiveTab(tab);
+    });
+  }
   persistSessions();
 }
 
@@ -2548,10 +2605,12 @@ function reconcileMobileSessions(message) {
       existing.customTitle = record.customTitle || undefined;
       Object.assign(existing, sessionMetadata(record));
     }
-    if (live.has(record.id) && (existing.exited || message.reconnect)) {
+    if (live.has(record.id) && (existing.exited || existing.attachFailed || message.reconnect)) {
       existing.output.reset();
+      existing.attachFailed = false;
       existing.exited = false;
       existing.ptySize = null;
+      setOverlayAction(existing, "restart");
       existing.overlay.classList.remove("visible");
       post({ type: "attach", id: record.id, cols: existing.term.cols, rows: existing.term.rows });
       scheduleFit(existing);
@@ -2780,6 +2839,12 @@ function handleHost(message) {
 
   if (message.type === "data") {
     const chunk = message.data ?? "";
+    if (tab.attachFailed) {
+      tab.attachFailed = false;
+      setOverlayAction(tab, "restart");
+      tab.overlay.classList.remove("visible");
+      renderTabs();
+    }
     tab.output.write(chunk, message.replay === true);
     if (tab.id !== activeId && !tab.unread) {
       tab.unread = true;
@@ -2835,11 +2900,13 @@ function handleHost(message) {
 
   if (message.type === "exit") {
     sessionOptions.cancel(tab);
+    tab.attachFailed = false;
     tab.exited = true;
     closeController.cancel(tab);
     pasteController.cancel(tab);
     if (tab.id === activeId) closeMobileUploadMenu({ focus: false });
     syncScrollLock(tab);
+    setOverlayAction(tab, "restart");
     tab.overlayText.textContent = t("ProcessExited", { code: message.code ?? 0 });
     tab.overlay.classList.add("visible");
     renderTabs();
@@ -2848,11 +2915,22 @@ function handleHost(message) {
 
   if (message.type === "error") {
     sessionOptions.cancel(tab);
-    tab.exited = true;
     closeController.cancel(tab);
     pasteController.cancel(tab);
     if (tab.id === activeId) closeMobileUploadMenu({ focus: false });
-    tab.overlayText.textContent = message.message || t("SessionLaunchFailed");
+    if (message.retryAttach === true) {
+      tab.attachFailed = true;
+      tab.exited = false;
+      setOverlayAction(tab, "retry-attach");
+      tab.overlayText.textContent = message.code === "attach-timeout"
+        ? t("SessionAttachTimeout")
+        : (message.message || t("SessionAttachTimeout"));
+    } else {
+      tab.attachFailed = false;
+      tab.exited = true;
+      setOverlayAction(tab, "restart");
+      tab.overlayText.textContent = message.message || t("SessionLaunchFailed");
+    }
     tab.overlay.classList.add("visible");
     renderTabs();
   }

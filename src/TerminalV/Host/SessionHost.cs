@@ -39,8 +39,8 @@ internal static class SessionHost
         {
             using var pipe = CreatePipeServer();
             pipe.WaitForConnection();
-            using var reader = new StreamReader(pipe, Encoding.UTF8, false, 4096, leaveOpen: true);
-            using var writer = new StreamWriter(pipe, new UTF8Encoding(false), 4096, leaveOpen: true)
+            using var reader = new StreamReader(pipe, Encoding.UTF8, false, 65536, leaveOpen: true);
+            using var writer = new StreamWriter(pipe, new UTF8Encoding(false), 65536, leaveOpen: true)
             {
                 AutoFlush = true
             };
@@ -119,8 +119,8 @@ internal static class SessionHost
                     1,
                     PipeTransmissionMode.Byte,
                     PipeOptions.Asynchronous,
-                    inBufferSize: 0,
-                    outBufferSize: 0,
+                    inBufferSize: 65536,
+                    outBufferSize: 65536,
                     security);
             }
         }
@@ -133,7 +133,9 @@ internal static class SessionHost
             PipeDirection.InOut,
             1,
             PipeTransmissionMode.Byte,
-            PipeOptions.Asynchronous);
+            PipeOptions.Asynchronous,
+            inBufferSize: 65536,
+            outBufferSize: 65536);
     }
 
     private static void Serve(StreamReader reader)

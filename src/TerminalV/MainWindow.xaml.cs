@@ -171,7 +171,7 @@ public partial class MainWindow : Window
         {
             if (args.IsSuccess)
             {
-                _bridge.SendInit();
+                _bridge.SendInitIfNotReady();
             }
         };
 

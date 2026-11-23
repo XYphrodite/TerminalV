@@ -6,17 +6,22 @@ namespace TerminalV.Gateway;
 internal sealed class SessionClientBackend : IGatewaySessionBackend, IGatewayReplayBackend, IGatewayGeometryBackend, IDisposable
 {
     private const int SnapshotCapacity = 1_500_000;
+    private static readonly TimeSpan DefaultAttachTimeout = TimeSpan.FromSeconds(30);
     private static readonly object DefaultClientOwner = new();
     private readonly SessionClient _client;
+    private readonly TimeSpan _attachTimeout;
     private readonly object _gate = new();
     private readonly Dictionary<string, Snapshot> _snapshots = new();
+    private readonly Queue<(string Id, Snapshot Snapshot)> _pendingAttaches = new();
     private readonly Queue<(string Id, Snapshot Snapshot, GatewayTerminalGeometry Geometry)> _pendingResizes = new();
+    private bool _attachWorkerRunning;
     private bool _resizeWorkerRunning;
     private bool _disposed;
 
     private sealed class Snapshot
     {
         public TerminalReplayBuffer Text { get; set; } = new(SnapshotCapacity);
+        public TaskCompletionSource<bool> TurnStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource<bool> Ready { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public bool Prepared { get; set; }
         public bool DesktopAttached { get; set; }
@@ -30,9 +35,10 @@ internal sealed class SessionClientBackend : IGatewaySessionBackend, IGatewayRep
         public HashSet<object> PhoneGeometryOwners { get; } = new();
     }
 
-    public SessionClientBackend(SessionClient client)
+    public SessionClientBackend(SessionClient client, TimeSpan? attachTimeout = null)
     {
         _client = client;
+        _attachTimeout = attachTimeout ?? DefaultAttachTimeout;
         _client.Data += OnData;
         _client.Exited += OnExited;
         _client.DirectoryChanged += OnDirectoryChanged;
@@ -69,7 +75,11 @@ internal sealed class SessionClientBackend : IGatewaySessionBackend, IGatewayRep
         lock (_gate)
         {
             ThrowIfDisposed();
-            if (_snapshots.Remove(id, out var previous)) previous.Ready.TrySetCanceled();
+            if (_snapshots.Remove(id, out var previous))
+            {
+                previous.TurnStarted.TrySetCanceled();
+                previous.Ready.TrySetCanceled();
+            }
             initialSize = cols is { } c && rows is { } r ? Geometry(c, r) : null;
             var snapshot = new Snapshot
             {
@@ -78,6 +88,7 @@ internal sealed class SessionClientBackend : IGatewaySessionBackend, IGatewayRep
                 Geometry = initialSize,
                 DesktopGeometry = desktopAttached ? initialSize : null
             };
+            snapshot.TurnStarted.SetResult(true);
             snapshot.Ready.SetResult(true);
             _snapshots[id] = snapshot;
             if (initialSize is not null) notify = GeometryChanged;
@@ -152,33 +163,94 @@ internal sealed class SessionClientBackend : IGatewaySessionBackend, IGatewayRep
 
     private async Task EnsureSnapshotAsync(string id, Snapshot snapshot, CancellationToken ct)
     {
-        bool start;
         lock (_gate)
         {
             AssertCurrent(id, snapshot);
-            start = !snapshot.Prepared && !snapshot.Ready.Task.IsCompleted;
-            if (start)
+            if (!snapshot.Prepared && !snapshot.Ready.Task.IsCompleted)
             {
                 snapshot.Text = new TerminalReplayBuffer(SnapshotCapacity);
                 snapshot.Prepared = true;
+                _pendingAttaches.Enqueue((id, snapshot));
+                if (!_attachWorkerRunning)
+                {
+                    _attachWorkerRunning = true;
+                    _ = Task.Run(DrainAttachesAsync);
+                }
             }
         }
-        if (start)
+        // Start the per-session timeout only once the attach worker dispatches
+        // this session. If an attempt times out while the host replay is still
+        // in flight, Ready stays pending so a later retry joins the same replay
+        // instead of issuing a duplicate host Attach (which would double replay).
+        await snapshot.TurnStarted.Task.WaitAsync(ct).ConfigureAwait(false);
+        await snapshot.Ready.Task.WaitAsync(_attachTimeout, ct).ConfigureAwait(false);
+    }
+
+    private async Task DrainAttachesAsync()
+    {
+        while (true)
         {
-            // The old host accepts one pipe. Attach includes a synchronous list
-            // barrier write, so it must never run while holding the cache lock.
-            _ = Task.Run(() =>
+            (string Id, Snapshot Snapshot) request;
+            lock (_gate)
             {
-                try
+                if (_disposed || !_pendingAttaches.TryDequeue(out request))
                 {
-                    Ensure();
-                    lock (_gate) AssertCurrent(id, snapshot);
-                    _client.Attach(id);
+                    _attachWorkerRunning = false;
+                    return;
                 }
-                catch (Exception ex) { snapshot.Ready.TrySetException(ex); }
-            });
+                if (!_snapshots.TryGetValue(request.Id, out var current)
+                    || !ReferenceEquals(current, request.Snapshot)
+                    || request.Snapshot.Ready.Task.IsCompleted)
+                {
+                    request.Snapshot.TurnStarted.TrySetResult(true);
+                    continue;
+                }
+            }
+
+            var hostAvailable = false;
+            try
+            {
+                // Run one host attach at a time on a single worker: spawning one
+                // blocking Task.Run per restored tab starves the .NET ThreadPool
+                // when tab count >= CPU cores, stalling overlapped pipe reads.
+                Ensure();
+                hostAvailable = true;
+                lock (_gate) AssertCurrent(request.Id, request.Snapshot);
+                _client.Attach(request.Id);
+                request.Snapshot.TurnStarted.TrySetResult(true);
+                await request.Snapshot.Ready.Task.WaitAsync(_attachTimeout).ConfigureAwait(false);
+            }
+            catch (TimeoutException)
+            {
+                // Keep Snapshot.Ready pending so late replay completes the cache
+                // and a retry recovers cleanly without requesting a second dump.
+            }
+            catch (OperationCanceledException)
+            {
+                // Snapshot was retired/replaced (SessionCreated/OnExited/Dispose).
+                request.Snapshot.TurnStarted.TrySetCanceled();
+            }
+            catch (Exception ex)
+            {
+                request.Snapshot.Ready.TrySetException(ex);
+                request.Snapshot.TurnStarted.TrySetResult(true);
+                // If the host itself is unavailable, fail remaining queued attaches
+                // immediately instead of retrying pipe connect for every tab.
+                if (!hostAvailable)
+                {
+                    lock (_gate)
+                    {
+                        while (_pendingAttaches.TryDequeue(out var queued))
+                        {
+                            queued.Snapshot.Ready.TrySetException(ex);
+                            queued.Snapshot.TurnStarted.TrySetResult(true);
+                        }
+                        _attachWorkerRunning = false;
+                        return;
+                    }
+                }
+            }
         }
-        await snapshot.Ready.Task.WaitAsync(TimeSpan.FromSeconds(5), ct).ConfigureAwait(false);
     }
 
     public Task ReplayAndBindAsync(string id, Action<string> replay, Action bind, CancellationToken ct, Action? beforeReplay = null)
@@ -380,7 +452,11 @@ internal sealed class SessionClientBackend : IGatewaySessionBackend, IGatewayRep
         lock (_gate)
         {
             if (_disposed) return;
-            if (_snapshots.Remove(id, out var snapshot)) snapshot.Ready.TrySetCanceled();
+            if (_snapshots.Remove(id, out var snapshot))
+            {
+                snapshot.TurnStarted.TrySetCanceled();
+                snapshot.Ready.TrySetCanceled();
+            }
             Exited?.Invoke(id, code);
         }
     }
@@ -394,7 +470,10 @@ internal sealed class SessionClientBackend : IGatewaySessionBackend, IGatewayRep
         {
             if (_disposed) return;
             if (_snapshots.TryGetValue(id, out var snapshot) && snapshot.Prepared)
+            {
                 snapshot.Ready.TrySetException(new InvalidOperationException(message));
+                snapshot.TurnStarted.TrySetResult(true);
+            }
             Error?.Invoke(id, message);
         }
     }
@@ -410,8 +489,13 @@ internal sealed class SessionClientBackend : IGatewaySessionBackend, IGatewayRep
             _client.DirectoryChanged -= OnDirectoryChanged;
             _client.Error -= OnError;
             _client.ReplayCompleted -= OnReplayCompleted;
-            foreach (var snapshot in _snapshots.Values) snapshot.Ready.TrySetCanceled();
+            foreach (var snapshot in _snapshots.Values)
+            {
+                snapshot.TurnStarted.TrySetCanceled();
+                snapshot.Ready.TrySetCanceled();
+            }
             _snapshots.Clear();
+            _pendingAttaches.Clear();
             _pendingResizes.Clear();
         }
         // The desktop owns the borrowed client and the live session host.

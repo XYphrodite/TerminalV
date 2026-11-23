@@ -221,6 +221,63 @@ internal static class SharedGatewayChecks
             "disposing the gateway and backend must preserve the desktop client and host");
         await OrphanGatewayFirst();
         await BackpressureDoesNotBlockReplay();
+        await ManyConcurrentAttachesOnZeroBufferHostDoNotStarveOrTimeout();
+        await AttachTimeoutRecoversOnRetry();
+    }
+
+    private static async Task ManyConcurrentAttachesOnZeroBufferHostDoNotStarveOrTimeout()
+    {
+        static void Require(bool ok, string message) { if (!ok) throw new Exception(message); }
+        const int sessionCount = 24;
+        const int replaySize = 300_000;
+        var ids = Enumerable.Range(0, sessionCount).Select(i => $"tab-{i:00}").ToArray();
+        // Match an already-running pre-0.9.1 host (zero-byte kernel pipe buffers)
+        // and exceed ProcessorCount to catch ThreadPool starvation. Total replay
+        // delay (24 * 50ms = 1.2s) also exceeds the per-session timeout (800ms),
+        // proving queued tabs start their timeout only when their turn begins.
+        using var host = new PrivateHost(inBufferSize: 0, outBufferSize: 0, replayPayloadSize: replaySize, attachDelayMs: 50, sessionIds: ids);
+        host.ReleaseAttach.SetResult(true);
+        using var client = new SessionClient(host.Name, () => { });
+        using var backend = new SessionClientBackend(client, attachTimeout: TimeSpan.FromMilliseconds(800));
+        Require(client.Ensure(), "bulk attach fixture connects only to its private pipe");
+        var received = new ConcurrentDictionary<string, int>();
+        backend.DesktopData += (id, data, _) => received.AddOrUpdate(id, data.Length, (_, existing) => existing + data.Length);
+
+        var tasks = ids.Select(id => backend.AttachDesktopAsync(id, 120, 40)).ToArray();
+        await Task.WhenAll(tasks).WaitAsync(TimeSpan.FromSeconds(10));
+
+        foreach (var id in ids)
+        {
+            Require(received.TryGetValue(id, out var len) && len == replaySize,
+                $"session {id} expected {replaySize} replay chars, got {len}");
+        }
+        Console.WriteLine($"PASS {sessionCount} concurrent desktop attaches over a 0-buffer host completed without ThreadPool starvation or timeout");
+    }
+
+    private static async Task AttachTimeoutRecoversOnRetry()
+    {
+        static void Require(bool ok, string message) { if (!ok) throw new Exception(message); }
+        using var host = new PrivateHost();
+        using var client = new SessionClient(host.Name, () => { });
+        using var backend = new SessionClientBackend(client, attachTimeout: TimeSpan.FromMilliseconds(250));
+        Require(client.Ensure(), "retry fixture connects only to its private pipe");
+        var desktop = new ConcurrentQueue<string>();
+        backend.DesktopData += (id, data, _) => { if (id == "desktop") desktop.Enqueue(data); };
+
+        var first = backend.AttachDesktopAsync("desktop", 120, 40);
+        await host.AttachSeen.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var timedOut = false;
+        try { await first.WaitAsync(TimeSpan.FromSeconds(5)); }
+        catch (TimeoutException) { timedOut = true; }
+        Require(timedOut, "stalled host attach must fail with TimeoutException");
+
+        host.ReleaseAttach.TrySetResult(true);
+        await backend.AttachDesktopAsync("desktop", 120, 40).WaitAsync(TimeSpan.FromSeconds(5));
+        const string history = "history\alive-during-replay";
+        Require(string.Concat(desktop) == history, "retrying AttachDesktopAsync after timeout must recover full replay once");
+        Require(host.Requests.Count(p => p.GetProperty("type").GetString() == "attach") == 1,
+            "retrying after timeout must join the in-flight snapshot without sending a duplicate host Attach");
+        Console.WriteLine("PASS timed-out desktop attach cleanly recovers on retry without duplicate replay");
     }
 
     private static async Task BackpressureDoesNotBlockReplay()
@@ -409,11 +466,14 @@ internal static class SharedGatewayChecks
         private readonly object _writeGate = new();
         private StreamWriter? _writer;
 
-        public PrivateHost(bool holdReads = false)
+        public PrivateHost(bool holdReads = false, int inBufferSize = 4096, int outBufferSize = 4096,
+            int replayPayloadSize = 0, int attachDelayMs = 0, string[]? sessionIds = null)
         {
             if (!holdReads) ReleaseReads.SetResult(true);
+            var ids = sessionIds ?? ["desktop"];
+            var largePayload = replayPayloadSize > 0 ? new string('R', replayPayloadSize) : null;
             _pipe = new NamedPipeServerStream(Name, PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous,
-                inBufferSize: 4096, outBufferSize: 4096);
+                inBufferSize: inBufferSize, outBufferSize: outBufferSize);
             _serve = Task.Run(async () =>
             {
                 try
@@ -431,12 +491,14 @@ internal static class SharedGatewayChecks
                         Requests.Enqueue(packet);
                         switch (packet.GetProperty("type").GetString())
                         {
-                            case "list": Send(new { type = "list", ids = new[] { "desktop" } }); break;
+                            case "list": Send(new { type = "list", ids }); break;
                             case "attach":
                                 AttachSeen.TrySetResult(true);
                                 await ReleaseAttach.Task;
+                                if (attachDelayMs > 0) await Task.Delay(attachDelayMs);
                                 var id = packet.GetProperty("id").GetString()!;
-                                Emit("history\a", id); Emit("live-during-replay", id);
+                                if (largePayload is not null) Emit(largePayload, id);
+                                else { Emit("history\a", id); Emit("live-during-replay", id); }
                                 break;
                             case "write": Emit(packet.GetProperty("data").GetString()!); break;
                             case "resize":

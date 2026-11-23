@@ -62,6 +62,7 @@ internal sealed class TerminalBridge : IDisposable
     private readonly Stopwatch _bellClock = Stopwatch.StartNew();
     private long _lastBellMs = -2000;
     private bool _disposed;
+    private bool _readyReceived;
     private readonly Func<object>? _gatewayStatus;
     private string? _flushRequestId;
     private TaskCompletionSource<bool>? _flushCompletion;
@@ -103,6 +104,11 @@ internal sealed class TerminalBridge : IDisposable
             if (_extensions is not null) _ = _extensions.StopAsync();
             Diag.Log("extensions", "Extension manager initialization failed", ex.ToString());
         }
+    }
+
+    public void SendInitIfNotReady()
+    {
+        if (!_readyReceived) SendInit();
     }
 
     public void SendInit()
@@ -153,7 +159,18 @@ internal sealed class TerminalBridge : IDisposable
         {
             if (!_attachBacklog.Remove(id, out var waiting) || _disposed) return;
             if (failure is not null)
-                Post(new { type = "error", id, message = failure.Message });
+            {
+                Diag.Log("bridge", $"attach failed id={id}: {failure.Message}", null);
+                var isTimeout = failure is TimeoutException;
+                Post(new
+                {
+                    type = "error",
+                    id,
+                    message = failure.Message,
+                    code = isTimeout ? "attach-timeout" : null,
+                    retryAttach = isTimeout
+                });
+            }
             else
                 while (waiting.TryDequeue(out var message)) Handle(message);
         });
@@ -415,6 +432,7 @@ internal sealed class TerminalBridge : IDisposable
                 _ = CreateShortcutsAsync(message);
                 break;
             case "ready":
+                _readyReceived = true;
                 SendInit();
                 break;
             case "diag":

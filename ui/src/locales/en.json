@@ -63,6 +63,8 @@
   "ClosePanel": "Close this panel",
   "Restart": "Restart",
   "RestartWithCommand": "Start with startup command",
+  "RetryAttach": "Retry connection",
+  "SessionAttachTimeout": "Could not attach to the running session in time. The process is still running — try connecting again.",
   "SessionN": "Session {index}",
   "SessionNotStarted": "Session not started. Saved output available; start with button below.",
   "SessionNotConnected": "Session not connected. Saved output available.",

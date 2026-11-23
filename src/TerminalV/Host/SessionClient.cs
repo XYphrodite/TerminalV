@@ -102,7 +102,7 @@ internal sealed class SessionClient : IDisposable
         WslLaunchSupported = null;
         EnvironmentRefreshSupported = null;
         SessionRestartSupported = null;
-        _writer = new StreamWriter(pipe, new UTF8Encoding(false), 4096, leaveOpen: true) { AutoFlush = true };
+        _writer = new StreamWriter(pipe, new UTF8Encoding(false), 65536, leaveOpen: true) { AutoFlush = true };
         _readCts = new CancellationTokenSource();
         _ = Task.Factory.StartNew(() => ReadLoop(_readCts.Token), TaskCreationOptions.LongRunning);
         return true;
@@ -230,11 +230,15 @@ internal sealed class SessionClient : IDisposable
 
     public void Attach(string id)
     {
+        var attachJson = JsonSerializer.Serialize(new { type = "attach", id }, Json);
+        var listJson = JsonSerializer.Serialize(new { type = "list" }, Json);
         lock (_gate)
         {
             _replay.BeginList(id);
-            Send(new { type = "attach", id });
-            Send(new { type = "list" });
+            // Write attach + barrier list in one pipe write so an already-running
+            // host with zero-byte pipe buffers reads both lines before blocking
+            // on a multi-megabyte replay write back to us.
+            SendSerialized(attachJson + "\n" + listJson + "\n", "attach+list");
         }
     }
 
@@ -282,7 +286,7 @@ internal sealed class SessionClient : IDisposable
     {
         try
         {
-            using var reader = new StreamReader(_pipe!, Encoding.UTF8, false, 4096, leaveOpen: true);
+            using var reader = new StreamReader(_pipe!, Encoding.UTF8, false, 65536, leaveOpen: true);
             while (!cancellationToken.IsCancellationRequested && reader.ReadLine() is { } line)
             {
                 JsonDocument document;
@@ -354,20 +358,26 @@ internal sealed class SessionClient : IDisposable
     private void Send(object payload)
     {
         var json = JsonSerializer.Serialize(payload, Json);
+        var typeLabel = payload.GetType().GetProperty("type")?.GetValue(payload)?.ToString() ?? "?";
+        SendSerialized(json + "\n", typeLabel);
+    }
+
+    private void SendSerialized(string payload, string typeLabel)
+    {
         var sw = Stopwatch.StartNew();
         bool waited = false;
         // Try to detect lock contention
         if (!Monitor.TryEnter(_gate, 50))
         {
             waited = true;
-            Diag.Log("client", $"Send gate contention type={(payload.GetType().GetProperty("type")?.GetValue(payload) ?? "?")}", null);
+            Diag.Log("client", $"Send gate contention type={typeLabel}", null);
             Monitor.Enter(_gate);
         }
         try
         {
             try
             {
-                _writer?.WriteLine(json);
+                _writer?.Write(payload);
             }
             catch (IOException ex)
             {
@@ -380,7 +390,7 @@ internal sealed class SessionClient : IDisposable
         }
         sw.Stop();
         if (sw.ElapsedMilliseconds > 30 || waited)
-            Diag.Log("client", $"Send done len={json.Length} ms={sw.ElapsedMilliseconds} waited={waited}", null);
+            Diag.Log("client", $"Send done len={payload.Length} ms={sw.ElapsedMilliseconds} waited={waited}", null);
     }
 
     private static void StartHost()

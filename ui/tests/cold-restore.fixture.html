@@ -147,5 +147,36 @@
       for (const marker of markers[tab.id]) contains(tab.buffer, marker, tab.id);
   });
 
+  await check("live restore attaches active and visible panes before background sessions", async s => {
+    const order = s.messages("attach").map(message => message.id);
+    equal(order, ["alternate", "plain", "long", "profile"]);
+    equal(s.messages("create").length, 0);
+  }, {
+    sessions: sessions.map(tab => ({ ...tab, active: tab.id === "alternate" })),
+    liveIds: ["plain", "long", "alternate", "profile"]
+  });
+
+  await check("attach timeout shows non-destructive retry button that sends attach instead of create", async s => {
+    equal(s.messages("attach").map(message => message.id), ["plain"]);
+    s.app.sendHost({
+      type: "error",
+      id: "plain",
+      message: "The operation has timed out.",
+      code: "attach-timeout",
+      retryAttach: true
+    });
+    const overlay = s.pane("plain").querySelector(".overlay");
+    const button = overlay.querySelector("button");
+    equal(overlay.classList.contains("visible"), true);
+    equal(button.textContent, "Повторить подключение");
+    button.click();
+    equal(s.messages("create").length, 0);
+    equal(s.messages("attach").map(message => message.id), ["plain", "plain"]);
+    equal(overlay.classList.contains("visible"), false);
+    s.app.sendHost({ type: "data", id: "plain", data: "RECOVERED LIVE OUTPUT", replay: true });
+    const saved = await s.flush();
+    contains(saved.sessions.find(tab => tab.id === "plain").buffer, "RECOVERED LIVE OUTPUT", "plain");
+  }, { liveIds: ["plain"] });
+
   document.body.dataset.testResult = btoa(unescape(encodeURIComponent(JSON.stringify(results))));
 </script>
