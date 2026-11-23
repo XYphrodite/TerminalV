@@ -93,6 +93,43 @@
       equal(app.hostMessages.filter(message => ["resize", "write"].includes(message.type)), [], "pan is local only");
       assertScreen(102, 33, "NEW");
     });
+    await check("vertical swipe up chains from tall zoomed host into xterm scrollback history", async () => {
+      // Leave alt screen and populate normal-buffer scrollback on a tall landscape mirror.
+      frame.style.width = "680px";
+      frame.style.height = "260px";
+      app.dispatchEvent(new app.Event("resize"));
+      await delay(100);
+      const lines = Array.from({ length: 120 }, (_, i) => `HISTORY LINE ${String(i).padStart(3, "0")}`).join("\r\n");
+      app.sendHost({ type: "data", id: "mirror", data: `\x1b[?1049l\x1b[2J\x1b[H${lines}\r\nLIVE BOTTOM` });
+      await parsed();
+      await paint(); await paint();
+      const vp = tab.host.querySelector(".xterm-viewport");
+      equal(vp.scrollHeight > vp.clientHeight + 20, true, "normal buffer has scrollback");
+      equal(tab.host.scrollHeight > tab.host.clientHeight + 10, true, "tall zoomed grid overflows landscape host");
+      const maxHost = tab.host.scrollHeight - tab.host.clientHeight;
+      tab.host.scrollTop = Math.min(80, maxHost);
+      vp.scrollTop = vp.scrollHeight;
+      await paint();
+      const startHost = tab.host.scrollTop;
+      const startVp = vp.scrollTop;
+      equal(startHost > 5 && startVp > 5, true, "both host and viewport start scrolled down");
+      const target = tab.term.element.querySelector(".xterm-screen");
+      const touch = (type, x, y) => {
+        const point = new app.Touch({ identifier: 2, target, clientX: x, clientY: y });
+        target.dispatchEvent(new app.TouchEvent(type, { bubbles: true, cancelable: true,
+          touches: type === "touchend" ? [] : [point], changedTouches: [point] }));
+      };
+      // Swipe DOWN (finger 40 -> 240, dy = -200 -> -270px): exhausts startHost (~80px) and chains into xterm scrollback.
+      touch("touchstart", 120, 40); touch("touchmove", 120, 240); touch("touchend", 120, 240);
+      await paint(); await paint();
+      equal(tab.host.scrollTop, 0, "chained scroll UP reaches host top");
+      equal(vp.scrollTop < startVp, true, "chained scroll UP continues into xterm scrollback");
+      // Swipe UP (finger 240 -> 20, dy = +220 -> +297px): returns through scrollback and chains back down into host.
+      touch("touchstart", 120, 240); touch("touchmove", 120, 20); touch("touchend", 120, 20);
+      await paint(); await paint();
+      equal(vp.scrollTop >= startVp - 2, true, "chained scroll DOWN returns to bottom of xterm scrollback");
+      equal(tab.host.scrollTop > 0, true, "chained scroll DOWN continues into tall host");
+    });
     await check("fit mode hands PTY size cleanly between phone and desktop without ping-pong", async () => {
       frame.style.width = "384px";
       frame.style.height = "700px";

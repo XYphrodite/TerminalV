@@ -813,9 +813,9 @@ body,
 
 .terminal-host.mirror-viewport {
   overflow: auto;
-  /* Vertical is native (inertia, compositor). Horizontal stays with the JS
-     handlers because the wide desktop grid has no native sideways scroll. */
-  touch-action: pan-y;
+  /* Vertical pan is driven in JS (Android WebView cannot natively scroll a
+     CSS-zoomed subtree and pan-y fires touchcancel before our drag threshold). */
+  touch-action: none;
 }
 
 /* Mouse-tracking TUIs (mimo) own vertical scrolling. The gesture is turned
@@ -829,11 +829,10 @@ body,
   max-height: none;
 }
 
-/* Let an exhausted/empty xterm history chain the vertical pan to the host,
-   which holds the bottom of a tall desktop grid. */
+/* Chained viewport <-> host vertical scrolling is handled in mirror-viewport.js. */
 .terminal-host.mirror-viewport .xterm-viewport {
   overscroll-behavior: auto;
-  touch-action: pan-y;
+  touch-action: none;
 }
 
 .settings {

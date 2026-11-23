@@ -110,23 +110,63 @@ export function syncWheelMode(tab) {
 // Coalesce per-touchmove scroll writes into one commit per animation frame.
 // The captured gesture object survives touchend (finish() only nulls the outer
 // variable), so the final position still lands before fling() takes over.
-function commitScroll(gesture, el, prop, value) {
-  gesture.pendingScroll = { el, prop, value };
+function commitScroll(gesture, host, hostTop, viewport, vpTop) {
+  gesture.pendingScroll = { host, hostTop, viewport, vpTop };
   if (gesture.scrollRaf) return;
   gesture.scrollRaf = requestAnimationFrame(() => {
     gesture.scrollRaf = 0;
     const pending = gesture.pendingScroll;
-    if (pending) pending.el[pending.prop] = pending.value;
+    if (!pending) return;
+    if (pending.host && pending.hostTop !== null) pending.host.scrollTop = pending.hostTop;
+    if (pending.viewport && pending.vpTop !== null) pending.viewport.scrollTop = pending.vpTop;
   });
 }
 
-function scrollerFor(tab, hint) {
-  const viewport = hint && hint.isConnected ? hint : tab.host.querySelector(".xterm-viewport");
-  if (viewport && viewport.scrollHeight > viewport.clientHeight + 1) return { el: viewport, history: true };
-  return { el: tab.host, history: false };
+function mirrorZoom(tab) {
+  const z = Number.parseFloat(tab.term.element?.style.zoom);
+  return Number.isFinite(z) && z > 0.2 ? z : 1;
 }
 
-function fling(tab, samples, gain) {
+// Unified vertical track across both containers:
+// - Scrolling UP (screenDelta < 0): first reveal any clipped top of the zoomed
+//   live grid (host.scrollTop -> 0), then scroll up into xterm history (vp -> 0).
+// - Scrolling DOWN (screenDelta > 0): first return down through xterm history
+//   (vp -> vpMax), then reveal any clipped bottom of the zoomed grid (host -> hostMax).
+// viewport.scrollTop is inside the CSS-zoomed subtree, so screenDelta converts
+// to viewport pixels via / zoom.
+export function computeChainedScroll(hostTop, hostMax, vpTop, vpMax, screenDelta, zoom = 1) {
+  const z = Number.isFinite(zoom) && zoom > 0.2 ? zoom : 1;
+  const maxHost = Math.max(0, hostMax);
+  const maxVp = Math.max(0, vpMax);
+  let nextHost = Math.max(0, Math.min(maxHost, hostTop));
+  let nextVp = Math.max(0, Math.min(maxVp, vpTop));
+  if (screenDelta < 0) {
+    const up = -screenDelta;
+    const hostTake = Math.min(nextHost, up);
+    nextHost -= hostTake;
+    const remScreen = up - hostTake;
+    if (remScreen > 0 && maxVp > 0) {
+      nextVp = Math.max(0, nextVp - remScreen / z);
+    }
+  } else if (screenDelta > 0) {
+    const vpRoomScreen = Math.max(0, maxVp - nextVp) * z;
+    const vpTakeScreen = Math.min(vpRoomScreen, screenDelta);
+    if (maxVp > 0) {
+      nextVp = Math.min(maxVp, nextVp + vpTakeScreen / z);
+    }
+    const remScreen = screenDelta - vpTakeScreen;
+    if (remScreen > 0 && maxHost > 0) {
+      nextHost = Math.min(maxHost, nextHost + remScreen);
+    }
+  }
+  return { hostTop: nextHost, vpTop: nextVp };
+}
+
+function maxScrollTop(el) {
+  return el ? Math.max(0, el.scrollHeight - el.clientHeight) : 0;
+}
+
+function startFling(tab, samples, gain, setFlingRaf) {
   if (samples.length < 2) return;
   const first = samples[0], last = samples[samples.length - 1];
   const dt = last.t - first.t;
@@ -136,16 +176,24 @@ function fling(tab, samples, gain) {
   if (Math.abs(velocity) < 0.08) return;
   let lastT = performance.now();
   const step = () => {
+    setFlingRaf(0);
     const now = performance.now();
     const frame = Math.min(now - lastT, 32);
     lastT = now;
     // ~half-life 90ms: a flick coasts a few screens, a careful drag stops soon.
     velocity *= Math.pow(0.5, frame / 90);
-    const { el } = scrollerFor(tab, null);
-    el.scrollTop += velocity * frame;
-    if (Math.abs(velocity) > 0.03) requestAnimationFrame(step);
+    const viewport = tab.host.querySelector(".xterm-viewport");
+    const hostMax = maxScrollTop(tab.host);
+    const vpMax = maxScrollTop(viewport);
+    const prevHost = tab.host.scrollTop;
+    const prevVp = viewport?.scrollTop || 0;
+    const next = computeChainedScroll(prevHost, hostMax, prevVp, vpMax, velocity * frame, mirrorZoom(tab));
+    if (hostMax > 1) tab.host.scrollTop = next.hostTop;
+    if (viewport && vpMax > 1) viewport.scrollTop = next.vpTop;
+    const moved = Math.abs(next.hostTop - prevHost) > 0.25 || Math.abs(next.vpTop - prevVp) > 0.25;
+    if (moved && Math.abs(velocity) > 0.03) setFlingRaf(requestAnimationFrame(step));
   };
-  requestAnimationFrame(step);
+  setFlingRaf(requestAnimationFrame(step));
 }
 
 // Emit `lines` xterm wheel notches (DOM_DELTA_LINE). xterm routes these to
@@ -197,8 +245,13 @@ function wheelFling(tab, samples) {
 export function attachMirrorPan(tab) {
   let gesture = null;
   let layoutRaf = 0;
+  let flingRaf = 0;
+  const cancelFling = () => {
+    if (flingRaf) { cancelAnimationFrame(flingRaf); flingRaf = 0; }
+  };
   syncWheelMode(tab);
   tab.host.addEventListener("touchstart", event => {
+    cancelFling();
     syncWheelMode(tab);
     if (event.touches.length !== 1) { gesture = null; return; }
     const wheel = appWantsWheel(tab);
@@ -215,18 +268,17 @@ export function attachMirrorPan(tab) {
       wheel,
       wheelAcc: 0,
       // Synthetic TouchEvents (tests) cannot trigger native scrolling.
-      // Trusted touches are left to the browser (touch-action: pan-y).
+      // Trusted touches also run in JS because Android WebView does not scroll CSS-zoomed subtrees.
       manual: !event.isTrusted
     };
     // Claim the whole gesture. xterm's own touch handlers call preventDefault
-    // on the first pixels, which permanently cancels the native pan-y scroll
-    // ("иногда скрол не проходит").
+    // on the first pixels and interfere with our chained vertical pan.
     event.stopPropagation();
   }, { capture: true, passive: true });
   tab.host.addEventListener("touchmove", event => {
     if (!gesture || event.touches.length !== 1) return;
     // Always isolate xterm: its handleTouchMove preventDefaults and would
-    // fight both native inertia and our wheel translation.
+    // fight both our vertical pan and wheel translation.
     event.stopPropagation();
     const touch = event.touches[0];
     const dx = gesture.x - touch.clientX, dy = gesture.y - touch.clientY;
@@ -253,7 +305,7 @@ export function attachMirrorPan(tab) {
     }
     // Vertical history/host pan always runs in JS. Native pan-y is unreliable
     // here: the grid is CSS-zoomed to fit the phone, and Android WebView does
-    // not scroll a zoomed subtree from touch. fling() supplies the inertia.
+    // not scroll a zoomed subtree from touch. startFling() supplies the inertia.
     event.preventDefault();
     // touchmove fires faster than vsync; commit scrollTop at most once per
     // frame so each paint repaints the grid once instead of per event.
@@ -262,9 +314,16 @@ export function attachMirrorPan(tab) {
     const historyDy = dy * MIRROR_SCROLL_GAIN;
     const viewport = gesture.viewport && gesture.viewport.isConnected
       ? gesture.viewport : tab.host.querySelector(".xterm-viewport");
-    if (viewport && viewport.scrollHeight > viewport.clientHeight + 1)
-      commitScroll(gesture, viewport, "scrollTop", gesture.viewportTop + historyDy);
-    else commitScroll(gesture, tab.host, "scrollTop", gesture.top + historyDy);
+    const hostMax = maxScrollTop(tab.host);
+    const vpMax = maxScrollTop(viewport);
+    const next = computeChainedScroll(gesture.top, hostMax, gesture.viewportTop, vpMax, historyDy, mirrorZoom(tab));
+    commitScroll(
+      gesture,
+      hostMax > 1 ? tab.host : null,
+      hostMax > 1 ? next.hostTop : null,
+      viewport && vpMax > 1 ? viewport : null,
+      viewport && vpMax > 1 ? next.vpTop : null
+    );
   }, { capture: true, passive: false });
   const finish = () => {
     if (!gesture) return;
@@ -272,7 +331,7 @@ export function attachMirrorPan(tab) {
     const wheel = gesture.wheel && gesture.axis === "y";
     gesture = null;
     if (wheel) { wheelFling(tab, samples); return; }
-    fling(tab, samples, gain);
+    startFling(tab, samples, gain, id => { flingRaf = id; });
   };
   tab.host.addEventListener("touchend", finish, { passive: true });
   tab.host.addEventListener("touchcancel", finish, { passive: true });

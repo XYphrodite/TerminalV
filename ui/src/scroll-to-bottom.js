@@ -18,6 +18,9 @@ export function attachScrollToBottom(tab) {
   button.addEventListener("click", () => {
     tab.term.scrollToBottom();
     syncTerminalViewport(tab.term);
+    if (tab.host.scrollHeight > tab.host.clientHeight + 1) {
+      tab.host.scrollTop = tab.host.scrollHeight;
+    }
   });
   tab.pane.append(button);
   tab.scrollToBottomBtn = button;
