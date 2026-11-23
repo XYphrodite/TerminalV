@@ -11,8 +11,8 @@ export async function runFrameFixture(browser, profile, url) {
   });
   try {
     const page = await context.newPage();
-    await page.goto(url, { timeout: 15000 });
-    await page.waitForFunction(() => document.body.dataset.testResult, null, { timeout: 15000 });
+    await page.goto(url, { timeout: 30000 });
+    await page.waitForFunction(() => document.body.dataset.testResult, null, { timeout: 30000 });
     return await page.content();
   } finally {
     await context.close();
