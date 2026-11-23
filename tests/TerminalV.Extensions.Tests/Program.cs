@@ -424,7 +424,95 @@ try
         Assert(cleanedCatalog.GetArrayLength() == 1, "A backup folder was listed as an extension");
         Assert(!Directory.Exists(leftover), "Backup folder was not removed");
         Assert(ExtensionUpdater.IsBackupDirectory(leftover) && !ExtensionUpdater.IsBackupDirectory(treeB), "Backup name detection");
-    });    listener.Stop();
+    });
+
+    Check("ai-limits agy usage parser marks auth failures cleanly", () =>
+    {
+        var t0 = DateTimeOffset.UtcNow;
+        var authErr = AiLimits.Providers.ParseAgyUsage("", "Error: authentication required. Run 'agy login' to log in.", 1, t0);
+        Assert(authErr.AuthRequired && authErr.Limits.Count == 0, "Expected AuthRequired on auth prompt");
+
+        var noJson = AiLimits.Providers.ParseAgyUsage("", "network down", 2, t0);
+        Assert(!noJson.AuthRequired && noJson.Error == "network down", $"Unexpected error: {noJson.Error}");
+
+        var ok = AiLimits.Providers.ParseAgyUsage("""
+            {"command":{"data":{"groups":[{"name":"Claude models","buckets":[{"id":"c5h","window":"5h","remaining_fraction":0.75}]}]}}}
+            """, "", 0, t0);
+        Assert(!ok.AuthRequired && ok.Limits.Count == 1 && ok.Limits[0].UsedPercent == 25.0, "Expected parsed usage window");
+    });
+
+    Check("ai-limits agy backoff escalates and clears on success", () =>
+    {
+        var authQuota = new AiLimits.Providers.AgyQuota { FetchedAt = DateTimeOffset.UtcNow, AuthRequired = true, Error = "auth" };
+        var errQuota = new AiLimits.Providers.AgyQuota { FetchedAt = DateTimeOffset.UtcNow, Error = "timeout" };
+        var okQuota = new AiLimits.Providers.AgyQuota { FetchedAt = DateTimeOffset.UtcNow, Limits = [new AiLimits.LimitWindow { Id = "x" }] };
+        Assert(AiLimits.Providers.ComputeAgyCooldown(errQuota, 1) == TimeSpan.FromMinutes(2), "1st transient backoff should be 2m");
+        Assert(AiLimits.Providers.ComputeAgyCooldown(errQuota, 2) == TimeSpan.FromMinutes(5), "2nd transient backoff should be 5m");
+        Assert(AiLimits.Providers.ComputeAgyCooldown(authQuota, 1) == TimeSpan.FromMinutes(5), "1st auth backoff should be 5m");
+        Assert(AiLimits.Providers.ComputeAgyCooldown(authQuota, 2) == TimeSpan.FromMinutes(15), "2nd auth backoff should be 15m");
+        Assert(AiLimits.Providers.ComputeAgyCooldown(authQuota, 9) == TimeSpan.FromMinutes(30), "max backoff should cap at 30m");
+        Assert(AiLimits.Providers.ComputeAgyCooldown(okQuota, 0) == TimeSpan.FromSeconds(60), "success cooldown should be 60s");
+    });
+
+    Check("ai-limits runs agy detached without console (CONIN$ unavailable) and honors failure cooldown", () =>
+    {
+        var mockDir = Path.Combine(root, "agy-mock");
+        Directory.CreateDirectory(mockDir);
+        var counterFile = Path.Combine(mockDir, "calls.txt");
+        var mockCmd = Path.Combine(mockDir, "agy.cmd");
+        // Attempt CONIN$ check via cmd redirection (< CONIN$) and record invocation even after prior failure.
+        File.WriteAllText(mockCmd,
+            "@echo off\r\n" +
+            $"echo call>>\"{counterFile}\"\r\n" +
+            "(<CONIN$ (echo HAS_CONIN)) 2>nul || echo NO_CONIN\r\n" +
+            "echo Error: authentication required. Run 'agy login' to log in. 1>&2\r\n" +
+            "exit /b 1\r\n");
+
+        var (outStr, errStr, exitCode) = AiLimits.Providers.RunAgyProcessDetached(mockCmd, TimeSpan.FromSeconds(15));
+        Assert(exitCode == 1, $"Expected mock exit code 1, got {exitCode}");
+        Assert(outStr.Contains("NO_CONIN", StringComparison.Ordinal), $"Expected detached child to lack CONIN$, got stdout=[{outStr}], stderr=[{errStr}]");
+        Assert(errStr.Contains("authentication required", StringComparison.OrdinalIgnoreCase), $"Expected stderr prompt, got {errStr}");
+
+        File.Delete(counterFile);
+        AiLimits.Providers.ResetAgyForTests();
+        var done = new ManualResetEventSlim(false);
+        void OnUpdate() => done.Set();
+        AiLimits.Providers.AgyUpdated += OnUpdate;
+        try
+        {
+            var overrides = new Dictionary<string, string> { ["agy.bin"] = mockCmd };
+            var first = AiLimits.Providers.Agi(overrides, DateTimeOffset.UtcNow);
+            Assert(done.Wait(TimeSpan.FromSeconds(15)), "Initial Agy fetch did not finish in time");
+
+            // Polling again within the 5-minute auth backoff must NOT launch another agy process.
+            var afterFail = AiLimits.Providers.Agi(overrides, DateTimeOffset.UtcNow);
+            Assert(!afterFail.Authenticated && !afterFail.AuthOk, "Expected unauthenticated status after auth failure");
+            Thread.Sleep(250);
+            var invocations = File.ReadAllLines(counterFile).Length;
+            Assert(invocations == 1, $"Expected exactly 1 agy invocation during cooldown, saw {invocations}");
+
+            // Transient non-auth error (e.g. network/CLI error) should preserve Authenticated and AuthOk
+            // and must NOT be falsely marked as expired authorization.
+            AiLimits.Providers.ResetAgyForTests();
+            done.Reset();
+            var mockNetCmd = Path.Combine(mockDir, "agy-net.cmd");
+            File.WriteAllText(mockNetCmd, "@echo off\r\necho connect: network unreachable 1>&2\r\nexit /b 2\r\n");
+            overrides["agy.bin"] = mockNetCmd;
+            var netFirst = AiLimits.Providers.Agi(overrides, DateTimeOffset.UtcNow);
+            Assert(done.Wait(TimeSpan.FromSeconds(15)), "Network fail fetch did not finish in time");
+            var afterNet = AiLimits.Providers.Agi(overrides, DateTimeOffset.UtcNow);
+            Assert(afterNet.Authenticated && afterNet.AuthOk, "Non-auth error must keep Authenticated and AuthOk true");
+            Assert(afterNet.LimitsStale, "Expected LimitsStale true on fetch error");
+            Assert(afterNet.Detail == "connect: network unreachable", $"Expected stderr in detail, got {afterNet.Detail}");
+        }
+        finally
+        {
+            AiLimits.Providers.AgyUpdated -= OnUpdate;
+            AiLimits.Providers.ResetAgyForTests();
+        }
+    });
+
+    listener.Stop();
     Console.WriteLine($"Passed {checks} extension checks.");
 
     ExtensionManager NewManager()

@@ -1,6 +1,11 @@
+using System.ComponentModel;
+using System.Diagnostics;
 using System.IO;
+using System.Runtime.InteropServices;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.Win32.SafeHandles;
 
 namespace AiLimits;
 
@@ -722,17 +727,38 @@ internal static class Providers
     static readonly object AgyGate = new();
     static AgyQuota? _agyQuota;
     static bool _agyFetching;
+    static DateTimeOffset _agyNextAttemptAt = DateTimeOffset.MinValue;
+    static int _agyFailureCount;
     static readonly TimeSpan AgyMinInterval = TimeSpan.FromSeconds(60);
     static readonly TimeSpan AgyStaleAfter = TimeSpan.FromMinutes(30);
+    static readonly TimeSpan[] AgyFailureBackoff =
+    [
+        TimeSpan.FromMinutes(2),
+        TimeSpan.FromMinutes(5),
+        TimeSpan.FromMinutes(15),
+        TimeSpan.FromMinutes(30)
+    ];
 
-    sealed class AgyQuota
+    internal sealed class AgyQuota
     {
         public DateTimeOffset FetchedAt { get; init; }
         public List<LimitWindow> Limits { get; init; } = [];
+        public bool AuthRequired { get; init; }
         public string? Error { get; init; }
     }
 
-    static ServiceStatus Agi(IReadOnlyDictionary<string, string> overrides, DateTimeOffset now)
+    internal static void ResetAgyForTests()
+    {
+        lock (AgyGate)
+        {
+            _agyQuota = null;
+            _agyFetching = false;
+            _agyNextAttemptAt = DateTimeOffset.MinValue;
+            _agyFailureCount = 0;
+        }
+    }
+
+    internal static ServiceStatus Agi(IReadOnlyDictionary<string, string> overrides, DateTimeOffset now)
     {
         var binary = Resolve(overrides, "agy.bin", Path.Combine(LocalApp, "agy", "bin", "agy.exe"));
         var installed = Exists(binary);
@@ -757,13 +783,13 @@ internal static class Providers
         lock (AgyGate)
         {
             cached = _agyQuota;
-            if (!_agyFetching && (cached is null || now - cached.FetchedAt >= AgyMinInterval))
+            if (!_agyFetching && now >= _agyNextAttemptAt)
                 start = _agyFetching = true;
         }
         if (start) _ = Task.Run(() => FetchAgyQuota(binary));
 
-        status.Authenticated = true;
-        status.AuthOk = true;
+        status.Authenticated = !(cached?.AuthRequired ?? false);
+        status.AuthOk = status.Authenticated;
         if (cached is null)
         {
             status.Detail = "Загрузка лимитов…";
@@ -771,7 +797,7 @@ internal static class Providers
         }
         if (cached.Limits.Count == 0)
         {
-            status.AuthOk = false;
+            status.LimitsStale = cached.Error is not null;
             status.Detail = cached.Error ?? "Лимиты недоступны.";
             return status;
         }
@@ -786,6 +812,17 @@ internal static class Providers
         return status;
     }
 
+    internal static TimeSpan ComputeAgyCooldown(AgyQuota result, int consecutiveFailures)
+    {
+        if (result.Limits.Count > 0) return AgyMinInterval;
+        if (AgyFailureBackoff.Length == 0) return AgyMinInterval;
+        // Authentication failures won't resolve in 60s, so skip the 2-minute tier.
+        var index = result.AuthRequired
+            ? Math.Clamp(consecutiveFailures, 1, AgyFailureBackoff.Length - 1)
+            : Math.Clamp(consecutiveFailures - 1, 0, AgyFailureBackoff.Length - 1);
+        return AgyFailureBackoff[index];
+    }
+
     static void FetchAgyQuota(string binary)
     {
         AgyQuota result;
@@ -797,13 +834,30 @@ internal static class Providers
         {
             result = new AgyQuota { FetchedAt = DateTimeOffset.UtcNow, Error = ex.Message };
         }
+        var finishedAt = DateTimeOffset.UtcNow;
         lock (AgyGate)
         {
-            // Keep the previous good snapshot when a refresh fails.
-            if (result.Limits.Count == 0 && _agyQuota is { Limits.Count: > 0 } previous)
-                _agyQuota = new AgyQuota { FetchedAt = previous.FetchedAt, Limits = previous.Limits, Error = result.Error };
-            else
+            if (result.Limits.Count > 0)
+            {
                 _agyQuota = result;
+                _agyFailureCount = 0;
+            }
+            else
+            {
+                _agyFailureCount++;
+                // Preserve previously fetched limits while enforcing cooldown from finishedAt
+                // so a stale FetchedAt cannot trigger back-to-back retry storms.
+                _agyQuota = _agyQuota is { Limits.Count: > 0 } previous
+                    ? new AgyQuota
+                    {
+                        FetchedAt = previous.FetchedAt,
+                        Limits = previous.Limits,
+                        AuthRequired = result.AuthRequired,
+                        Error = result.Error
+                    }
+                    : result;
+            }
+            _agyNextAttemptAt = finishedAt + ComputeAgyCooldown(result, _agyFailureCount);
             _agyFetching = false;
         }
         try { AgyUpdated?.Invoke(); } catch { /* listener errors must not break the fetch */ }
@@ -811,37 +865,265 @@ internal static class Providers
 
     static AgyQuota RunAgyUsage(string binary)
     {
-        var info = new System.Diagnostics.ProcessStartInfo(binary)
+        var (output, stderr, exitCode) = RunAgyProcessDetached(binary, TimeSpan.FromSeconds(45));
+        return ParseAgyUsage(output, stderr, exitCode, DateTimeOffset.UtcNow);
+    }
+
+    internal static (string Stdout, string Stderr, int ExitCode) RunAgyProcessDetached(string binary, TimeSpan timeout)
+    {
+        if (!OperatingSystem.IsWindows())
+            return RunAgyProcessFallback(binary, timeout);
+
+        var (application, commandLine) = ResolveAgyCommandLine(binary);
+        var sa = new NativeProcess.SECURITY_ATTRIBUTES
+        {
+            nLength = Marshal.SizeOf<NativeProcess.SECURITY_ATTRIBUTES>(),
+            bInheritHandle = true
+        };
+        if (!NativeProcess.CreatePipe(out var stdoutRead, out var stdoutWrite, ref sa, 0)
+            || !NativeProcess.CreatePipe(out var stderrRead, out var stderrWrite, ref sa, 0)
+            || !NativeProcess.CreatePipe(out var stdinRead, out var stdinWrite, ref sa, 0))
+        {
+            throw new Win32Exception(Marshal.GetLastWin32Error(), "Не удалось создать каналы для agy.");
+        }
+
+        using (stdoutRead)
+        using (stderrRead)
+        using (stdinWrite)
+        using (stdoutWrite)
+        using (stderrWrite)
+        using (stdinRead)
+        {
+            // Keep parent pipe ends non-inheritable and close stdin immediately so agy sees EOF.
+            NativeProcess.SetHandleInformation(stdoutRead, NativeProcess.HandleFlagInherit, 0);
+            NativeProcess.SetHandleInformation(stderrRead, NativeProcess.HandleFlagInherit, 0);
+            NativeProcess.SetHandleInformation(stdinWrite, NativeProcess.HandleFlagInherit, 0);
+            stdinWrite.Dispose();
+
+            var startup = new NativeProcess.STARTUPINFO
+            {
+                cb = Marshal.SizeOf<NativeProcess.STARTUPINFO>(),
+                dwFlags = NativeProcess.StartfUseStdHandles,
+                hStdInput = stdinRead.DangerousGetHandle(),
+                hStdOutput = stdoutWrite.DangerousGetHandle(),
+                hStdError = stderrWrite.DangerousGetHandle()
+            };
+
+            // DETACHED_PROCESS ensures agy.exe has no console; opening CONIN$ fails so print mode
+            // never launches an interactive browser OAuth flow when silent/keyring auth fails.
+            if (!NativeProcess.CreateProcessW(
+                    application,
+                    new StringBuilder(commandLine),
+                    IntPtr.Zero,
+                    IntPtr.Zero,
+                    bInheritHandles: true,
+                    NativeProcess.DetachedProcess,
+                    IntPtr.Zero,
+                    null,
+                    ref startup,
+                    out var procInfo))
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "Не удалось запустить agy.");
+            }
+
+            // Close child-side handles in parent so ReadToEndAsync finishes when child exits.
+            stdoutWrite.Dispose();
+            stderrWrite.Dispose();
+            stdinRead.Dispose();
+            NativeProcess.CloseHandle(procInfo.hThread);
+
+            using var processHandle = new SafeWaitHandle(procInfo.hProcess, ownsHandle: true);
+            using var stdoutStream = new FileStream(stdoutRead, FileAccess.Read, 4096, isAsync: false);
+            using var stderrStream = new FileStream(stderrRead, FileAccess.Read, 4096, isAsync: false);
+            using var stdoutReader = new StreamReader(stdoutStream, Encoding.UTF8);
+            using var stderrReader = new StreamReader(stderrStream, Encoding.UTF8);
+
+            var stdoutTask = stdoutReader.ReadToEndAsync();
+            var stderrTask = stderrReader.ReadToEndAsync();
+
+            var waitResult = NativeProcess.WaitForSingleObject(procInfo.hProcess, (uint)timeout.TotalMilliseconds);
+            if (waitResult == NativeProcess.WaitTimeout)
+            {
+                try
+                {
+                    using var proc = Process.GetProcessById(procInfo.dwProcessId);
+                    proc.Kill(entireProcessTree: true);
+                }
+                catch
+                {
+                    NativeProcess.TerminateProcess(procInfo.hProcess, 1);
+                }
+                Task.WhenAll(stdoutTask, stderrTask).Wait(TimeSpan.FromSeconds(2));
+                var partialOut = stdoutTask.IsCompletedSuccessfully ? stdoutTask.Result : "";
+                var partialErr = stderrTask.IsCompletedSuccessfully ? stderrTask.Result : "";
+                if (LooksLikeAgyAuthPrompt(partialOut) || LooksLikeAgyAuthPrompt(partialErr))
+                    throw new InvalidOperationException("Нужен вход в agy (интерактивный OAuth подавлен).");
+                throw new TimeoutException("agy /usage: таймаут.");
+            }
+
+            if (waitResult != 0)
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "Ошибка ожидания agy.");
+
+            NativeProcess.GetExitCodeProcess(procInfo.hProcess, out var exitCode);
+            Task.WhenAll(stdoutTask, stderrTask).Wait(TimeSpan.FromSeconds(5));
+            var stdout = stdoutTask.IsCompletedSuccessfully ? stdoutTask.Result : "";
+            var stderr = stderrTask.IsCompletedSuccessfully ? stderrTask.Result : "";
+            return (stdout, stderr, unchecked((int)exitCode));
+        }
+    }
+
+    static (string Application, string CommandLine) ResolveAgyCommandLine(string binary)
+    {
+        var ext = Path.GetExtension(binary);
+        if (ext.Equals(".cmd", StringComparison.OrdinalIgnoreCase)
+            || ext.Equals(".bat", StringComparison.OrdinalIgnoreCase))
+        {
+            var comspec = Environment.GetEnvironmentVariable("ComSpec")
+                ?? Path.Combine(Environment.SystemDirectory, "cmd.exe");
+            return (comspec, $"\"{comspec}\" /d /s /c \"\"{binary}\" -p /usage --output-format json\"");
+        }
+        return (binary, $"\"{binary}\" -p /usage --output-format json");
+    }
+
+    static (string Stdout, string Stderr, int ExitCode) RunAgyProcessFallback(string binary, TimeSpan timeout)
+    {
+        var info = new ProcessStartInfo(binary)
         {
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             RedirectStandardInput = true,
             UseShellExecute = false,
             CreateNoWindow = true,
-            StandardOutputEncoding = System.Text.Encoding.UTF8
+            StandardOutputEncoding = Encoding.UTF8,
+            StandardErrorEncoding = Encoding.UTF8
         };
         info.ArgumentList.Add("-p");
         info.ArgumentList.Add("/usage");
         info.ArgumentList.Add("--output-format");
         info.ArgumentList.Add("json");
-        using var process = System.Diagnostics.Process.Start(info)
+        using var process = Process.Start(info)
             ?? throw new InvalidOperationException("Не удалось запустить agy.");
         process.StandardInput.Close();
         var stdout = process.StandardOutput.ReadToEndAsync();
-        _ = process.StandardError.ReadToEndAsync();
-        if (!process.WaitForExit(TimeSpan.FromSeconds(45)))
+        var stderr = process.StandardError.ReadToEndAsync();
+        if (!process.WaitForExit(timeout))
         {
             try { process.Kill(entireProcessTree: true); } catch { }
             throw new TimeoutException("agy /usage: таймаут.");
         }
-        var output = stdout.GetAwaiter().GetResult();
-        return ParseAgyUsage(output, DateTimeOffset.UtcNow);
+        Task.WhenAll(stdout, stderr).Wait(TimeSpan.FromSeconds(5));
+        return (stdout.IsCompletedSuccessfully ? stdout.Result : "",
+            stderr.IsCompletedSuccessfully ? stderr.Result : "",
+            process.ExitCode);
     }
 
-    static AgyQuota ParseAgyUsage(string output, DateTimeOffset now)
+    static bool LooksLikeAgyAuthPrompt(string? text)
     {
+        if (string.IsNullOrWhiteSpace(text)) return false;
+        return text.Contains("authentication required", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("not logged in", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("no controlling terminal", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("Please visit the URL", StringComparison.OrdinalIgnoreCase);
+    }
+
+    static string? FirstNonEmptyLine(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return null;
+        foreach (var raw in text.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
+        {
+            var trimmed = raw.Trim();
+            if (trimmed.Length > 0) return trimmed;
+        }
+        return null;
+    }
+
+    static class NativeProcess
+    {
+        public const uint DetachedProcess = 0x00000008;
+        public const int StartfUseStdHandles = 0x00000100;
+        public const int HandleFlagInherit = 0x00000001;
+        public const uint WaitTimeout = 0x00000102;
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        public struct STARTUPINFO
+        {
+            public int cb;
+            public string? lpReserved;
+            public string? lpDesktop;
+            public string? lpTitle;
+            public int dwX, dwY, dwXSize, dwYSize, dwXCountChars, dwYCountChars, dwFillAttribute, dwFlags;
+            public short wShowWindow, cbReserved2;
+            public IntPtr lpReserved2;
+            public IntPtr hStdInput, hStdOutput, hStdError;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct PROCESS_INFORMATION
+        {
+            public IntPtr hProcess, hThread;
+            public int dwProcessId, dwThreadId;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct SECURITY_ATTRIBUTES
+        {
+            public int nLength;
+            public IntPtr lpSecurityDescriptor;
+            public bool bInheritHandle;
+        }
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern bool CreatePipe(
+            out SafeFileHandle hReadPipe,
+            out SafeFileHandle hWritePipe,
+            ref SECURITY_ATTRIBUTES lpPipeAttributes,
+            int nSize);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern bool SetHandleInformation(SafeHandle hObject, int dwMask, int dwFlags);
+
+        [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        public static extern bool CreateProcessW(
+            string? lpApplicationName,
+            StringBuilder lpCommandLine,
+            IntPtr lpProcessAttributes,
+            IntPtr lpThreadAttributes,
+            bool bInheritHandles,
+            uint dwCreationFlags,
+            IntPtr lpEnvironment,
+            string? lpCurrentDirectory,
+            ref STARTUPINFO lpStartupInfo,
+            out PROCESS_INFORMATION lpProcessInformation);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern uint WaitForSingleObject(IntPtr hHandle, uint dwMilliseconds);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern bool GetExitCodeProcess(IntPtr hProcess, out uint lpExitCode);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern bool TerminateProcess(IntPtr hProcess, uint uExitCode);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern bool CloseHandle(IntPtr hObject);
+    }
+
+    internal static AgyQuota ParseAgyUsage(string output, string? stderr, int exitCode, DateTimeOffset now)
+    {
+        if (LooksLikeAgyAuthPrompt(output) || LooksLikeAgyAuthPrompt(stderr))
+            return new AgyQuota { FetchedAt = now, AuthRequired = true, Error = "Нужен вход в agy (выполните `agy login`)." };
+
         var start = output.IndexOf('{');
-        if (start < 0) return new AgyQuota { FetchedAt = now, Error = "agy /usage не вернул JSON." };
+        if (start < 0)
+        {
+            var errLine = FirstNonEmptyLine(stderr) ?? FirstNonEmptyLine(output);
+            var msg = !string.IsNullOrWhiteSpace(errLine)
+                ? errLine
+                : exitCode != 0
+                    ? $"agy /usage завершился с кодом {exitCode}."
+                    : "agy /usage не вернул JSON.";
+            return new AgyQuota { FetchedAt = now, Error = msg };
+        }
         using var doc = JsonDocument.Parse(output[start..]);
         var root = doc.RootElement;
         if (!root.TryGetProperty("command", out var command)
@@ -850,10 +1132,14 @@ internal static class Providers
             || groups.ValueKind != JsonValueKind.Array)
         {
             var response = StringProp(root, "response");
+            var authRequired = LooksLikeAgyAuthPrompt(response);
             return new AgyQuota
             {
                 FetchedAt = now,
-                Error = string.IsNullOrWhiteSpace(response) ? "Лимиты agy недоступны (нужен вход в agy?)." : response.Trim()
+                AuthRequired = authRequired,
+                Error = authRequired
+                    ? "Нужен вход в agy (выполните `agy login`)."
+                    : string.IsNullOrWhiteSpace(response) ? "Лимиты agy недоступны (нужен вход в agy?)." : response.Trim()
             };
         }
 

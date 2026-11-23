@@ -9,6 +9,11 @@
     <AssemblyName>AiLimitsExtension</AssemblyName>
   </PropertyGroup>
   <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleTo">
+      <_Parameter1>TerminalV.Extensions.Tests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="../../../../src/TerminalV.Extensibility/TerminalV.Extensibility.csproj">
       <Private>false</Private>
       <ExcludeAssets>runtime</ExcludeAssets>

@@ -9,6 +9,7 @@
     <Compile Include="../../src/TerminalV/Extensions/*.cs" Link="Extensions/%(Filename)%(Extension)" />
     <ProjectReference Include="../../src/TerminalV.Extensibility/TerminalV.Extensibility.csproj" />
     <ProjectReference Include="../../examples/extensions/terminalv.hello/host/HelloExtension.csproj" />
+    <ProjectReference Include="../../examples/extensions/terminalv.ai-limits/host/AiLimitsExtension.csproj" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="9.0.8" />
     <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.3" />
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="9.0.8" />
