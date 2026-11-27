@@ -3,7 +3,7 @@ import test from "node:test";
 import { readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { MOBILE_KEY_SEQUENCES, createMobileKeys } from "../src/mobile-keys.js";
+import { MOBILE_KEY_SEQUENCES, applyTerminalModifiers, createMobileKeys } from "../src/mobile-keys.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, "../..");
@@ -11,10 +11,33 @@ const r = (p) => resolve(repoRoot, p);
 
 function fakeButton(key) {
   const handlers = {};
+  const classes = new Set();
+  const attrs = {};
   return {
     dataset: { key },
+    classes,
+    attrs,
+    classList: {
+      toggle: (name, force) => (force === undefined ? !classes.has(name) : force) ? (classes.add(name), true) : (classes.delete(name), false),
+      add: (name) => classes.add(name),
+      remove: (name) => classes.delete(name),
+      contains: (name) => classes.has(name),
+    },
+    setAttribute: (name, val) => { attrs[name] = String(val); },
     addEventListener: (type, fn) => { (handlers[type] ??= []).push(fn); },
     fire: (type, event = {}) => { for (const fn of handlers[type] ?? []) fn(event); },
+  };
+}
+
+function fakeHandle(initialText = "Клавиши") {
+  const classes = new Set();
+  const span = { textContent: initialText };
+  return {
+    span,
+    dataset: {},
+    classes,
+    classList: { toggle: (name, force) => (force === undefined ? !classes.has(name) : force) ? (classes.add(name), true) : (classes.delete(name), false), contains: (n) => classes.has(n) },
+    querySelector: (sel) => sel === "span" ? span : null,
   };
 }
 
@@ -23,7 +46,10 @@ function fakeRoot(keys) {
   const handlers = {};
   return {
     buttons,
-    querySelectorAll: () => buttons,
+    querySelectorAll: (selector) => {
+      const m = /^\[data-key="([^"]+)"\]$/.exec(selector);
+      return m ? buttons.filter((b) => b.dataset.key === m[1]) : buttons;
+    },
     addEventListener: (type, fn) => { (handlers[type] ??= []).push(fn); },
     fire: (type, event = {}) => { for (const fn of handlers[type] ?? []) fn(event); },
   };
@@ -134,7 +160,7 @@ test("key bar markup exists in desktop and mobile shells", () => {
     const html = readFileSync(r(htmlPath), "utf8");
     assert.match(html, /id="mobile-keys"/, `${htmlPath}: key bar`);
     assert.match(html, /data-mobile-only/, `${htmlPath}: mobile-only`);
-    for (const key of ["Escape", "Tab", "ArrowLeft", "ArrowUp", "ArrowDown", "ArrowRight"]) {
+    for (const key of ["Escape", "Tab", "Ctrl", "Alt", "ArrowLeft", "ArrowUp", "ArrowDown", "ArrowRight"]) {
       assert.match(html, new RegExp(`data-key="${key}"`), `${htmlPath}: ${key} button`);
     }
     for (const d of "0123456789") {
@@ -143,12 +169,80 @@ test("key bar markup exists in desktop and mobile shells", () => {
     assert.match(html, /data-row="digits"/, `${htmlPath}: digits row`);
     assert.match(html, /data-row="nav"/, `${htmlPath}: nav row`);
     assert.match(html, /id="font-size"[^>]*min="8"/, `${htmlPath}: slider allows 8`);
+    const handleBlock = html.slice(html.indexOf('handle.addEventListener("pointerdown"'));
+    assert.match(handleBlock, /e\.preventDefault\(\)/, `${htmlPath}: handle keeps soft keyboard open`);
   }
+});
+
+test("sticky Alt and Ctrl apply to Gboard/onData input, Cyrillic keys, panel keys, and ignore mouse/focus reports", () => {
+  // Pure modifier encoding checks
+  assert.deepEqual(applyTerminalModifiers("m", { alt: true }), { data: "\x1bm", consumed: true });
+  assert.deepEqual(applyTerminalModifiers("ь", { alt: true }), { data: "\x1bm", consumed: true });
+  assert.deepEqual(applyTerminalModifiers("M", { alt: true }), { data: "\x1bM", consumed: true });
+  assert.deepEqual(applyTerminalModifiers("c", { ctrl: true }), { data: "\x03", consumed: true });
+  assert.deepEqual(applyTerminalModifiers("с", { ctrl: true }), { data: "\x03", consumed: true });
+  assert.deepEqual(applyTerminalModifiers("m", { ctrl: true, alt: true }), { data: "\x1b\r", consumed: true });
+  assert.deepEqual(applyTerminalModifiers("\x7f", { alt: true }), { data: "\x1b\x7f", consumed: true });
+  assert.deepEqual(applyTerminalModifiers("\x7f", { ctrl: true }), { data: "\x08", consumed: true });
+  assert.deepEqual(applyTerminalModifiers("\x1b[A", { alt: true }), { data: "\x1b[1;3A", consumed: true });
+  assert.deepEqual(applyTerminalModifiers("\x1b[D", { ctrl: true, alt: true }), { data: "\x1b[1;7D", consumed: true });
+  assert.equal(MOBILE_KEY_SEQUENCES["Alt+ArrowUp"], "\x1b[1;3A");
+  assert.equal(MOBILE_KEY_SEQUENCES["Ctrl+Alt+ArrowLeft"], "\x1b[1;7D");
+  assert.equal(MOBILE_KEY_SEQUENCES["Alt+0"], "\x1b0");
+
+  // Terminal protocol reports must not consume modifiers
+  for (const report of ["\x1b[I", "\x1b[O", "\x1b[<0;12;5M", "\x1b[<35;12;5m", "\x1b[12;34R", "\x1b[200~pasted"]) {
+    assert.deepEqual(applyTerminalModifiers(report, { alt: true }), { data: report, consumed: false });
+  }
+
+  // Stateful sticky modifier lifecycle + handle badge
+  const root = fakeRoot(["Ctrl", "Alt", "ArrowUp", "0"]);
+  const handle = fakeHandle();
+  const sent = [];
+  const api = createMobileKeys({ root, handle, send: (k) => sent.push(k) });
+
+  // Tap Alt -> handle & Alt button show active state
+  root.buttons[1].fire("click", {});
+  assert.equal(api.altActive, true);
+  assert.equal(api.ctrlActive, false);
+  assert.equal(root.buttons[1].classList.contains("active"), true);
+  assert.equal(root.buttons[1].attrs["aria-pressed"], "true");
+  assert.equal(handle.span.textContent, "Клавиши · Alt");
+  assert.equal(handle.classList.contains("has-modifiers"), true);
+
+  // Focusing terminal emits \x1b[I and clicking emits mouse report -> Alt stays armed
+  assert.equal(api.applyInput("\x1b[I"), "\x1b[I");
+  assert.equal(api.applyInput("\x1b[<0;10;20M"), "\x1b[<0;10;20M");
+  assert.equal(api.altActive, true);
+
+  // Typing "m" on soft keyboard produces \x1bm and disarms Alt
+  assert.equal(api.applyInput("m"), "\x1bm");
+  assert.equal(api.altActive, false);
+  assert.equal(root.buttons[1].classList.contains("active"), false);
+  assert.equal(handle.span.textContent, "Клавиши");
+  assert.equal(handle.classList.contains("has-modifiers"), false);
+
+  // Arm both Ctrl and Alt, then tap ArrowUp on key bar
+  root.buttons[0].fire("click", {});
+  root.buttons[1].fire("click", {});
+  assert.equal(handle.span.textContent, "Клавиши · Ctrl+Alt");
+  root.buttons[2].fire("click", {});
+  assert.deepEqual(sent, ["Ctrl+Alt+ArrowUp"]);
+  assert.equal(api.ctrlActive, false);
+  assert.equal(api.altActive, false);
+
+  // Toggle off Alt without firing anything
+  root.buttons[1].fire("click", {});
+  assert.equal(api.altActive, true);
+  root.buttons[1].fire("click", {});
+  assert.equal(api.altActive, false);
+  assert.equal(handle.span.textContent, "Клавиши");
 });
 
 test("main.js wires the key bar to the pty write channel", () => {
   const main = readFileSync(r("ui/src/main.js"), "utf8");
   assert.match(main, /createMobileKeys\(\{/, "binds key bar");
+  assert.match(main, /mobileKeys\.applyInput\(data\)/, "applies sticky modifiers to typed input");
   assert.match(main, /post\(\{ type: "write", id: tab\.id, data \}\)/, "sends raw sequences to pty");
   assert.match(main, /letterSpacing: 0/, "no extra letter spacing");
   assert.match(main, /Roboto Mono.*Droid Sans Mono.*Noto Sans Mono/, "android monospace fallbacks");
@@ -169,11 +263,16 @@ test("key bar styling stays hidden on desktop and fits touch targets", () => {
   assert.match(css, /\.mobile-keys-row\[data-row="digits"\]\s*button\s*\{[^}]*flex:\s*1\s+1\s+0/, "all 10 digits share width evenly");
   assert.match(css, /\.mobile-keys-row\[data-row="digits"\]\s*button\s*\{[^}]*min-width:\s*0/, "digits shrink to fit narrow phones");
   assert.match(css, /\.mobile-keys\s*\{[^}]*flex-direction:\s*column/, "two rows without top gap");
+  assert.match(css, /button\[data-key="Alt"\]\.active/, "Alt sticky active style");
+  assert.match(css, /\.mobile-keys-handle\.has-modifiers/, "handle modifier indicator style");
   const appCss = readFileSync(r("src/TerminalV.Mobile/wwwroot/css/app.css"), "utf8");
   assert.match(appCss, /\.mobile-keys-row\[data-row="digits"\]\s*button\s*\{[^}]*flex:\s*1\s+1\s+0/, "mobile app.css also fits all 10 digits");
   assert.match(appCss, /\.mobile-keys-row\[data-row="digits"\]\s*button\s*\{[^}]*min-width:\s*0/, "mobile app.css does not force min-width overflow");
+  assert.match(appCss, /button\[data-key="Alt"\]\.active/, "mobile app.css Alt sticky active style");
+  assert.match(appCss, /\.mobile-keys-handle\.has-modifiers/, "mobile app.css handle modifier indicator style");
   const mobileJs = readFileSync(r("src/TerminalV.Mobile/wwwroot/js/terminal.js"), "utf8");
   assert.match(mobileJs, /pointercancel/, "fallback mobile terminal.js also cancels on scroll");
+  assert.match(mobileJs, /applyTerminalModifiers/, "fallback mobile terminal.js supports sticky Alt/Ctrl");
 });
 
 test("mobile fit mode toggles desktop PTY sizing", () => {

@@ -122,6 +122,10 @@ h1:focus { outline: none; }
   z-index: 21;
 }
 .mobile-keys-handle[aria-expanded="true"] { bottom: var(--mobile-keys-height, 88px); }
+.mobile-keys-handle.has-modifiers {
+  color: #071018; background: var(--accent, #3d9eff); border-color: var(--accent, #3d9eff);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent, #3d9eff) 30%, transparent);
+}
 .mobile-keys-row {
   display: flex; gap: 6px; justify-content: flex-start; flex-wrap: nowrap; overflow-x: auto;
   -webkit-overflow-scrolling: touch; scrollbar-width: none; touch-action: pan-x;
@@ -137,6 +141,12 @@ h1:focus { outline: none; }
 .mobile-keys-row[data-row="digits"] button { flex: 1 1 0; min-width: 0; padding: 0; text-align: center; }
 .mobile-keys button:active { background: var(--tab-active, #1c2736); border-color: var(--accent-dim, #2a6fb3); }
 .mobile-keys button:focus-visible { outline: 2px solid var(--accent, #3d9eff); outline-offset: 2px; }
+.mobile-keys button[data-key="Ctrl"].active,
+.mobile-keys button[data-key="Alt"].active {
+  background: var(--accent, #3d9eff); color: #071018; border-color: var(--accent, #3d9eff);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent, #3d9eff) 30%, transparent);
+}
+.mobile-keys button[data-key="Alt"] { min-width: 48px; }
 
 /* Slide panel fallback — mirrored from index.html inline for file-level parity */
 @media (max-width: 700px), (max-height: 500px) {

@@ -213,9 +213,10 @@ const launchMenu = createLaunchMenu({
   onLaunch: options => newTab(options), onEdit: id => launchProfiles.open(id)
 });
 
-// Mobile-only key bar (Esc/Tab/arrows). Hidden on desktop via data-mobile-only.
-createMobileKeys({
+// Mobile-only key bar (Esc/Tab/arrows/modifiers). Hidden on desktop via data-mobile-only.
+const mobileKeys = createMobileKeys({
   root: document.getElementById("mobile-keys"),
+  handle: document.getElementById("mobile-keys-handle"),
   send: (key) => {
     if (isModalOpen()) return;
     const tab = currentTab();
@@ -2043,7 +2044,10 @@ function newTab(options = {}) {
       for (const chunk of chunks) post({ type: "write", id: targetId, data: chunk });
     }
   }
-  term.onData((data) => postWrite(id, data));
+  term.onData((data) => {
+    if (tab.exited || tab.attachFailed) return;
+    postWrite(id, mobileKeys.applyInput(data));
+  });
   tab.output = createNotificationOutput(term, () => notifications.bell(tab), () => {
     syncScrollLock(tab);
     schedulePersist();

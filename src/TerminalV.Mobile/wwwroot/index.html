@@ -146,7 +146,7 @@
             <button type="button" data-key="Delete" title="Delete" aria-label="Delete">Del</button>
           </div>
           <div class="mobile-keys-row" data-row="arrows">
-            <button type="button" data-key="Ctrl" title="Ctrl (липкий, для стрелок)" aria-label="Ctrl" aria-pressed="false">Ctrl</button>
+            <button type="button" data-key="Ctrl" title="Ctrl (липкий, для любых клавиш и стрелок)" aria-label="Ctrl" aria-pressed="false">Ctrl</button>
             <button type="button" data-key="Alt+Enter" title="Перенос строки (Alt+Enter) — универсально для агентов" aria-label="Перенос строки Alt+Enter">↵</button>
             <span class="mobile-keys-spacer" aria-hidden="true"></span>
             <button type="button" data-key="ArrowUp" title="Вверх" aria-label="Стрелка вверх">↑</button>
@@ -154,7 +154,7 @@
           </div>
           <div class="mobile-keys-row" data-row="arrows2">
             <button id="keys-upload-btn" type="button" class="mobile-keys-action" title="Вставить фото или файл" aria-label="Вставить фото или файл" aria-haspopup="dialog" aria-expanded="false" aria-controls="mobile-upload-menu"><span data-icon="paperclip"></span></button>
-            <span class="mobile-keys-spacer" aria-hidden="true"></span>
+            <button type="button" data-key="Alt" title="Alt (липкий, для любых клавиш, например Alt+M)" aria-label="Alt" aria-pressed="false">Alt</button>
             <button type="button" data-key="ArrowLeft" title="Влево" aria-label="Стрелка влево">←</button>
             <button type="button" data-key="ArrowDown" title="Вниз" aria-label="Стрелка вниз">↓</button>
             <button type="button" data-key="ArrowRight" title="Вправо" aria-label="Стрелка вправо">→</button>
@@ -280,7 +280,11 @@
           setOpen(!isOpen());
           try { window.dispatchEvent(new Event("resize")); } catch {}
         });
-        handle.addEventListener("pointerdown", (e) => e.stopPropagation());
+        handle.addEventListener("pointerdown", (e) => {
+          // Keep soft keyboard focused when opening/closing the key bar.
+          e.preventDefault();
+          e.stopPropagation();
+        });
         document.addEventListener("click", (e) => {
           if (!isOpen()) return;
           if (panel.contains(e.target) || handle.contains(e.target)) return;
