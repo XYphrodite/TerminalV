@@ -555,6 +555,8 @@ internal static class Providers
             StandardOutputEncoding = System.Text.Encoding.UTF8,
             StandardInputEncoding = new System.Text.UTF8Encoding(false)
         };
+        info.Environment["GROK_AUTO_UPDATE"] = "0";
+        info.Environment["NO_AUTO_UPDATE"] = "1";
         info.ArgumentList.Add("agent");
         info.ArgumentList.Add("stdio");
 
@@ -911,17 +913,35 @@ internal static class Providers
 
             // DETACHED_PROCESS ensures agy.exe has no console; opening CONIN$ fails so print mode
             // never launches an interactive browser OAuth flow when silent/keyring auth fails.
-            if (!NativeProcess.CreateProcessW(
+            // AGY_CLI_DISABLE_AUTO_UPDATE=true prevents agy from spawning `--bg-updater` -> `agy --version`
+            // without CREATE_NO_WINDOW every 15 minutes (which flashes Windows Terminal on Windows 11).
+            var envBytes = BuildUnicodeEnvironmentBlock(new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["AGY_CLI_DISABLE_AUTO_UPDATE"] = "true"
+            });
+            var envPin = GCHandle.Alloc(envBytes, GCHandleType.Pinned);
+            bool started;
+            NativeProcess.PROCESS_INFORMATION procInfo;
+            try
+            {
+                started = NativeProcess.CreateProcessW(
                     application,
                     new StringBuilder(commandLine),
                     IntPtr.Zero,
                     IntPtr.Zero,
                     bInheritHandles: true,
-                    NativeProcess.DetachedProcess,
-                    IntPtr.Zero,
+                    NativeProcess.DetachedProcess | NativeProcess.CreateUnicodeEnvironment,
+                    envPin.AddrOfPinnedObject(),
                     null,
                     ref startup,
-                    out var procInfo))
+                    out procInfo);
+            }
+            finally
+            {
+                envPin.Free();
+            }
+
+            if (!started)
             {
                 throw new Win32Exception(Marshal.GetLastWin32Error(), "Не удалось запустить agy.");
             }
@@ -972,6 +992,26 @@ internal static class Providers
         }
     }
 
+    static byte[] BuildUnicodeEnvironmentBlock(IReadOnlyDictionary<string, string> overrides)
+    {
+        var merged = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (System.Collections.DictionaryEntry entry in Environment.GetEnvironmentVariables())
+        {
+            if (entry.Key is string key && !string.IsNullOrEmpty(key) && entry.Value is string value)
+                merged[key] = value;
+        }
+        foreach (var (key, value) in overrides)
+            merged[key] = value;
+
+        var sb = new StringBuilder(4096);
+        foreach (var kv in merged.OrderBy(k => k.Key, StringComparer.OrdinalIgnoreCase))
+        {
+            sb.Append(kv.Key).Append('=').Append(kv.Value).Append('\0');
+        }
+        sb.Append('\0');
+        return Encoding.Unicode.GetBytes(sb.ToString());
+    }
+
     static (string Application, string CommandLine) ResolveAgyCommandLine(string binary)
     {
         var ext = Path.GetExtension(binary);
@@ -997,6 +1037,7 @@ internal static class Providers
             StandardOutputEncoding = Encoding.UTF8,
             StandardErrorEncoding = Encoding.UTF8
         };
+        info.Environment["AGY_CLI_DISABLE_AUTO_UPDATE"] = "true";
         info.ArgumentList.Add("-p");
         info.ArgumentList.Add("/usage");
         info.ArgumentList.Add("--output-format");
@@ -1040,6 +1081,7 @@ internal static class Providers
     static class NativeProcess
     {
         public const uint DetachedProcess = 0x00000008;
+        public const uint CreateUnicodeEnvironment = 0x00000400;
         public const int StartfUseStdHandles = 0x00000100;
         public const int HandleFlagInherit = 0x00000001;
         public const uint WaitTimeout = 0x00000102;

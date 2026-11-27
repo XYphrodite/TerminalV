@@ -464,12 +464,14 @@ try
         File.WriteAllText(mockCmd,
             "@echo off\r\n" +
             $"echo call>>\"{counterFile}\"\r\n" +
+            "echo AGY_AU=%AGY_CLI_DISABLE_AUTO_UPDATE%\r\n" +
             "(<CONIN$ (echo HAS_CONIN)) 2>nul || echo NO_CONIN\r\n" +
             "echo Error: authentication required. Run 'agy login' to log in. 1>&2\r\n" +
             "exit /b 1\r\n");
 
         var (outStr, errStr, exitCode) = AiLimits.Providers.RunAgyProcessDetached(mockCmd, TimeSpan.FromSeconds(15));
         Assert(exitCode == 1, $"Expected mock exit code 1, got {exitCode}");
+        Assert(outStr.Contains("AGY_AU=true", StringComparison.Ordinal), $"Expected AGY_CLI_DISABLE_AUTO_UPDATE=true, got stdout=[{outStr}]");
         Assert(outStr.Contains("NO_CONIN", StringComparison.Ordinal), $"Expected detached child to lack CONIN$, got stdout=[{outStr}], stderr=[{errStr}]");
         Assert(errStr.Contains("authentication required", StringComparison.OrdinalIgnoreCase), $"Expected stderr prompt, got {errStr}");
 
